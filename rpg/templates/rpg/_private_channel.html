@@ -1,0 +1,56 @@
+{% load rpg_extras %}
+<h3>{{ player.display_name }} — status: <span class="chip {{ player.status }}">{{ player.status }}</span></h3>
+<div class="messages private-channel-messages">
+{% for item in entries %}
+  {% with m=item.message %}
+  <div class="msg {% if m.author_type == "GM" %}gm{% else %}private {{ player_color }}{% endif %}">
+    <div class="msg-header">
+      <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ player.display_name }}{% endif %}</span>
+      {% if m.author_type == "PLAYER" and m.action_type %}
+        <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
+      {% endif %}
+      <button type="button" class="copy-message-btn" onclick="copyMessage(this)"
+              title="Копировать сообщение" aria-label="Копировать сообщение">Copy</button>
+    </div>
+    {% if m.action_type != "PASS" %}
+      <div class="msg-content">{{ m.content|message_format }}</div>
+    {% endif %}
+    {% if m.author_type == "PLAYER" %}
+      {% if item.public_message %}
+        <div class="private-ref">
+          К публичному ходу:
+          <a href="#message-{{ item.public_message.pk }}">
+            «{{ item.public_message.content|truncatechars:150 }}»
+          </a>
+        </div>
+      {% elif item.trigger_message %}
+        <div class="private-ref">
+          Ответ на:
+          «{{ item.trigger_message.content|truncatechars:150 }}»
+        </div>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endwith %}
+{% empty %}
+  <p class="meta">No private messages.</p>
+{% endfor %}
+</div>
+{% if not scene.is_closed %}
+<form method="post" action="{% url 'send_private_message' scene.pk player.pk %}"
+      onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
+  {% csrf_token %}
+  <input type="hidden" name="client_turn_id" value="">
+  <div class="private-composer">
+    <textarea name="content" rows="5" placeholder="Private to {{ player.display_name }}..."></textarea>
+    <div class="toolbar">
+      <label title="Unchecked: store the message as private context only, without calling the model.">
+        <input type="checkbox" name="run_turn" value="1"> Ask for response
+      </label>
+      <button class="btn btn-primary" type="submit">Send</button>
+    </div>
+  </div>
+</form>
+{% else %}
+  <p class="meta">Scene closed: private history is read-only.</p>
+{% endif %}
