@@ -9,6 +9,8 @@ urlpatterns = [
     path("scene/<int:scene_id>/send/", views.send_gm_message, name="send_gm_message"),
     path("scene/<int:scene_id>/send-private/<int:player_id>/", views.send_private_message,
          name="send_private_message"),
+    path("scene/<int:scene_id>/private/<int:player_id>/read/", views.mark_private_read,
+         name="mark_private_read"),
     path("scene/<int:scene_id>/mode/", views.set_mode, name="set_mode"),
     path("scene/<int:scene_id>/refresh/", views.scene_fragment, name="scene_fragment"),
     path("scene/<int:scene_id>/players-status/", views.players_status,
