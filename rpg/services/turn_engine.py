@@ -487,7 +487,7 @@ def revise_execution_ooc(
                 content=status_text,
                 visibility=Visibility.PRIVATE_GM_PLAYER,
                 private_player=player,
-                action_type=action,
+                action_type="",
                 gm_unread=True,
             )
 
