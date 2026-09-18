@@ -85,7 +85,9 @@
 {% csrf_token %}
 <input type="hidden" name="client_turn_id" value="">
 <div class="toolbar composer-toolbar">
-  <textarea class="gm-composer-input" name="content" rows="4" placeholder="GM public message..." autofocus></textarea>
+  <textarea id="gm-composer-input" class="gm-composer-input" name="content" rows="4" placeholder="GM public message..." autofocus></textarea>
+  <button type="button" class="btn" onclick="formatSelectedAsDialogue(document.getElementById('gm-composer-input'))"
+          title="Преобразовать выделенный текст в реплику">Реплика</button>
   <label><input type="checkbox" name="run_turn" value="1" checked> Run turn</label>
   {% if scene.mode == "MANUAL" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
     <span class="meta">Players:</span>
@@ -169,11 +171,15 @@
         {% for item in player_private|get:p.pk %}
           {% with m=item.message %}
           <div class="msg {% if m.author_type == "GM" %}gm{% else %}private {{ player_color_by_id|get:p.pk }}{% endif %}">
-            <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ p.display_name }}{% endif %}</span>
-            {% if m.author_type == "PLAYER" and m.action_type %}
-              <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
+            <div class="msg-header">
+              <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ p.display_name }}{% endif %}</span>
+              {% if m.author_type == "PLAYER" and m.action_type %}
+                <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
+              {% endif %}
+            </div>
+            {% if m.action_type != "PASS" %}
+              <div class="msg-content">{{ m.content }}</div>
             {% endif %}
-            {% if m.action_type != "PASS" %}{{ m.content }}{% endif %}
             {% if m.author_type == "PLAYER" %}
               {% if item.public_message %}
                 <div class="private-ref">
@@ -252,6 +258,36 @@ function validateRoundOrder(form) {
     return false;
   }
   return true;
+}
+
+function formatSelectedAsDialogue(textarea) {
+  if (!textarea) return;
+
+  const start = textarea.selectionStart ?? 0;
+  const end = textarea.selectionEnd ?? start;
+  const selected = textarea.value.slice(start, end);
+
+  if (!selected) {
+    const before = textarea.value.slice(0, start);
+    const needsNewline = before && !before.endsWith("\n");
+    const insert = (needsNewline ? "\n" : "") + "— ";
+    textarea.setRangeText(insert, start, end, "end");
+    textarea.focus();
+    return;
+  }
+
+  const formatted = selected
+    .split("\n")
+    .map((line) => {
+      if (!line.trim()) return line;
+      if (/^\s*[—–-]\s+/.test(line)) return line;
+      const indent = line.match(/^\s*/)?.[0] || "";
+      return indent + "— " + line.slice(indent.length);
+    })
+    .join("\n");
+
+  textarea.setRangeText(formatted, start, end, "select");
+  textarea.focus();
 }
 
 async function markPrivateRead(form, playerId) {
