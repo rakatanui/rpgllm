@@ -205,7 +205,9 @@ def build_player_context(
             "ACT_OUT_OF_TURN declaration.\n"
             "If play proceeds to the next GM input and there is NO SAOOT marker targeted "
             "at a given ACT_OUT_OF_TURN declaration, treat that declaration as successful "
-            "as stated. If several players declared ACT_OUT_OF_TURN, resolve them "
+            "as stated. A GM SILENCE turn also counts as proceeding without a SAOOT marker, "
+            "so any unresolved ACT_OUT_OF_TURN declaration is successful as stated. "
+            "If several players declared ACT_OUT_OF_TURN, resolve them "
             "independently: a SAOOT marker for one player does not resolve the others.\n"
             "Only the GM creates SAOOT markers. Never emit or invent one yourself."
         )
