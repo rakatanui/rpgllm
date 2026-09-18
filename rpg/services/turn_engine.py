@@ -302,12 +302,16 @@ def _run_execution(
                 "response is PASS. Use ACT_OUT_OF_TURN only for a genuinely urgent, "
                 "immediate intervention that cannot reasonably wait for your own turn. "
                 "Ordinary conversation, commentary, exposition, volunteering information, "
-                "and non-urgent questions must wait. You may only PASS or ACT_OUT_OF_TURN."
+                "and non-urgent questions must wait. You may only PASS or ACT_OUT_OF_TURN. "
+                "If you use ACT_OUT_OF_TURN, the HARD LIMIT is 650 visible characters, "
+                "2 paragraphs, and 1 direct question."
             )
         elif turn.mode == TurnMode.ROUND and not turn.is_private:
             context.system_prompt += (
                 "\n\n# ROUND ROLE\n"
-                "You are the active player this round. You may only ACT or PASS."
+                "You are the active player this round. You may only ACT or PASS. "
+                "For ACT, the HARD LIMIT is 1200 visible characters, 5 paragraphs, "
+                "and 2 direct questions."
             )
 
         response = client.generate(
@@ -386,8 +390,11 @@ def _validate_response_discipline(
         return
 
     max_chars = 650 if out_of_turn else 1200
+    max_paragraphs = 2 if out_of_turn else 5
+    max_questions = 1 if out_of_turn else 2
+
     if len(visible) > max_chars:
-        kind = "ACT_OUT_OF_TURN" if out_of_turn else "turn"
+        kind = "ACT_OUT_OF_TURN" if out_of_turn else "ACT"
         raise InvalidActionError(
             f"{kind} response is too long ({len(visible)} visible chars; max {max_chars}). "
             "Keep to one immediate beat."
@@ -398,15 +405,19 @@ def _validate_response_discipline(
         for paragraph in re.split(r"\n\s*\n+", visible)
         if paragraph.strip()
     ]
-    if len(paragraphs) > 2:
+    if len(paragraphs) > max_paragraphs:
+        kind = "ACT_OUT_OF_TURN" if out_of_turn else "ACT"
         raise InvalidActionError(
-            f"response has {len(paragraphs)} paragraphs; maximum is 2 short paragraphs"
+            f"{kind} response has {len(paragraphs)} paragraphs; "
+            f"maximum is {max_paragraphs}"
         )
 
     question_count = visible.count("?") + visible.count("？")
-    if question_count > 1:
+    if question_count > max_questions:
+        kind = "ACT_OUT_OF_TURN" if out_of_turn else "ACT"
         raise InvalidActionError(
-            f"response asks {question_count} questions; maximum is 1 direct question"
+            f"{kind} response asks {question_count} questions; "
+            f"maximum is {max_questions}"
         )
 
 
