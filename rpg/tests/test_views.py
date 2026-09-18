@@ -81,6 +81,30 @@ def test_switch_to_round_requires_confirmed_order():
 
 
 @pytest.mark.django_db
+def test_switch_to_round_can_reuse_existing_valid_order():
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+
+    response = Client().post(
+        reverse("set_mode", kwargs={"scene_id": scene.pk}),
+        {"mode": TurnMode.ROUND},
+    )
+
+    assert response.status_code == 302
+    scene.refresh_from_db()
+    assert scene.mode == TurnMode.ROUND
+    assert scene.round_order == [lucien.pk, mila.pk]
+    assert scene.active_player_index == 0
+
+
+@pytest.mark.django_db
 def test_switch_to_round_saves_confirmed_order_and_resets_active():
     campaign = make_campaign()
     mila = make_player(campaign, "Мила")
@@ -135,6 +159,25 @@ def test_round_public_send_is_blocked_without_confirmed_order(mock_backend):
 
     assert response.status_code == 400
     assert not scene.turns.exists()
+
+
+@pytest.mark.django_db
+def test_manual_scene_marks_round_as_ready_when_valid_order_is_stored():
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert 'data-round-ready="1"' in html
 
 
 @pytest.mark.django_db
