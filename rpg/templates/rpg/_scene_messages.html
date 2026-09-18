@@ -54,15 +54,15 @@
                     <input type="hidden" name="content" value="">
                     <button type="submit">→ Shared memory</button>
                   </form>
-                  {% if m.author_player %}
+                  {% for target_player in players %}
                     <form method="post" action="{% url 'pin_message_memory' scene.pk m.pk %}"
-                          onsubmit="return prepareMemoryPin(this, 'player:{{ m.author_player.pk }}')">
+                          onsubmit="return prepareMemoryPin(this, 'player:{{ target_player.pk }}')">
                       {% csrf_token %}
-                      <input type="hidden" name="target" value="player:{{ m.author_player.pk }}">
+                      <input type="hidden" name="target" value="player:{{ target_player.pk }}">
                       <input type="hidden" name="content" value="">
-                      <button type="submit">→ {{ m.author_player.display_name }} memory</button>
+                      <button type="submit">→ {{ target_player.display_name }} memory</button>
                     </form>
-                  {% endif %}
+                  {% endfor %}
                   <form method="post" action="{% url 'pin_message_memory' scene.pk m.pk %}"
                         onsubmit="return prepareMemoryPin(this, 'lore')">
                     {% csrf_token %}
