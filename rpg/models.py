@@ -96,6 +96,15 @@ class Scene(models.Model):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="scenes")
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    dialogue_language = models.CharField(
+        max_length=80,
+        blank=True,
+        help_text=(
+            "Default diegetic language for spoken dialogue in this scene, "
+            "for example French, Portuguese, Russian. Direct speech is emitted "
+            "in this language with a Russian hover translation."
+        ),
+    )
     participants = models.ManyToManyField(
         "Player",
         through="SceneParticipant",
