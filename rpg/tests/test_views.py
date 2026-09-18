@@ -1071,3 +1071,102 @@ def test_ooc_revision_rejects_empty_comment_before_model_call():
 
     assert response.status_code == 400
     revise.assert_not_called()
+
+
+
+@pytest.mark.django_db
+def test_round_scene_shows_silence_button():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[lucien, mila],
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert 'id="gm-silence-button"' in html
+    assert reverse("silent_turn", kwargs={"scene_id": scene.pk}) in html
+    assert ">\n      Молчание\n    </button>" in html
+
+
+@pytest.mark.django_db
+def test_manual_silence_requires_exactly_one_selected_player():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[lucien, mila],
+    )
+
+    with patch("rpg.views.turn_engine.start_silent_turn") as silent:
+        none_selected = Client().post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {},
+        )
+        two_selected = Client().post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {"selected_players": [str(lucien.pk), str(mila.pk)]},
+        )
+        one_selected = Client().post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {"selected_players": [str(mila.pk)], "client_turn_id": "12345678-1234-5678-1234-567812345678"},
+        )
+
+    assert none_selected.status_code == 400
+    assert two_selected.status_code == 400
+    assert one_selected.status_code == 302
+    silent.assert_called_once()
+    assert [p.pk for p in silent.call_args.kwargs["selected_players"]] == [mila.pk]
+
+
+@pytest.mark.django_db
+def test_round_silence_ignores_manual_player_selection_and_runs_round():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[lucien, mila],
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+
+    with patch("rpg.views.turn_engine.start_silent_turn") as silent:
+        response = Client().post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {"selected_players": [str(mila.pk)]},
+        )
+
+    assert response.status_code == 302
+    silent.assert_called_once()
+    assert silent.call_args.kwargs["selected_players"] is None
+
+
+@pytest.mark.django_db
+def test_silence_view_rejects_non_round_non_manual_mode():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.TABLE,
+        participants=[lucien],
+    )
+
+    with patch("rpg.views.turn_engine.start_silent_turn") as silent:
+        response = Client().post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {"selected_players": [str(lucien.pk)]},
+        )
+
+    assert response.status_code == 400
+    silent.assert_not_called()
