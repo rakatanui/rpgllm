@@ -88,6 +88,24 @@
   <textarea id="gm-composer-input" class="gm-composer-input" name="content" rows="4" placeholder="GM public message..." autofocus></textarea>
   <button type="button" class="btn" onclick="formatSelectedAsDialogue(document.getElementById('gm-composer-input'))"
           title="Преобразовать выделенный текст в реплику">Реплика</button>
+  {% if scene.mode == "ROUND" %}
+    <select id="saoot-target" class="saoot-target" {% if not saoot_candidates %}disabled{% endif %}
+            title="Чью заявку ACT_OUT_OF_TURN разрешает выделенный текст">
+      {% for candidate in saoot_candidates %}
+        <option value="{{ candidate.author_player.pk }}"
+                data-player-name="{{ candidate.author_player.display_name }}">
+          {{ candidate.author_player.display_name }} · {{ candidate.content|truncatechars:55 }}
+        </option>
+      {% empty %}
+        <option>нет ACT_OUT_OF_TURN</option>
+      {% endfor %}
+    </select>
+    <button type="button" class="btn btn-saoot"
+            onclick="formatSelectedAsSaoot(document.getElementById('gm-composer-input'), document.getElementById('saoot-target'))"
+            {% if not saoot_candidates %}disabled title="В последнем ROUND нет заявок ACT_OUT_OF_TURN"{% else %}title="Пометить выделенный текст как явное разрешение ACT_OUT_OF_TURN"{% endif %}>
+      SAOOT
+    </button>
+  {% endif %}
   <label><input type="checkbox" name="run_turn" value="1" checked> Run turn</label>
   {% if scene.mode == "MANUAL" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
     <span class="meta">Players:</span>
@@ -178,7 +196,7 @@
               {% endif %}
             </div>
             {% if m.action_type != "PASS" %}
-              <div class="msg-content">{{ m.content }}</div>
+              <div class="msg-content">{{ m.content|saoot_format }}</div>
             {% endif %}
             {% if m.author_type == "PLAYER" %}
               {% if item.public_message %}
@@ -287,6 +305,38 @@ function formatSelectedAsDialogue(textarea) {
     .join("\n");
 
   textarea.setRangeText(formatted, start, end, "select");
+  textarea.focus();
+}
+
+function formatSelectedAsSaoot(textarea, targetSelect) {
+  if (!textarea || !targetSelect || targetSelect.disabled) return;
+
+  const start = textarea.selectionStart ?? 0;
+  const end = textarea.selectionEnd ?? start;
+  const selected = textarea.value.slice(start, end);
+
+  if (!selected.trim()) {
+    alert("Сначала выделите текст, который разрешает ACT_OUT_OF_TURN.");
+    textarea.focus();
+    return;
+  }
+  if (selected.includes("[[SAOOT:") || selected.includes("[[/SAOOT]]")) {
+    alert("Выделение уже содержит SAOOT-разметку.");
+    textarea.focus();
+    return;
+  }
+
+  const option = targetSelect.options[targetSelect.selectedIndex];
+  if (!option || !option.value) return;
+
+  const playerId = option.value;
+  const playerName = option.dataset.playerName || option.textContent.trim();
+  const marked =
+    "[[SAOOT:" + playerId + "|" + playerName + "]]" +
+    selected +
+    "[[/SAOOT]]";
+
+  textarea.setRangeText(marked, start, end, "select");
   textarea.focus();
 }
 

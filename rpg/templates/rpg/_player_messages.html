@@ -1,3 +1,4 @@
+{% load rpg_extras %}
 {% for m in messages %}
   <div class="msg {% if m.author_type == "GM" %}gm{% else %}private{% endif %}">
     <div class="msg-header">
@@ -7,7 +8,7 @@
       {% endif %}
     </div>
     {% if m.action_type != "PASS" %}
-      <div class="msg-content">{{ m.content }}</div>
+      <div class="msg-content">{{ m.content|saoot_format }}</div>
     {% endif %}
   </div>
 {% empty %}

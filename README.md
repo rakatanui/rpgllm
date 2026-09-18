@@ -216,6 +216,17 @@ private GM↔player turns never advance the public round. Browser submissions us
 a per-form UUID so duplicate submits are idempotent. Failed executions can be
 retried without replaying successful players.
 
+In ROUND mode an inactive player may declare `ACT_OUT_OF_TURN`. The GM can
+explicitly adjudicate one of those declarations in the next public GM message
+with the **SAOOT** composer control. SAOOT wraps the selected GM text in a
+player-targeted marker and the UI renders it as a highlighted adjudication.
+When several players declared `ACT_OUT_OF_TURN`, the GM selects which player
+the marked text resolves. If the GM proceeds without a SAOOT adjudication for a
+given declaration, that declaration is treated as successful as stated.
+
+The Public and Private panes are display-only newest-first feeds; model context
+continues to use canonical chronological order.
+
 ## Stop
 
 ```bash
