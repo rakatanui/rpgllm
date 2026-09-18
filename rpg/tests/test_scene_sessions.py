@@ -9,11 +9,35 @@ from django.urls import reverse
 from rpg.models import AuthorType, Message, Scene, SceneParticipant, TurnMode, Visibility
 from rpg.services import turn_engine
 from rpg.services.context_builder import build_player_context
+from rpg.services.llm import MockLLMClient
 from rpg.tests.factories import make_campaign, make_player, make_scene
 
 
 def _contents(ctx):
     return "\n".join(message["content"] for message in ctx.messages)
+
+
+
+class RecordingClient(MockLLMClient):
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, *, system_prompt, messages, model, temperature=0.7):
+        self.calls.append(model)
+        return super().generate(
+            system_prompt=system_prompt,
+            messages=messages,
+            model=model,
+            temperature=temperature,
+        )
+
+
+@pytest.fixture
+def recording_client(mock_backend):
+    client = RecordingClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        yield client
+
 
 
 @pytest.mark.django_db
