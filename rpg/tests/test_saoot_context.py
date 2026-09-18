@@ -121,3 +121,29 @@ def test_message_format_combines_saoot_and_speech_safely():
     assert 'class="translated-speech"' in rendered
     assert "<script>" not in rendered
     assert "&lt;script&gt;" in rendered
+
+
+
+@pytest.mark.django_db
+def test_round_prompt_makes_interruptions_rare_and_turns_compact():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[lucien, mila],
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+        dialogue_language="French",
+    )
+
+    ctx = build_player_context(player=mila, scene=scene)
+
+    assert "PASS is the normal and preferred response" in ctx.system_prompt
+    assert "ACT_OUT_OF_TURN is an exceptional interruption" in ctx.system_prompt
+    assert "Most inactive ROUND responses should therefore be PASS" in ctx.system_prompt
+    assert "ONE concise immediate intervention" in ctx.system_prompt
+    assert "# RESPONSE DISCIPLINE" in ctx.system_prompt
+    assert "at most two short paragraphs" in ctx.system_prompt
+    assert "Ask at most ONE direct question" in ctx.system_prompt

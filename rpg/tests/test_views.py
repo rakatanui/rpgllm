@@ -755,6 +755,39 @@ def test_public_scene_renders_bilingual_speech_tooltip():
 
 
 @pytest.mark.django_db
+def test_public_and_private_messages_have_copy_controls():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="Публичное сообщение.",
+        visibility=Visibility.PUBLIC,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Личная заявка.",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=lucien,
+        action_type="ACT",
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert html.count('class="copy-message-btn"') >= 2
+    assert 'onclick="copyMessage(this)"' in html
+    assert "async function copyMessage(button)" in html
+
+
+@pytest.mark.django_db
 def test_private_gm_message_is_informational_by_default(mock_backend):
     campaign = make_campaign()
     mila = make_player(campaign, "Мила")

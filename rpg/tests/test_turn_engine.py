@@ -496,3 +496,100 @@ def test_mock_mode_makes_no_http_call(mock_backend):
             selected_players=[player],
         )
         mock_http.assert_not_called()
+
+
+
+@pytest.mark.django_db
+def test_public_turn_rejects_three_paragraph_response(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class VerboseClient(MockLLMClient):
+        def generate(self, **kwargs):
+            return _resp(
+                "Lucien",
+                public="Первый абзац.\n\nВторой абзац.\n\nТретий абзац.",
+            )
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=VerboseClient()):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+
+    execution = result.turn.executions.get(player=lucien)
+    assert execution.state == ExecutionState.INVALID
+    assert "maximum is 2 short paragraphs" in execution.error
+
+
+@pytest.mark.django_db
+def test_public_turn_rejects_multiple_questions(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class QuestionnaireClient(MockLLMClient):
+        def generate(self, **kwargs):
+            return _resp(
+                "Lucien",
+                public="Где он? Кто его видел?",
+            )
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=QuestionnaireClient()):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+
+    execution = result.turn.executions.get(player=lucien)
+    assert execution.state == ExecutionState.INVALID
+    assert "maximum is 1 direct question" in execution.error
+
+
+@pytest.mark.django_db
+def test_out_of_turn_response_has_stricter_length_limit(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    mila = make_player(camp, "Mila")
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+        participants=[lucien, mila],
+    )
+
+    class LongInterruptClient(MockLLMClient):
+        def generate(self, *, system_prompt, **kwargs):
+            if "NOT the active" in system_prompt:
+                return _resp("Mila", action="ACT_OUT_OF_TURN", public="x" * 651)
+            return _resp("Lucien", action="ACT", public="Lucien waits.")
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=LongInterruptClient()):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+
+    execution = result.turn.executions.get(player=mila)
+    assert execution.state == ExecutionState.INVALID
+    assert "ACT_OUT_OF_TURN response is too long" in execution.error
+
+
+def test_response_budget_ignores_hidden_russian_translation():
+    turn = Turn(mode=TurnMode.MANUAL, is_private=False)
+    response = LLMResponse(
+        raw_text="{}",
+        action_type="ACT",
+        public=(
+            "[[SPEECH]]Bonjour.[[RU]]"
+            + ("Очень длинный скрытый перевод. " * 100)
+            + "[[/SPEECH]]"
+        ),
+    )
+
+    turn_engine._validate_response_discipline(
+        turn=turn,
+        out_of_turn=False,
+        response=response,
+    )

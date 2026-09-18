@@ -6,6 +6,8 @@
       {% if m.author_type == "PLAYER" and m.action_type %}
         <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
       {% endif %}
+      <button type="button" class="copy-message-btn" onclick="copyMessage(this)"
+              title="Копировать сообщение" aria-label="Копировать сообщение">Copy</button>
     </div>
     {% if m.action_type != "PASS" %}
       <div class="msg-content">{{ m.content|message_format }}</div>

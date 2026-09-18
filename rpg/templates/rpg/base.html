@@ -66,6 +66,19 @@
   .msg .author { font-weight:bold; }
   .msg-header { display:flex; align-items:center; gap:4px; margin-bottom:5px;
                 min-height:18px; }
+  .copy-message-btn {
+    margin-left:auto;
+    padding:1px 6px;
+    border:1px solid var(--border);
+    border-radius:5px;
+    background:transparent;
+    color:var(--muted);
+    font:inherit;
+    font-size:10px;
+    cursor:pointer;
+  }
+  .copy-message-btn:hover { color:var(--text); border-color:var(--accent); }
+  .copy-message-btn.copied { color:var(--ok); border-color:var(--ok); }
   .msg-content { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
 
   .translated-speech {
@@ -186,6 +199,47 @@
 <div class="container">
 {% block content %}{% endblock %}
 </div>
+<script>
+async function copyMessage(button) {
+  const message = button.closest(".msg");
+  if (!message) return;
+
+  const author = message.querySelector(".author")?.innerText.trim() || "";
+  const action = message.querySelector(".action-tag")?.innerText.trim() || "";
+  const content = message.querySelector(".msg-content")?.innerText.trim() || "";
+  const header = [author, action].filter(Boolean).join(" ");
+  const text = content ? header + "\n" + content : header;
+
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const helper = document.createElement("textarea");
+      helper.value = text;
+      helper.setAttribute("readonly", "");
+      helper.style.position = "fixed";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.select();
+      const copied = document.execCommand("copy");
+      helper.remove();
+      if (!copied) throw new Error("copy command failed");
+    }
+
+    const previous = button.textContent;
+    button.textContent = "✓";
+    button.classList.add("copied");
+    window.setTimeout(() => {
+      button.textContent = previous;
+      button.classList.remove("copied");
+    }, 900);
+  } catch (error) {
+    console.warn("Failed to copy message", error);
+    button.textContent = "!";
+    window.setTimeout(() => { button.textContent = "Copy"; }, 900);
+  }
+}
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
