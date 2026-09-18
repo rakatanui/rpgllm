@@ -6,6 +6,7 @@ from . import views
 urlpatterns = [
     path("", views.campaigns, name="campaigns"),
     path("scene/<int:scene_id>/", views.scene_view, name="scene"),
+    path("scene/<int:scene_id>/history-search/", views.search_history, name="search_history"),
     path("scene/<int:scene_id>/send/", views.send_gm_message, name="send_gm_message"),
     path("scene/<int:scene_id>/silence/", views.silent_turn, name="silent_turn"),
     path("scene/<int:scene_id>/send-private/<int:player_id>/", views.send_private_message,
