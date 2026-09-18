@@ -1,5 +1,6 @@
 {% load rpg_extras %}
 {% for p in players %}
+  {% with failed=failed_execution_by_player|get:p.pk %}
   <div class="player-row {% if scene.mode == "ROUND" and p.pk == active_round_player_id %}active{% endif %}">
     <div>
       <strong>{{ p.display_name }}</strong>
@@ -11,7 +12,21 @@
       model: {% if p.model_config %}{{ p.model_config.name }}{% else %}—{% endif %}
     </div>
     <div>status: <span class="chip {{ p.status }}">{{ p.status }}</span></div>
+    {% if failed %}
+      <div class="execution-error" title="{{ failed.error }}">
+        {{ failed.state }}{% if failed.error %}: {{ failed.error|truncatechars:90 }}{% endif %}
+      </div>
+      <form method="post"
+            action="{% url 'retry_execution' scene.pk failed.pk %}"
+            class="retry-execution-form">
+        {% csrf_token %}
+        <button class="btn btn-retry" type="submit">
+          Retry {{ p.display_name }} only
+        </button>
+      </form>
+    {% endif %}
   </div>
+  {% endwith %}
 {% empty %}
   <p class="meta">No players. Add some in Admin.</p>
 {% endfor %}
