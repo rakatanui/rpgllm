@@ -479,6 +479,48 @@ def test_retry_execution_view_rejects_completed_execution():
 
 
 @pytest.mark.django_db
+def test_message_output_preserves_multiline_content_and_separates_header():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Люсьен открывает дверь.\n— Оставайтесь здесь.\nОн выходит наружу.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert 'class="msg-header"' in html
+    assert 'class="msg-content"' in html
+    assert "Люсьен [ACT]" not in html
+    assert "Люсьен открывает дверь.\n— Оставайтесь здесь.\nОн выходит наружу." in html
+
+
+@pytest.mark.django_db
+def test_gm_composer_has_dialogue_format_button():
+    campaign = make_campaign()
+    make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert 'id="gm-composer-input"' in html
+    assert ">Реплика</button>" in html
+    assert "formatSelectedAsDialogue" in html
+    assert '"— "' in html
+
+
+@pytest.mark.django_db
 def test_private_gm_message_is_informational_by_default(mock_backend):
     campaign = make_campaign()
     mila = make_player(campaign, "Мила")
