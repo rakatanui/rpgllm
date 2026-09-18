@@ -230,6 +230,19 @@ has a Copy control that copies the author/action header plus the visible message
 text; the HTTP `mraz.local` deployment falls back to the legacy browser copy
 command when the secure Clipboard API is unavailable.
 
+Successful public player replies also expose two GM correction controls:
+
+- **OOC** asks the GM for a private meta-comment tied to that exact public
+  declaration. The same player model receives the comment privately and may
+  either keep its declaration or return a full replacement. A replacement
+  updates the existing public Message row in place, so it does not create a new
+  action, new turn, or another ROUND advance.
+- **Regen** asks only that player's model for a fresh variant from the original
+  frozen turn context. The old public Message row is replaced in place only
+  after the new response passes the normal action/length validation. Other
+  players are never replayed and ROUND advancement is never repeated.
+
+
 ROUND treats `ACT_OUT_OF_TURN` as an exceptional interrupt rather than a
 normal alternate action. Inactive players are explicitly instructed to prefer
 `PASS` unless waiting would make the intervention impossible or materially
