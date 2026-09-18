@@ -521,6 +521,184 @@ def test_gm_composer_has_dialogue_format_button():
 
 
 @pytest.mark.django_db
+def test_public_and_private_feeds_show_newest_messages_first():
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    public_old = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="PUBLIC OLD",
+        visibility=Visibility.PUBLIC,
+    )
+    public_new = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="PUBLIC NEW",
+        visibility=Visibility.PUBLIC,
+    )
+    private_old = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="PRIVATE OLD",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=mila,
+    )
+    private_new = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="PRIVATE NEW",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=mila,
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    public_ids = [message.pk for message in response.context["public_messages"]]
+    assert public_ids[:2] == [public_new.pk, public_old.pk]
+    private_ids = [
+        item["message"].pk
+        for item in response.context["player_private"][mila.pk]
+    ]
+    assert private_ids[:2] == [private_new.pk, private_old.pk]
+
+
+@pytest.mark.django_db
+def test_saoot_controls_list_latest_round_out_of_turn_declarations():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    mathis = make_player(campaign, "Матис")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mila.pk, mathis.pk],
+        active_player_index=0,
+    )
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.ROUND,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk, mila.pk, mathis.pk],
+        active_player_id_snapshot=lucien.pk,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        author_type=AuthorType.PLAYER,
+        author_player=mila,
+        content="Мила перехватывает дверь.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT_OUT_OF_TURN",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        author_type=AuthorType.PLAYER,
+        author_player=mathis,
+        content="Матис выключает питание.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT_OUT_OF_TURN",
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert 'id="saoot-target"' in html
+    assert ">SAOOT" in html
+    assert f'value="{mila.pk}"' in html
+    assert f'value="{mathis.pk}"' in html
+    assert "Мила перехватывает дверь." in html
+    assert "Матис выключает питание." in html
+
+
+@pytest.mark.django_db
+def test_saoot_marker_is_accepted_only_for_latest_round_declaration():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.ROUND,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk, mila.pk],
+        active_player_id_snapshot=lucien.pk,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        author_type=AuthorType.PLAYER,
+        author_player=mila,
+        content="Мила закрывает дверь.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT_OUT_OF_TURN",
+    )
+
+    marker = f"[[SAOOT:{mila.pk}|Мила]]Дверь успевает закрыться.[[/SAOOT]]"
+    accepted = Client().post(
+        reverse("send_gm_message", kwargs={"scene_id": scene.pk}),
+        {"content": marker},
+    )
+
+    assert accepted.status_code == 302
+    stored = Message.objects.get(
+        scene=scene,
+        author_type=AuthorType.GM,
+        content=marker,
+    )
+    assert stored.visibility == Visibility.PUBLIC
+
+    rejected = Client().post(
+        reverse("send_gm_message", kwargs={"scene_id": scene.pk}),
+        {"content": f"[[SAOOT:{lucien.pk}|Люсьен]]Нет.[[/SAOOT]]"},
+    )
+    assert rejected.status_code == 400
+
+
+@pytest.mark.django_db
+def test_saoot_marker_renders_as_highlight_without_raw_markup():
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content=(
+            f"[[SAOOT:{mila.pk}|Мила]]"
+            "Мила успевает перехватить дверь."
+            "[[/SAOOT]]"
+        ),
+        visibility=Visibility.PUBLIC,
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    html = response.content.decode()
+    assert "saoot-resolution" in html
+    assert "SAOOT · Мила" in html
+    assert "Мила успевает перехватить дверь." in html
+    assert "[[SAOOT:" not in html
+
+
+@pytest.mark.django_db
 def test_private_gm_message_is_informational_by_default(mock_backend):
     campaign = make_campaign()
     mila = make_player(campaign, "Мила")
