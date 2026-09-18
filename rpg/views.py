@@ -39,17 +39,44 @@ def scene_view(request, scene_id):
         Message.objects.filter(scene=scene, visibility=Visibility.GM_ONLY)
         .order_by("created_at", "pk")
     )
+    public_by_execution = {
+        message.execution_id: message
+        for message in public_messages
+        if message.execution_id
+        and message.author_type == AuthorType.PLAYER
+    }
+
     player_private = {}
     for player in players:
-        player_private[player.pk] = list(
+        private_messages = list(
             Message.objects.filter(
                 scene=scene,
                 visibility=Visibility.PRIVATE_GM_PLAYER,
                 private_player=player,
             )
-            .select_related("author_player")
+            .select_related(
+                "author_player",
+                "turn__trigger_message",
+                "execution",
+            )
             .order_by("created_at", "pk")
         )
+        player_private[player.pk] = [
+            {
+                "message": message,
+                "public_message": (
+                    public_by_execution.get(message.execution_id)
+                    if message.execution_id
+                    else None
+                ),
+                "trigger_message": (
+                    message.turn.trigger_message
+                    if message.turn_id and message.turn.trigger_message_id
+                    else None
+                ),
+            }
+            for message in private_messages
+        ]
     return render(
         request,
         "rpg/scene.html",
