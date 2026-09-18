@@ -371,6 +371,7 @@ def _persist_player_response(
                 visibility=Visibility.PRIVATE_GM_PLAYER,
                 private_player=player,
                 action_type=action,
+                gm_unread=True,
             )
         else:
             main_message = Message.objects.create(
@@ -385,7 +386,9 @@ def _persist_player_response(
                 action_type=action,
             )
 
-        if response.private_to_gm and response.private_to_gm.strip():
+        private_text = (response.private_to_gm or "").strip()
+        public_text = (response.public or "").strip()
+        if private_text and private_text != public_text:
             Message.objects.create(
                 campaign=scene.campaign,
                 scene=scene,
@@ -393,10 +396,11 @@ def _persist_player_response(
                 execution=execution,
                 author_type=AuthorType.PLAYER,
                 author_player=player,
-                content=response.private_to_gm.strip(),
+                content=private_text,
                 visibility=Visibility.PRIVATE_GM_PLAYER,
                 private_player=player,
                 action_type=action,
+                gm_unread=True,
             )
 
     return main_message
