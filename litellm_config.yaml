@@ -8,6 +8,16 @@ model_list:
       api_base: os.environ/OLLAMA_BASE_URL
       # no key needed for local ollama
 
+  - model_name: ollama-deepseek-v4-pro
+    litellm_params:
+      model: ollama/deepseek-v4-pro:cloud
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama-gemma4-31b
+    litellm_params:
+      model: ollama/gemma4:31b-cloud
+      api_base: os.environ/OLLAMA_BASE_URL
+
   # --- OpenAI ---
   - model_name: openai-gpt4o
     litellm_params:
