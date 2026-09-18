@@ -699,6 +699,62 @@ def test_saoot_marker_renders_as_highlight_without_raw_markup():
 
 
 @pytest.mark.django_db
+def test_scene_displays_dialogue_language_and_followup_inherits_it():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    source = make_scene(
+        campaign,
+        name="French scene",
+        mode=TurnMode.MANUAL,
+        participants=[lucien],
+        dialogue_language="French",
+        is_closed=True,
+    )
+
+    page = Client().get(reverse("scene", kwargs={"scene_id": source.pk}))
+    assert page.status_code == 200
+    assert "Speech:" in page.content.decode()
+    assert "French" in page.content.decode()
+
+    response = Client().post(
+        reverse("create_followup_scene", kwargs={"scene_id": source.pk}),
+        {"name": "Next French scene", "participants": [str(lucien.pk)]},
+    )
+
+    assert response.status_code == 302
+    created = source.next_scenes.get(name="Next French scene")
+    assert created.dialogue_language == "French"
+
+
+@pytest.mark.django_db
+def test_public_scene_renders_bilingual_speech_tooltip():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content=(
+            "Люсьен открывает дверь.\n"
+            "[[SPEECH]]Je reviens dans une minute."
+            "[[RU]]Я вернусь через минуту.[[/SPEECH]]"
+        ),
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert "Je reviens dans une minute." in html
+    assert 'data-translation="Я вернусь через минуту."' in html
+    assert "[[SPEECH]]" not in html
+
+
+@pytest.mark.django_db
 def test_private_gm_message_is_informational_by_default(mock_backend):
     campaign = make_campaign()
     mila = make_player(campaign, "Мила")
