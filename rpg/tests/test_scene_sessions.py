@@ -126,6 +126,53 @@ def test_predecessor_history_follows_scene_participation_without_leaking_paralle
 
 
 @pytest.mark.django_db
+def test_private_predecessor_history_stays_private_after_threads_merge():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Lucien")
+    mila = make_player(campaign, "Mila")
+
+    solo = make_scene(
+        campaign,
+        name="Lucien private thread",
+        mode=TurnMode.MANUAL,
+        participants=[lucien],
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=solo,
+        author_type=AuthorType.GM,
+        content="SECRET-KING",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=lucien,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=solo,
+        author_type=AuthorType.GM,
+        content="GM-ONLY-NOTE",
+        visibility=Visibility.GM_ONLY,
+    )
+    Scene.objects.filter(pk=solo.pk).update(is_closed=True)
+    solo.refresh_from_db()
+
+    shared = make_scene(
+        campaign,
+        name="Shared",
+        mode=TurnMode.MANUAL,
+        participants=[lucien, mila],
+        predecessors=[solo],
+    )
+
+    lucien_ctx = build_player_context(player=lucien, scene=shared)
+    mila_ctx = build_player_context(player=mila, scene=shared)
+
+    assert "SECRET-KING" in _contents(lucien_ctx)
+    assert "SECRET-KING" not in _contents(mila_ctx)
+    assert "GM-ONLY-NOTE" not in _contents(lucien_ctx)
+    assert "GM-ONLY-NOTE" not in _contents(mila_ctx)
+
+
+@pytest.mark.django_db
 def test_predecessor_scene_summary_is_inherited_only_by_its_participants():
     campaign = make_campaign()
     lucien = make_player(campaign, "Lucien")
@@ -244,6 +291,27 @@ def test_close_scene_makes_public_private_and_mode_writes_read_only(mock_backend
     assert "CLOSED" in html
     assert "New scene from here" in html
     assert 'id="composer"' not in html
+
+
+@pytest.mark.django_db
+def test_message_model_rejects_direct_write_to_closed_scene():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Lucien")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[lucien],
+        is_closed=True,
+    )
+
+    with pytest.raises(ValidationError, match="closed scene"):
+        Message.objects.create(
+            campaign=campaign,
+            scene=scene,
+            author_type=AuthorType.GM,
+            content="forbidden",
+            visibility=Visibility.PUBLIC,
+        )
 
 
 @pytest.mark.django_db
