@@ -96,6 +96,23 @@ class Scene(models.Model):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="scenes")
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    participants = models.ManyToManyField(
+        "Player",
+        through="SceneParticipant",
+        related_name="scenes",
+        blank=True,
+        help_text="Players who are actually present in / can act in this scene.",
+    )
+    previous_scenes = models.ManyToManyField(
+        "self",
+        symmetrical=False,
+        blank=True,
+        related_name="next_scenes",
+        help_text=(
+            "Closed earlier scenes whose visible history is inherited as backstory. "
+            "A scene may have multiple predecessors when parallel threads converge."
+        ),
+    )
     memory_summary = models.TextField(
         blank=True,
         help_text=(
@@ -110,6 +127,11 @@ class Scene(models.Model):
         help_text="Ordered list of Player IDs defining the round order.",
     )
     active_player_index = models.IntegerField(default=0)
+    is_closed = models.BooleanField(
+        default=False,
+        help_text="Closed scenes are read-only and may only be used as history for later scenes.",
+    )
+    closed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -146,6 +168,18 @@ class Scene(models.Model):
                 raise ValidationError(
                     {"round_order": f"Invalid or foreign Player IDs: {invalid}"}
                 )
+        if self.pk:
+            participant_ids = set(
+                self.scene_participants.values_list("player_id", flat=True)
+            )
+            if order and set(order) != participant_ids:
+                raise ValidationError(
+                    {
+                        "round_order": (
+                            "ROUND order must contain every scene participant exactly once."
+                        )
+                    }
+                )
 
 
 class Player(models.Model):
@@ -175,6 +209,43 @@ class Player(models.Model):
 
     def __str__(self):
         return self.display_name
+
+
+class SceneParticipant(models.Model):
+    scene = models.ForeignKey(
+        Scene,
+        on_delete=models.CASCADE,
+        related_name="scene_participants",
+    )
+    player = models.ForeignKey(
+        Player,
+        on_delete=models.CASCADE,
+        related_name="scene_participations",
+    )
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["order", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scene", "player"],
+                name="uniq_scene_participant",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.scene} / {self.player}"
+
+    def clean(self):
+        super().clean()
+        if (
+            self.scene_id
+            and self.player_id
+            and self.scene.campaign_id != self.player.campaign_id
+        ):
+            raise ValidationError(
+                {"player": "Scene participant must belong to the same campaign."}
+            )
 
 
 class LoreEntry(models.Model):
@@ -325,6 +396,11 @@ class Message(models.Model):
     def __str__(self):
         who = self.author_player.display_name if self.author_player else self.author_type
         return f"[{self.visibility}] {who}: {self.content[:60]}"
+
+    def save(self, *args, **kwargs):
+        if self.scene_id and Scene.objects.filter(pk=self.scene_id, is_closed=True).exists():
+            raise ValidationError("Cannot write messages to a closed scene.")
+        return super().save(*args, **kwargs)
 
     def clean(self):
         super().clean()

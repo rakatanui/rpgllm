@@ -153,6 +153,7 @@ def test_round_server_validates_action_types(mock_backend, active, action, valid
         mode=TurnMode.ROUND,
         round_order=[lucien.pk, mila.pk],
         active_player_index=0,
+        participants=[lucien, mila],
     )
 
     class ActionClient(MockLLMClient):
@@ -389,6 +390,7 @@ def test_failed_round_does_not_advance_until_retry_succeeds(mock_backend):
         mode=TurnMode.ROUND,
         round_order=[lucien.pk, mila.pk],
         active_player_index=0,
+        participants=[lucien, mila],
     )
 
     class FailMilaOnce(MockLLMClient):

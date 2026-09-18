@@ -1,8 +1,10 @@
 """Views for MRAZ Master. Business rules live in services."""
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from rpg.models import (
@@ -11,35 +13,38 @@ from rpg.models import (
     Message,
     Player,
     Scene,
+    SceneParticipant,
     TurnMode,
+    TurnState,
     Visibility,
 )
 from rpg.services import turn_engine
 
 
-def _campaign_players(scene):
+def _scene_players(scene):
     return list(
-        Player.objects.filter(campaign=scene.campaign)
+        Player.objects.filter(scene_participations__scene=scene)
         .select_related("model_config")
-        .order_by("created_at", "pk")
+        .order_by("scene_participations__order", "scene_participations__pk")
     )
 
 
 def _validate_round_order(scene, order):
-    """Validate a confirmed ROUND order against all players in the campaign."""
+    """Validate a confirmed ROUND order against this scene's participants."""
     player_ids = list(
-        Player.objects.filter(campaign=scene.campaign)
-        .order_by("created_at", "pk")
-        .values_list("pk", flat=True)
+        scene.scene_participants.order_by("order", "pk")
+        .values_list("player_id", flat=True)
     )
     if not player_ids:
-        raise ValidationError("ROUND mode requires at least one player.")
+        raise ValidationError("ROUND mode requires at least one scene participant.")
     if not order:
         raise ValidationError("Choose and confirm the ROUND player order first.")
     if len(order) != len(set(order)):
         raise ValidationError("ROUND player order contains duplicate players.")
     if len(order) != len(player_ids) or set(order) != set(player_ids):
-        raise ValidationError("ROUND player order must include every campaign player exactly once.")
+        raise ValidationError(
+            "ROUND player order must include every scene participant exactly once."
+        )
     return order
 
 
@@ -91,7 +96,7 @@ def campaigns(request):
 
 def scene_view(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    players = _campaign_players(scene)
+    players = _scene_players(scene)
     players_by_id = {player.pk: player for player in players}
     stored_round_order = list(scene.round_order or [])
     round_players = [
@@ -173,6 +178,14 @@ def scene_view(request, scene_id):
             "active_round_player": active_round_player,
             "unread_private_player_ids": unread_private_player_ids,
             "active_round_player_id": _active_round_player_id(scene),
+            "previous_scenes": list(
+                scene.previous_scenes.order_by("created_at", "pk")
+            ),
+            "all_campaign_players": list(
+                Player.objects.filter(campaign=scene.campaign)
+                .order_by("created_at", "pk")
+            ),
+            "source_participant_ids": [player.pk for player in players],
         },
     )
 
@@ -183,9 +196,7 @@ def scene_fragment(request, scene_id):
 
 
 def scene_view_fragment(request, scene):
-    players = list(
-        Player.objects.filter(campaign=scene.campaign).order_by("created_at", "pk")
-    )
+    players = _scene_players(scene)
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
         .select_related("author_player")
@@ -200,11 +211,7 @@ def scene_view_fragment(request, scene):
 
 def players_status(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    players = list(
-        Player.objects.filter(campaign=scene.campaign)
-        .select_related("model_config")
-        .order_by("created_at", "pk")
-    )
+    players = _scene_players(scene)
     return render(
         request,
         "rpg/_players.html",
@@ -230,12 +237,12 @@ def _selected_players_from_request(request, scene):
     players_by_id = {
         player.pk: player
         for player in Player.objects.filter(
-            campaign=scene.campaign,
+            scene_participations__scene=scene,
             pk__in=requested_ids,
         )
     }
     if len(players_by_id) != len(requested_ids):
-        raise ValidationError("Selected player does not belong to this campaign")
+        raise ValidationError("Selected player is not a participant in this scene")
     return [players_by_id[player_id] for player_id in requested_ids]
 
 
@@ -246,6 +253,8 @@ def send_gm_message(request, scene_id):
     run_turn_flag = request.POST.get("run_turn", "1") == "1"
     if not content:
         return HttpResponseBadRequest("empty content")
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
 
     if scene.mode == TurnMode.ROUND and not _round_order_is_ready(scene):
         return HttpResponseBadRequest(
@@ -278,13 +287,19 @@ def send_gm_message(request, scene_id):
 @require_http_methods(["POST"])
 def send_private_message(request, scene_id, player_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = get_object_or_404(Player, pk=player_id, campaign=scene.campaign)
+    player = get_object_or_404(
+        Player,
+        pk=player_id,
+        scene_participations__scene=scene,
+    )
     content = (request.POST.get("content") or "").strip()
     # Private messages are informational by default. The model is called only
     # when the GM explicitly checks "Ask for response".
     run_turn_flag = request.POST.get("run_turn", "0") == "1"
     if not content:
         return HttpResponseBadRequest("empty content")
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
 
     try:
         if run_turn_flag:
@@ -313,7 +328,11 @@ def send_private_message(request, scene_id, player_id):
 @require_http_methods(["POST"])
 def mark_private_read(request, scene_id, player_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = get_object_or_404(Player, pk=player_id, campaign=scene.campaign)
+    player = get_object_or_404(
+        Player,
+        pk=player_id,
+        scene_participations__scene=scene,
+    )
     Message.objects.filter(
         scene=scene,
         visibility=Visibility.PRIVATE_GM_PLAYER,
@@ -327,6 +346,8 @@ def mark_private_read(request, scene_id, player_id):
 @require_http_methods(["POST"])
 def set_mode(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
     mode = request.POST.get("mode")
     if mode not in dict(TurnMode.choices):
         return HttpResponseBadRequest("invalid mode")
@@ -344,6 +365,74 @@ def set_mode(request, scene_id):
     if mode == TurnMode.ROUND:
         update_fields.extend(["round_order", "active_player_index"])
     scene.save(update_fields=update_fields)
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def close_scene(request, scene_id):
+    with transaction.atomic():
+        scene = get_object_or_404(
+            Scene.objects.select_for_update().select_related("campaign"),
+            pk=scene_id,
+        )
+        if scene.is_closed:
+            return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+        if scene.turns.filter(state=TurnState.RUNNING).exists():
+            return HttpResponseBadRequest("cannot close a scene with a running turn")
+        scene.is_closed = True
+        scene.closed_at = timezone.now()
+        scene.save(update_fields=["is_closed", "closed_at", "updated_at"])
+
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def create_followup_scene(request, scene_id):
+    source = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    if not source.is_closed:
+        return HttpResponseBadRequest("close the source scene before using it as history")
+
+    name = (request.POST.get("name") or "").strip()
+    if not name:
+        return HttpResponseBadRequest("scene name is required")
+
+    raw_ids = request.POST.getlist("participants")
+    if not raw_ids:
+        return HttpResponseBadRequest("a follow-up scene needs at least one participant")
+    try:
+        participant_ids = [int(value) for value in raw_ids]
+    except ValueError:
+        return HttpResponseBadRequest("invalid participant id")
+    if len(participant_ids) != len(set(participant_ids)):
+        return HttpResponseBadRequest("duplicate participants")
+
+    valid_players = {
+        player.pk: player
+        for player in Player.objects.filter(
+            campaign=source.campaign,
+            pk__in=participant_ids,
+        )
+    }
+    if len(valid_players) != len(participant_ids):
+        return HttpResponseBadRequest("all participants must belong to the campaign")
+    with transaction.atomic():
+        scene = Scene.objects.create(
+            campaign=source.campaign,
+            name=name,
+            mode=TurnMode.MANUAL,
+        )
+        SceneParticipant.objects.bulk_create(
+            [
+                SceneParticipant(
+                    scene=scene,
+                    player=valid_players[player_id],
+                    order=index,
+                )
+                for index, player_id in enumerate(participant_ids)
+            ]
+        )
+        scene.previous_scenes.add(source)
+
     return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
 
 

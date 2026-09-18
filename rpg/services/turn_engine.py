@@ -25,7 +25,7 @@ from rpg.models import (
     TurnState,
     Visibility,
 )
-from rpg.services.context_builder import build_player_context
+from rpg.services.context_builder import build_player_context, get_player_history_messages
 from rpg.services.llm import LLMResponse, get_llm_client
 
 logger = logging.getLogger("rpg.turn_engine")
@@ -64,6 +64,9 @@ def start_turn(
             .get(pk=scene.pk)
         )
 
+        if locked_scene.is_closed:
+            raise ValidationError("This scene is closed and read-only.")
+
         if normalized_id is not None:
             existing = (
                 Turn.objects.filter(scene=locked_scene, client_turn_id=normalized_id)
@@ -76,7 +79,7 @@ def start_turn(
                 )
 
         if private_to_player is not None:
-            _ensure_player_in_scene_campaign(locked_scene, private_to_player)
+            _ensure_scene_participant(locked_scene, private_to_player)
             mode = TurnMode.MANUAL
             targets = [private_to_player]
             active_player_id = None
@@ -143,18 +146,21 @@ def start_turn(
             for index, player in enumerate(targets)
         ]
 
-        # MANUAL/SIMULTANEOUS/ROUND/private use one frozen input snapshot so
-        # players cannot react to current-turn responses from peers.
+        # MANUAL/SIMULTANEOUS/ROUND/private freeze a per-player snapshot.
+        # Each player may inherit a different predecessor chain, so one shared
+        # message-id list would either lose history or leak another branch.
         if mode in (TurnMode.MANUAL, TurnMode.SIMULTANEOUS, TurnMode.ROUND) or is_private:
-            snapshot_ids = list(
-                Message.objects.filter(scene=locked_scene)
-                .order_by("created_at", "pk")
-                .values_list("pk", flat=True)
-            )
-            TurnExecution.objects.filter(pk__in=[e.pk for e in executions]).update(
-                history_message_ids=snapshot_ids
-            )
             for execution in executions:
+                snapshot_ids = [
+                    message.pk
+                    for message in get_player_history_messages(
+                        player=execution.player,
+                        scene=locked_scene,
+                    )
+                ]
+                TurnExecution.objects.filter(pk=execution.pk).update(
+                    history_message_ids=snapshot_ids
+                )
                 execution.history_message_ids = snapshot_ids
 
     client = get_llm_client()
@@ -162,11 +168,13 @@ def start_turn(
 
     for execution in executions:
         if mode == TurnMode.TABLE and not is_private:
-            history_ids = list(
-                Message.objects.filter(scene=scene)
-                .order_by("created_at", "pk")
-                .values_list("pk", flat=True)
-            )
+            history_ids = [
+                message.pk
+                for message in get_player_history_messages(
+                    player=execution.player,
+                    scene=scene,
+                )
+            ]
             TurnExecution.objects.filter(pk=execution.pk).update(
                 history_message_ids=history_ids
             )
@@ -202,6 +210,8 @@ def retry_execution(execution: TurnExecution) -> TurnResult:
             .select_related("turn__scene__campaign", "player")
             .get(pk=execution.pk)
         )
+        if execution.turn.scene.is_closed:
+            raise RuntimeError("Cannot retry an execution in a closed scene")
         if execution.state not in (ExecutionState.FAILED, ExecutionState.INVALID):
             raise RuntimeError("Can only retry a FAILED or INVALID execution")
         execution.state = ExecutionState.PENDING
@@ -267,11 +277,16 @@ def _run_execution(
     _set_player_status(player, PlayerStatus.GENERATING)
 
     try:
-        history = list(
-            Message.objects.filter(pk__in=execution.history_message_ids)
+        frozen_messages = {
+            message.pk: message
+            for message in Message.objects.filter(pk__in=execution.history_message_ids)
             .select_related("author_player")
-            .order_by("created_at", "pk")
-        )
+        }
+        history = [
+            frozen_messages[message_id]
+            for message_id in execution.history_message_ids
+            if message_id in frozen_messages
+        ]
         context = build_player_context(
             player=player,
             scene=scene,
@@ -451,15 +466,23 @@ def _validated_round_players(scene: Scene) -> list[Player]:
     order_ids = list(scene.round_order or [])
     if not order_ids:
         raise ValidationError("ROUND mode requires a confirmed player order")
+    participant_ids = list(
+        scene.scene_participants.order_by("order", "pk")
+        .values_list("player_id", flat=True)
+    )
+    if set(order_ids) != set(participant_ids) or len(order_ids) != len(participant_ids):
+        raise ValidationError(
+            "ROUND order must contain every scene participant exactly once"
+        )
     players_by_id = {
         player.pk: player
         for player in Player.objects.filter(
-            campaign=scene.campaign,
+            scene_participations__scene=scene,
             pk__in=order_ids,
         )
     }
     if len(players_by_id) != len(order_ids):
-        raise ValidationError("round_order contains missing or foreign players")
+        raise ValidationError("round_order contains missing or foreign scene participants")
     return [players_by_id[player_id] for player_id in order_ids]
 
 
@@ -472,23 +495,25 @@ def _validate_selected_players(scene: Scene, players: list[Player]) -> list[Play
     valid = {
         player.pk: player
         for player in Player.objects.filter(
-            campaign=scene.campaign,
+            scene_participations__scene=scene,
             pk__in=ids,
         )
     }
     if len(valid) != len(ids):
-        raise ValidationError("Selected player does not belong to the scene campaign")
+        raise ValidationError("Selected player is not a participant in this scene")
     return [valid[player_id] for player_id in ids]
 
 
-def _ensure_player_in_scene_campaign(scene: Scene, player: Player) -> None:
-    if player.campaign_id != scene.campaign_id:
-        raise ValidationError("Player does not belong to the scene campaign")
+def _ensure_scene_participant(scene: Scene, player: Player) -> None:
+    if not scene.scene_participants.filter(player=player).exists():
+        raise ValidationError("Player is not a participant in this scene")
 
 
 def _scene_players(scene: Scene) -> list[Player]:
     return list(
-        Player.objects.filter(campaign=scene.campaign).order_by("created_at", "pk")
+        Player.objects.filter(scene_participations__scene=scene)
+        .select_related("model_config")
+        .order_by("scene_participations__order", "scene_participations__pk")
     )
 
 

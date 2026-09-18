@@ -1,5 +1,5 @@
 """Test factories / helpers shared across test modules."""
-from rpg.models import Campaign, ModelConfig, Player, Scene, TurnMode
+from rpg.models import Campaign, ModelConfig, Player, Scene, SceneParticipant, TurnMode
 
 
 def make_campaign(name="Test Campaign", **kw):
@@ -25,7 +25,15 @@ def make_player(campaign, display_name="P", character_prompt="", model_config=No
     )
 
 
-def make_scene(campaign, name="Scene 1", mode=TurnMode.ROUND, round_order=None, **kw):
+def make_scene(
+    campaign,
+    name="Scene 1",
+    mode=TurnMode.ROUND,
+    round_order=None,
+    participants=None,
+    predecessors=None,
+    **kw,
+):
     s = Scene.objects.create(
         campaign=campaign,
         name=name,
@@ -33,6 +41,18 @@ def make_scene(campaign, name="Scene 1", mode=TurnMode.ROUND, round_order=None, 
         round_order=round_order or [],
         **kw,
     )
+    if participants is None:
+        participants = list(
+            Player.objects.filter(campaign=campaign).order_by("created_at", "pk")
+        )
+    SceneParticipant.objects.bulk_create(
+        [
+            SceneParticipant(scene=s, player=player, order=index)
+            for index, player in enumerate(participants)
+        ]
+    )
+    if predecessors:
+        s.previous_scenes.add(*predecessors)
     return s
 
 

@@ -9,15 +9,22 @@
 
 <div class="toolbar">
   <strong>{{ scene.name }}</strong>
+  {% if scene.is_closed %}
+    <span class="chip">CLOSED</span>
+  {% endif %}
   <span class="meta">Mode:</span>
-  <form id="mode-form" method="post" action="{% url 'set_mode' scene.pk %}" class="inline">
-    {% csrf_token %}
-    <select name="mode" onchange="handleModeChange(this)">
-    {% for value, label in modes %}
-      <option value="{{ value }}" {% if scene.mode == value %}selected{% endif %}>{{ label }}</option>
-    {% endfor %}
-    </select>
-  </form>
+  {% if scene.is_closed %}
+    <span class="chip">{{ scene.mode }}</span>
+  {% else %}
+    <form id="mode-form" method="post" action="{% url 'set_mode' scene.pk %}" class="inline">
+      {% csrf_token %}
+      <select name="mode" onchange="handleModeChange(this)">
+      {% for value, label in modes %}
+        <option value="{{ value }}" {% if scene.mode == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+      </select>
+    </form>
+  {% endif %}
   {% if scene.mode == "ROUND" %}
     <span class="meta">Active:
       {% if active_round_player %}
@@ -27,11 +34,24 @@
       {% endif %}
     </span>
   {% endif %}
+  {% if previous_scenes %}
+    <span class="meta">History:</span>
+    {% for previous in previous_scenes %}
+      <a class="chip" href="{% url 'scene' previous.pk %}">{{ previous.name }}</a>
+    {% endfor %}
+  {% endif %}
   <a class="btn" href="/">Home</a>
   <a class="btn" href="/admin/rpg/scene/{{ scene.pk }}/change/">Edit</a>
+  {% if not scene.is_closed %}
+    <form method="post" action="{% url 'close_scene' scene.pk %}" class="inline"
+          onsubmit="return confirm('Close this scene? It will become read-only.');">
+      {% csrf_token %}
+      <button class="btn" type="submit">Close scene</button>
+    </form>
+  {% endif %}
 </div>
 
-<div id="round-setup" class="round-setup" {% if scene.mode != "ROUND" %}hidden{% endif %}>
+<div id="round-setup" class="round-setup" {% if scene.mode != "ROUND" or scene.is_closed %}hidden{% endif %}>
   <form method="post" action="{% url 'set_mode' scene.pk %}" onsubmit="return validateRoundOrder(this)">
     {% csrf_token %}
     <input type="hidden" name="mode" value="ROUND">
@@ -60,6 +80,7 @@
   </form>
 </div>
 
+{% if not scene.is_closed %}
 <form id="composer" class="gm-composer-sticky" method="post" action="{% url 'send_gm_message' scene.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
 {% csrf_token %}
 <input type="hidden" name="client_turn_id" value="">
@@ -76,6 +97,28 @@
           {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% endif %}>Send</button>
 </div>
 </form>
+{% else %}
+<div class="gm-composer-sticky">
+  <div class="round-warning">
+    This scene is closed and read-only. Its history can be inherited by a new scene.
+  </div>
+  <form method="post" action="{% url 'create_followup_scene' scene.pk %}">
+    {% csrf_token %}
+    <div class="toolbar composer-toolbar">
+      <input type="text" name="name" placeholder="New scene / session name..." style="flex:1" required>
+      <span class="meta">Participants:</span>
+      {% for p in all_campaign_players %}
+        <label>
+          <input type="checkbox" name="participants" value="{{ p.pk }}"
+                 {% if p.pk in source_participant_ids %}checked{% endif %}>
+          {{ p.display_name }}
+        </label>
+      {% endfor %}
+      <button class="btn btn-primary" type="submit">New scene from here</button>
+    </div>
+  </form>
+</div>
+{% endif %}
 </div>
 
 <div class="grid3">
@@ -149,6 +192,7 @@
           <p class="meta">No private messages.</p>
         {% endfor %}
         </div>
+        {% if not scene.is_closed %}
         <form method="post" action="{% url 'send_private_message' scene.pk p.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
         {% csrf_token %}
         <input type="hidden" name="client_turn_id" value="">
@@ -160,6 +204,9 @@
           <button class="btn btn-primary" type="submit">Send</button>
         </div>
         </form>
+        {% else %}
+          <p class="meta">Scene closed: private history is read-only.</p>
+        {% endif %}
       </div>
       {% endfor %}
     </div>

@@ -1,8 +1,19 @@
 """Django admin for MRAZ Master."""
-from django.contrib import admin
 from django import forms
+from django.contrib import admin
+from django.core.exceptions import ValidationError
 
-from rpg.models import Campaign, LoreEntry, Message, ModelConfig, Player, Scene, Turn, TurnExecution
+from rpg.models import (
+    Campaign,
+    LoreEntry,
+    Message,
+    ModelConfig,
+    Player,
+    Scene,
+    SceneParticipant,
+    Turn,
+    TurnExecution,
+)
 
 
 @admin.register(ModelConfig)
@@ -24,7 +35,14 @@ class PlayerInline(admin.TabularInline):
 class SceneInline(admin.TabularInline):
     model = Scene
     extra = 1
-    fields = ("name", "description", "mode", "round_order", "active_player_index")
+    fields = (
+        "name",
+        "description",
+        "mode",
+        "round_order",
+        "active_player_index",
+        "is_closed",
+    )
     show_change_link = True
 
 
@@ -40,12 +58,91 @@ class SceneForm(forms.ModelForm):
         model = Scene
         fields = "__all__"
 
+    def clean_previous_scenes(self):
+        predecessors = self.cleaned_data.get("previous_scenes")
+        campaign = self.cleaned_data.get("campaign")
+        campaign_id = campaign.pk if campaign else self.instance.campaign_id
+        if predecessors is None:
+            return predecessors
+
+        for predecessor in predecessors:
+            if campaign_id and predecessor.campaign_id != campaign_id:
+                raise ValidationError("A predecessor scene must belong to the same campaign.")
+            if not predecessor.is_closed:
+                raise ValidationError("Only closed scenes can be used as predecessor history.")
+            if self.instance.pk and predecessor.pk == self.instance.pk:
+                raise ValidationError("A scene cannot use itself as predecessor history.")
+            if self.instance.pk and _scene_reaches(predecessor, self.instance.pk):
+                raise ValidationError("Scene predecessor links cannot contain cycles.")
+        return predecessors
+
+
+def _scene_reaches(scene: Scene, target_scene_id: int) -> bool:
+    pending = [scene]
+    visited = set()
+    while pending:
+        current = pending.pop()
+        if current.pk in visited:
+            continue
+        visited.add(current.pk)
+        if current.pk == target_scene_id:
+            return True
+        pending.extend(current.previous_scenes.all())
+    return False
+
+
+class SceneParticipantInline(admin.TabularInline):
+    model = SceneParticipant
+    extra = 1
+    fields = ("player", "order")
+    ordering = ("order", "pk")
+
 
 @admin.register(Scene)
 class SceneAdmin(admin.ModelAdmin):
-    list_display = ("name", "campaign", "mode", "active_player_index", "created_at")
-    list_filter = ("campaign", "mode")
+    form = SceneForm
+    list_display = (
+        "name",
+        "campaign",
+        "mode",
+        "is_closed",
+        "active_player_index",
+        "created_at",
+    )
+    list_filter = ("campaign", "mode", "is_closed")
     search_fields = ("name",)
+    filter_horizontal = ("previous_scenes",)
+    readonly_fields = ("closed_at",)
+    inlines = [SceneParticipantInline]
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "campaign",
+                    "name",
+                    "description",
+                    "memory_summary",
+                )
+            },
+        ),
+        (
+            "Session flow",
+            {
+                "fields": ("previous_scenes", "is_closed", "closed_at"),
+                "description": (
+                    "Previous scenes act as inherited backstory. Only participants "
+                    "of an earlier scene can see that scene's public history."
+                ),
+            },
+        ),
+        (
+            "Turn engine",
+            {
+                "fields": ("mode", "round_order", "active_player_index"),
+            },
+        ),
+    )
 
 
 @admin.register(Player)
@@ -94,11 +191,20 @@ class TurnAdmin(admin.ModelAdmin):
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ("pk", "scene", "author_type", "author_player", "visibility",
-                    "private_player", "action_type", "created_at")
+    list_display = (
+        "pk",
+        "scene",
+        "author_type",
+        "author_player",
+        "visibility",
+        "private_player",
+        "action_type",
+        "created_at",
+    )
     list_filter = ("visibility", "author_type", "action_type")
     search_fields = ("content",)
     readonly_fields = ("created_at",)
+
 
 @admin.register(TurnExecution)
 class TurnExecutionAdmin(admin.ModelAdmin):

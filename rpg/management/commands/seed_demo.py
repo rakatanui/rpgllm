@@ -2,7 +2,7 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from rpg.models import Campaign, ModelConfig, Player, Scene, TurnMode
+from rpg.models import Campaign, ModelConfig, Player, Scene, SceneParticipant, TurnMode
 
 
 PLAYERS = [
@@ -54,6 +54,16 @@ class Command(BaseCommand):
                 "mode": TurnMode.ROUND,
             },
         )
+
+        # Explicit scene participants preserve the old demo behavior.
+        if s_created or not scene.scene_participants.exists():
+            scene.scene_participants.all().delete()
+            SceneParticipant.objects.bulk_create(
+                [
+                    SceneParticipant(scene=scene, player=player, order=index)
+                    for index, player in enumerate(created_players)
+                ]
+            )
 
         # Round order: Lucien -> Mila -> Mathis (by pk)
         if s_created or not scene.round_order:
