@@ -398,18 +398,14 @@ def create_followup_scene(request, scene_id):
         return HttpResponseBadRequest("scene name is required")
 
     raw_ids = request.POST.getlist("participants")
-    if raw_ids:
-        try:
-            participant_ids = [int(value) for value in raw_ids]
-        except ValueError:
-            return HttpResponseBadRequest("invalid participant id")
-        if len(participant_ids) != len(set(participant_ids)):
-            return HttpResponseBadRequest("duplicate participants")
-    else:
-        participant_ids = list(
-            source.scene_participants.order_by("order", "pk")
-            .values_list("player_id", flat=True)
-        )
+    if not raw_ids:
+        return HttpResponseBadRequest("a follow-up scene needs at least one participant")
+    try:
+        participant_ids = [int(value) for value in raw_ids]
+    except ValueError:
+        return HttpResponseBadRequest("invalid participant id")
+    if len(participant_ids) != len(set(participant_ids)):
+        return HttpResponseBadRequest("duplicate participants")
 
     valid_players = {
         player.pk: player
@@ -420,9 +416,6 @@ def create_followup_scene(request, scene_id):
     }
     if len(valid_players) != len(participant_ids):
         return HttpResponseBadRequest("all participants must belong to the campaign")
-    if not participant_ids:
-        return HttpResponseBadRequest("a follow-up scene needs at least one participant")
-
     with transaction.atomic():
         scene = Scene.objects.create(
             campaign=source.campaign,
