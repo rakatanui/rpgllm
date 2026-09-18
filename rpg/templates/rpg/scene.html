@@ -90,7 +90,7 @@
   {% if scene.mode == "MANUAL" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
     <span class="meta">Players:</span>
     {% for p in players %}
-      <label><input type="checkbox" name="selected_players" value="{{ p.pk }}"> {{ p.display_name }}</label>
+      <label><input type="checkbox" name="selected_players" value="{{ p.pk }}" {% if scene.mode == "MANUAL" %}checked{% endif %}> {{ p.display_name }}</label>
     {% endfor %}
   {% endif %}
   <button id="gm-send-button" type="submit" class="btn btn-primary"
