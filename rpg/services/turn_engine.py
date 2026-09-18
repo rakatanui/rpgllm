@@ -6,6 +6,7 @@ starts another model call.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -313,6 +314,10 @@ def _run_execution(
             temperature=_player_temp(player),
         )
         _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
+        _validate_response_discipline(
+            out_of_turn=out_of_turn,
+            response=response,
+        )
 
         message = _persist_player_response(
             execution=execution,
@@ -344,6 +349,53 @@ def _run_execution(
 
 class InvalidActionError(ValueError):
     pass
+
+
+_SPEECH_BUDGET_RE = re.compile(
+    r"\[\[SPEECH\]\](.*?)\[\[RU\]\].*?\[\[/SPEECH\]\]",
+    flags=re.DOTALL,
+)
+_CONTROL_MARKUP_RE = re.compile(r"\[\[[^\]]+\]\]")
+
+
+def _response_budget_text(text: str) -> str:
+    """Approximate what the user visibly reads, excluding hidden RU translations."""
+    text = _SPEECH_BUDGET_RE.sub(lambda match: match.group(1), text or "")
+    return _CONTROL_MARKUP_RE.sub("", text).strip()
+
+
+def _validate_response_discipline(*, out_of_turn: bool, response: LLMResponse) -> None:
+    action = (response.action_type or "ACT").upper()
+    if action == "PASS":
+        return
+
+    visible = _response_budget_text(response.public or "")
+    if not visible:
+        return
+
+    max_chars = 650 if out_of_turn else 1200
+    if len(visible) > max_chars:
+        kind = "ACT_OUT_OF_TURN" if out_of_turn else "turn"
+        raise InvalidActionError(
+            f"{kind} response is too long ({len(visible)} visible chars; max {max_chars}). "
+            "Keep to one immediate beat."
+        )
+
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n+", visible)
+        if paragraph.strip()
+    ]
+    if len(paragraphs) > 2:
+        raise InvalidActionError(
+            f"response has {len(paragraphs)} paragraphs; maximum is 2 short paragraphs"
+        )
+
+    question_count = visible.count("?") + visible.count("？")
+    if question_count > 1:
+        raise InvalidActionError(
+            f"response asks {question_count} questions; maximum is 1 direct question"
+        )
 
 
 def _validate_action(*, turn: Turn, out_of_turn: bool, response: LLMResponse) -> None:
