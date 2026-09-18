@@ -255,8 +255,10 @@ ROUND treats `ACT_OUT_OF_TURN` as an exceptional interrupt rather than a
 normal alternate action. Inactive players are explicitly instructed to prefer
 `PASS` unless waiting would make the intervention impossible or materially
 change it. Public model responses are also guarded server-side. A normal public
-`ACT` is limited to 1200 visible characters, 5 paragraphs, and 2 direct
-questions. `ACT_OUT_OF_TURN` remains deliberately stricter at 650 visible
+`ACT` is limited to 1200 visible characters, 6 paragraphs, and 2 direct
+questions. Models are explicitly told that six paragraphs is only a hard ceiling;
+normal useful ACTs should usually stay around 2-3 paragraphs and must not be
+padded with recaps or repeated exposition. `ACT_OUT_OF_TURN` remains deliberately stricter at 650 visible
 characters, 2 paragraphs, and 1 direct question. Hidden Russian hover
 translations do not count toward the visible-character limit. Violations make
 that execution `INVALID`, so it can be retried without replaying successful
