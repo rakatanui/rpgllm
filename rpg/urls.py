@@ -19,6 +19,11 @@ urlpatterns = [
         name="retry_execution",
     ),
     path(
+        "scene/<int:scene_id>/retry-fallback/<int:execution_id>/",
+        views.retry_execution_fallback,
+        name="retry_execution_fallback",
+    ),
+    path(
         "scene/<int:scene_id>/regenerate/<int:execution_id>/",
         views.regenerate_execution,
         name="regenerate_execution",
@@ -27,6 +32,56 @@ urlpatterns = [
         "scene/<int:scene_id>/ooc/<int:message_id>/",
         views.ooc_revision,
         name="ooc_revision",
+    ),
+    path(
+        "scene/<int:scene_id>/nudge/<int:player_id>/",
+        views.set_player_nudge,
+        name="set_player_nudge",
+    ),
+    path(
+        "scene/<int:scene_id>/ooc-meta/",
+        views.send_ooc_meta,
+        name="send_ooc_meta",
+    ),
+    path(
+        "scene/<int:scene_id>/execution/<int:execution_id>/debug/",
+        views.execution_debug,
+        name="execution_debug",
+    ),
+    path(
+        "scene/<int:scene_id>/message/<int:message_id>/versions/",
+        views.message_versions,
+        name="message_versions",
+    ),
+    path(
+        "scene/<int:scene_id>/message/<int:message_id>/restore/<int:revision_id>/",
+        views.restore_message_version,
+        name="restore_message_version",
+    ),
+    path(
+        "scene/<int:scene_id>/undo-latest/",
+        views.undo_latest_turn,
+        name="undo_latest_turn",
+    ),
+    path(
+        "scene/<int:scene_id>/message/<int:message_id>/pin-memory/",
+        views.pin_message_memory,
+        name="pin_message_memory",
+    ),
+    path(
+        "scene/<int:scene_id>/prepare-close/",
+        views.prepare_close_summary,
+        name="prepare_close_summary",
+    ),
+    path(
+        "scene/<int:scene_id>/apply-close/",
+        views.apply_close_summary,
+        name="apply_close_summary",
+    ),
+    path(
+        "scene/<int:scene_id>/discard-close-summary/",
+        views.discard_close_summary,
+        name="discard_close_summary",
     ),
     path("scene/<int:scene_id>/close/", views.close_scene, name="close_scene"),
     path(
