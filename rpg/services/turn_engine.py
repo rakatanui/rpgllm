@@ -221,6 +221,13 @@ def retry_execution(execution: TurnExecution) -> TurnResult:
     )
     _refresh_turn_state(turn)
     turn.refresh_from_db()
+    if (
+        turn.mode == TurnMode.ROUND
+        and not turn.is_private
+        and turn.state == TurnState.COMPLETED
+    ):
+        _advance_round_once(turn)
+        turn.refresh_from_db()
     return TurnResult(turn, [message] if message is not None else [])
 
 
