@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, close_old_connections, transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Max
 
 from rpg.models import (
@@ -202,20 +202,13 @@ def start_turn(
     # ROUND contexts are frozen before any model call, so provider calls can run
     # concurrently without leaking another player's response into the same round.
     if mode == TurnMode.ROUND and not is_private and len(executions) > 1:
-        with ThreadPoolExecutor(max_workers=min(6, len(executions))) as pool:
-            futures = [
-                pool.submit(
-                    _run_execution_threadsafe,
-                    execution.pk,
-                    client,
-                    execution.player_id != turn.active_player_id_snapshot,
-                )
-                for execution in executions
-            ]
-            for future in futures:
-                message = future.result()
-                if message is not None:
-                    generated.append(message)
+        generated.extend(
+            _run_round_parallel(
+                executions=executions,
+                turn=turn,
+                client=client,
+            )
+        )
     else:
         for execution in executions:
             out_of_turn = (
@@ -642,16 +635,15 @@ def _append_round_role_prompt(context, *, turn: Turn, out_of_turn: bool) -> None
         )
 
 
-def _generate_execution_response(
+def _build_execution_request(
     *,
     execution: TurnExecution,
-    client,
     out_of_turn: bool,
     trigger_message: Message | None = None,
     extra_history: list[Message] | None = None,
     extra_system_prompt: str = "",
     model_config_override: ModelConfig | None = None,
-) -> LLMResponse:
+) -> tuple[str, list[dict], str, float]:
     execution.refresh_from_db()
     turn = execution.turn
     scene = turn.scene
@@ -700,20 +692,51 @@ def _generate_execution_response(
         raw_response="",
         latency_ms=None,
     )
+    return context.system_prompt, context.messages, model, temperature
+
+
+def _provider_generate(client, *, system_prompt, messages, model, temperature):
     started = time.perf_counter()
     try:
         response = client.generate(
-            system_prompt=context.system_prompt,
-            messages=context.messages,
+            system_prompt=system_prompt,
+            messages=messages,
             model=model,
             temperature=temperature,
         )
-    except Exception:
-        elapsed = int((time.perf_counter() - started) * 1000)
-        TurnExecution.objects.filter(pk=execution.pk).update(latency_ms=elapsed)
-        raise
+    except Exception as exc:
+        return None, int((time.perf_counter() - started) * 1000), exc
+    return response, int((time.perf_counter() - started) * 1000), None
 
-    elapsed = int((time.perf_counter() - started) * 1000)
+
+def _generate_execution_response(
+    *,
+    execution: TurnExecution,
+    client,
+    out_of_turn: bool,
+    trigger_message: Message | None = None,
+    extra_history: list[Message] | None = None,
+    extra_system_prompt: str = "",
+    model_config_override: ModelConfig | None = None,
+) -> LLMResponse:
+    system_prompt, messages, model, temperature = _build_execution_request(
+        execution=execution,
+        out_of_turn=out_of_turn,
+        trigger_message=trigger_message,
+        extra_history=extra_history,
+        extra_system_prompt=extra_system_prompt,
+        model_config_override=model_config_override,
+    )
+    response, elapsed, error = _provider_generate(
+        client,
+        system_prompt=system_prompt,
+        messages=messages,
+        model=model,
+        temperature=temperature,
+    )
+    if error is not None:
+        TurnExecution.objects.filter(pk=execution.pk).update(latency_ms=elapsed)
+        raise error
     TurnExecution.objects.filter(pk=execution.pk).update(
         raw_response=response.raw_text or "",
         latency_ms=elapsed,
@@ -725,6 +748,121 @@ def _require_public_body(response: LLMResponse) -> None:
     action = (response.action_type or "ACT").upper()
     if action != "PASS" and not (response.public or "").strip():
         raise InvalidActionError("Non-PASS response must contain a public declaration")
+
+
+def _finalize_execution_response(
+    *,
+    execution: TurnExecution,
+    response: LLMResponse,
+    out_of_turn: bool,
+) -> Message | None:
+    turn = execution.turn
+    player = execution.player
+    _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
+    _validate_response_discipline(
+        turn=turn,
+        out_of_turn=out_of_turn,
+        response=response,
+    )
+    message = _persist_player_response(
+        execution=execution,
+        response=response,
+    )
+    TurnExecution.objects.filter(pk=execution.pk).update(
+        state=ExecutionState.COMPLETED,
+        action_type=response.action_type,
+        error="",
+    )
+    _set_player_status(player, PlayerStatus.IDLE)
+    return message
+
+
+def _mark_execution_error(execution: TurnExecution, exc: Exception) -> None:
+    player = execution.player
+    if isinstance(exc, InvalidActionError):
+        logger.info("Invalid action from %s: %s", player.display_name, exc)
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.INVALID,
+            error=str(exc),
+        )
+    else:
+        logger.warning("LLM call failed for player %s: %s", player.display_name, exc)
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.FAILED,
+            error=str(exc),
+        )
+    _set_player_status(player, PlayerStatus.ERROR)
+
+
+def _run_round_parallel(
+    *,
+    executions: list[TurnExecution],
+    turn: Turn,
+    client,
+) -> list[Message]:
+    prepared = []
+    for execution in executions:
+        execution.refresh_from_db()
+        out_of_turn = execution.player_id != turn.active_player_id_snapshot
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.RUNNING,
+            error="",
+        )
+        _set_player_status(execution.player, PlayerStatus.GENERATING)
+        try:
+            system_prompt, messages, model, temperature = _build_execution_request(
+                execution=execution,
+                out_of_turn=out_of_turn,
+            )
+        except Exception as exc:
+            _mark_execution_error(execution, exc)
+            continue
+        prepared.append(
+            (execution, out_of_turn, system_prompt, messages, model, temperature)
+        )
+
+    if not prepared:
+        return []
+
+    generated = []
+    with ThreadPoolExecutor(max_workers=min(6, len(prepared))) as pool:
+        futures = [
+            (
+                execution,
+                out_of_turn,
+                pool.submit(
+                    _provider_generate,
+                    client,
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    model=model,
+                    temperature=temperature,
+                ),
+            )
+            for execution, out_of_turn, system_prompt, messages, model, temperature in prepared
+        ]
+        for execution, out_of_turn, future in futures:
+            response, elapsed, error = future.result()
+            if error is not None:
+                TurnExecution.objects.filter(pk=execution.pk).update(latency_ms=elapsed)
+                _mark_execution_error(execution, error)
+                continue
+            TurnExecution.objects.filter(pk=execution.pk).update(
+                raw_response=response.raw_text or "",
+                latency_ms=elapsed,
+            )
+            try:
+                message = _finalize_execution_response(
+                    execution=execution,
+                    response=response,
+                    out_of_turn=out_of_turn,
+                )
+            except Exception as exc:
+                _mark_execution_error(execution, exc)
+                continue
+            if message is not None:
+                generated.append(message)
+    return generated
 
 
 def _run_execution(
@@ -752,39 +890,14 @@ def _run_execution(
             out_of_turn=out_of_turn,
             model_config_override=model_config_override,
         )
-        _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
-        _validate_response_discipline(
-            turn=turn,
-            out_of_turn=out_of_turn,
-            response=response,
-        )
-
-        message = _persist_player_response(
+        return _finalize_execution_response(
             execution=execution,
             response=response,
+            out_of_turn=out_of_turn,
         )
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            state=ExecutionState.COMPLETED,
-            action_type=response.action_type,
-            error="",
-        )
-        _set_player_status(player, PlayerStatus.IDLE)
-        return message
-    except InvalidActionError as exc:
-        logger.info("Invalid action from %s: %s", player.display_name, exc)
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            state=ExecutionState.INVALID,
-            error=str(exc),
-        )
-        _set_player_status(player, PlayerStatus.ERROR)
     except Exception as exc:
-        logger.warning("LLM call failed for player %s: %s", player.display_name, exc)
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            state=ExecutionState.FAILED,
-            error=str(exc),
-        )
-        _set_player_status(player, PlayerStatus.ERROR)
-    return None
+        _mark_execution_error(execution, exc)
+        return None
 
 
 class InvalidActionError(ValueError):
@@ -927,26 +1040,6 @@ def _persist_player_response(
             )
 
     return main_message
-
-
-def _run_execution_threadsafe(
-    execution_id: int,
-    client,
-    out_of_turn: bool,
-) -> Message | None:
-    close_old_connections()
-    try:
-        execution = TurnExecution.objects.select_related(
-            "turn__scene__campaign",
-            "player__model_config",
-        ).get(pk=execution_id)
-        return _run_execution(
-            execution=execution,
-            client=client,
-            out_of_turn=out_of_turn,
-        )
-    finally:
-        close_old_connections()
 
 
 def _record_message_revision(message: Message, *, reason: str) -> MessageRevision:
