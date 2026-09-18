@@ -52,7 +52,6 @@ def test_predecessor_history_follows_scene_participation_without_leaking_paralle
         name="Lucien solo",
         mode=TurnMode.MANUAL,
         participants=[lucien],
-        is_closed=True,
     )
     Message.objects.create(
         campaign=campaign,
@@ -61,13 +60,14 @@ def test_predecessor_history_follows_scene_participation_without_leaking_paralle
         content="LUCien-only apartment history",
         visibility=Visibility.PUBLIC,
     )
+    Scene.objects.filter(pk=lucien_solo.pk).update(is_closed=True)
+    lucien_solo.refresh_from_db()
 
     mila_solo = make_scene(
         campaign,
         name="Mila solo",
         mode=TurnMode.MANUAL,
         participants=[mila],
-        is_closed=True,
     )
     Message.objects.create(
         campaign=campaign,
@@ -76,6 +76,8 @@ def test_predecessor_history_follows_scene_participation_without_leaking_paralle
         content="MILA-only park history",
         visibility=Visibility.PUBLIC,
     )
+    Scene.objects.filter(pk=mila_solo.pk).update(is_closed=True)
+    mila_solo.refresh_from_db()
 
     duo = make_scene(
         campaign,
@@ -83,7 +85,6 @@ def test_predecessor_history_follows_scene_participation_without_leaking_paralle
         mode=TurnMode.MANUAL,
         participants=[lucien, mathis],
         predecessors=[lucien_solo],
-        is_closed=True,
     )
     Message.objects.create(
         campaign=campaign,
@@ -92,6 +93,8 @@ def test_predecessor_history_follows_scene_participation_without_leaking_paralle
         content="DUO shared cafe history",
         visibility=Visibility.PUBLIC,
     )
+    Scene.objects.filter(pk=duo.pk).update(is_closed=True)
+    duo.refresh_from_db()
 
     trio = make_scene(
         campaign,
