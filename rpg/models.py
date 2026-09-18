@@ -397,6 +397,11 @@ class Message(models.Model):
         who = self.author_player.display_name if self.author_player else self.author_type
         return f"[{self.visibility}] {who}: {self.content[:60]}"
 
+    def save(self, *args, **kwargs):
+        if self.scene_id and Scene.objects.filter(pk=self.scene_id, is_closed=True).exists():
+            raise ValidationError("Cannot write messages to a closed scene.")
+        return super().save(*args, **kwargs)
+
     def clean(self):
         super().clean()
         if self.scene_id and self.campaign_id and self.scene.campaign_id != self.campaign_id:
