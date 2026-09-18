@@ -3,6 +3,7 @@ import re
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -27,6 +28,7 @@ from rpg.models import (
     Visibility,
 )
 from rpg.services import turn_engine
+from rpg.services.context_builder import get_scene_lineage
 from rpg.services.scene_summary import generate_close_summary
 
 
@@ -199,6 +201,54 @@ def _unread_private_player_ids(scene):
         )
         .values_list("private_player_id", flat=True)
         .distinct()
+    )
+
+
+def search_history(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    lineage = get_scene_lineage(scene)
+    scene_ids = [item.pk for item in lineage]
+
+    query = (
+        Message.objects.filter(scene_id__in=scene_ids)
+        .select_related("scene", "author_player", "private_player")
+        .order_by("-created_at", "-pk")
+    )
+    q = (request.GET.get("q") or "").strip()
+    author = (request.GET.get("author") or "").strip()
+    action = (request.GET.get("action") or "").strip()
+    visibility = (request.GET.get("visibility") or "").strip()
+
+    if q:
+        query = query.filter(content__icontains=q)
+    if author == "GM":
+        query = query.filter(author_type=AuthorType.GM)
+    elif author.startswith("player:"):
+        try:
+            player_id = int(author.split(":", 1)[1])
+        except ValueError:
+            return HttpResponseBadRequest("invalid author filter")
+        query = query.filter(author_type=AuthorType.PLAYER, author_player_id=player_id)
+    if action:
+        query = query.filter(action_type=action)
+    if visibility:
+        query = query.filter(visibility=visibility)
+
+    players = list(
+        Player.objects.filter(campaign=scene.campaign).order_by("created_at", "pk")
+    )
+    return render(
+        request,
+        "rpg/history_search.html",
+        {
+            "scene": scene,
+            "results": list(query[:300]),
+            "players": players,
+            "q": q,
+            "author_filter": author,
+            "action_filter": action,
+            "visibility_filter": visibility,
+        },
     )
 
 
