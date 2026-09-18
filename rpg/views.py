@@ -310,6 +310,12 @@ def scene_view(request, scene_id):
             "source_participant_ids": [player.pk for player in players],
             "latest_turn": scene.turns.order_by("-created_at", "-pk").first(),
             "close_summary_draft": scene.close_summary_draft or {},
+            "close_player_drafts": {
+                player.pk: (scene.close_summary_draft or {}).get("players", {}).get(
+                    str(player.pk), ""
+                )
+                for player in players
+            },
         },
     )
 
@@ -931,6 +937,58 @@ def create_followup_scene(request, scene_id):
         scene.previous_scenes.add(source)
 
     return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+def private_channel(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = get_object_or_404(
+        Player.objects.select_related("model_config"),
+        pk=player_id,
+        scene_participations__scene=scene,
+    )
+    messages = list(
+        Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PRIVATE_GM_PLAYER,
+            private_player=player,
+        )
+        .select_related("author_player", "turn__trigger_message", "execution")
+        .order_by("-created_at", "-pk")
+    )
+    execution_ids = [m.execution_id for m in messages if m.execution_id]
+    public_by_execution = {
+        m.execution_id: m
+        for m in Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PUBLIC,
+            execution_id__in=execution_ids,
+            author_type=AuthorType.PLAYER,
+        )
+    }
+    entries = [
+        {
+            "message": message,
+            "public_message": public_by_execution.get(message.execution_id),
+            "trigger_message": (
+                message.turn.trigger_message
+                if message.turn_id and message.turn.trigger_message_id
+                else None
+            ),
+        }
+        for message in messages
+    ]
+    players = _scene_players(scene)
+    player_color_by_id = _player_color_classes(players)
+    return render(
+        request,
+        "rpg/_private_channel.html",
+        {
+            "scene": scene,
+            "player": player,
+            "entries": entries,
+            "player_color": player_color_by_id.get(player.pk, ""),
+        },
+    )
 
 
 def player_messages(request, player_id, visibility):
