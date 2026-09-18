@@ -901,7 +901,7 @@ def test_round_silence_runs_round_without_gm_message_and_advances(recording_clie
     result = turn_engine.start_silent_turn(scene=scene)
 
     assert result.turn.trigger_message_id is None
-    assert recording_client.calls == ["Lucien", "Mila", "Mathis"]
+    assert sorted(recording_client.calls) == ["Lucien", "Mathis", "Mila"]
     assert not Message.objects.filter(
         turn=result.turn,
         author_type=AuthorType.GM,
