@@ -1,0 +1,37 @@
+{% load rpg_extras %}
+<div class="messages private-channel-messages">
+{% for item in entries %}
+  {% with m=item.message %}
+  <div class="msg {% if m.author_type == "GM" %}gm{% else %}private {{ player_color }}{% endif %}">
+    <div class="msg-header">
+      <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ player.display_name }}{% endif %}</span>
+      {% if m.author_type == "PLAYER" and m.action_type %}
+        <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
+      {% endif %}
+      <button type="button" class="copy-message-btn" onclick="copyMessage(this)"
+              title="Копировать сообщение" aria-label="Копировать сообщение">Copy</button>
+    </div>
+    {% if m.action_type != "PASS" %}
+      <div class="msg-content">{{ m.content|message_format }}</div>
+    {% endif %}
+    {% if m.author_type == "PLAYER" %}
+      {% if item.public_message %}
+        <div class="private-ref">
+          К публичному ходу:
+          <a href="#message-{{ item.public_message.pk }}">
+            «{{ item.public_message.content|truncatechars:150 }}»
+          </a>
+        </div>
+      {% elif item.trigger_message %}
+        <div class="private-ref">
+          Ответ на:
+          «{{ item.trigger_message.content|truncatechars:150 }}»
+        </div>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endwith %}
+{% empty %}
+  <p class="meta">No private messages.</p>
+{% endfor %}
+</div>
