@@ -1534,3 +1534,60 @@ def test_private_channel_fragment_contains_both_sides_without_replacing_composer
     scene_page = Client().get(reverse("scene", kwargs={"scene_id": scene.pk})).content.decode()
     assert 'placeholder="Private to Люсьен..."' in scene_page
     assert "hx-trigger=\"load, every 3s\"" in scene_page
+
+
+
+@pytest.mark.django_db
+def test_history_search_spans_predecessor_scenes_and_filters_author_action():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    old_scene = make_scene(
+        campaign,
+        name="Old scene",
+        mode=TurnMode.MANUAL,
+        participants=[lucien, mila],
+        is_closed=True,
+    )
+    new_scene = make_scene(
+        campaign,
+        name="New scene",
+        mode=TurnMode.MANUAL,
+        participants=[lucien, mila],
+        predecessors=[old_scene],
+    )
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=old_scene,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Старый след про Сибиллу.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=new_scene,
+        author_type=AuthorType.PLAYER,
+        author_player=mila,
+        content="Новая реплика.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+
+    response = Client().get(
+        reverse("search_history", kwargs={"scene_id": new_scene.pk}),
+        {
+            "q": "Сибиллу",
+            "author": f"player:{lucien.pk}",
+            "action": "ACT",
+            "visibility": "PUBLIC",
+        },
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "Старый след про Сибиллу." in html
+    assert "Old scene" in html
+    assert "Новая реплика." not in html
