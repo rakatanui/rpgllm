@@ -236,7 +236,10 @@
   </div>
 
   <div class="panel">
-    <h3>Public Scene</h3>
+    <div class="private-panel-header">
+      <h3>Public Scene</h3>
+      <a class="btn btn-small" href="{% url 'search_history' scene.pk %}">History search</a>
+    </div>
     <div class="public-filter">
       <input id="public-filter-text" type="text" placeholder="Search…" oninput="filterPublicMessages()">
       <select id="public-filter-author" onchange="filterPublicMessages()">
