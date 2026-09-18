@@ -153,6 +153,7 @@ def test_round_server_validates_action_types(mock_backend, active, action, valid
         mode=TurnMode.ROUND,
         round_order=[lucien.pk, mila.pk],
         active_player_index=0,
+        participants=[lucien, mila],
     )
 
     class ActionClient(MockLLMClient):
