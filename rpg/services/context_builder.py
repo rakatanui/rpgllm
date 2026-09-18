@@ -11,6 +11,7 @@ Context(Player X) =
   + SHARED CAMPAIGN MEMORY
   + CHARACTER PROMPT
   + PLAYER PRIVATE MEMORY
+  + PREVIOUS SCENE SUMMARIES
   + SCENE STATE + SCENE MEMORY
   + RECENT PUBLIC HISTORY
   + RECENT PRIVATE HISTORY (GM <-> X only)
@@ -125,6 +126,16 @@ def build_player_context(
         parts.append(
             "# YOUR LONG-TERM MEMORY\n"
             + player.memory_summary.strip()
+        )
+
+    previous_scene_memory = _build_previous_scene_memory(
+        player=player,
+        scene=scene,
+    )
+    if previous_scene_memory:
+        parts.append(
+            "# PREVIOUS SCENE SUMMARIES\n"
+            + previous_scene_memory
         )
 
     parts.append("# SCENE STATE")
@@ -258,6 +269,17 @@ def get_player_history_messages(*, player: Player, scene: Scene) -> list[Message
         if lineage_scene.pk in visible_scene_ids:
             ordered.extend(by_scene.get(lineage_scene.pk, []))
     return ordered
+
+
+def _build_previous_scene_memory(*, player: Player, scene: Scene) -> str:
+    visible_scene_ids = _visible_scene_ids(player=player, scene=scene)
+    blocks: list[str] = []
+    for previous in get_scene_lineage(scene):
+        if previous.pk == scene.pk or previous.pk not in visible_scene_ids:
+            continue
+        if previous.memory_summary.strip():
+            blocks.append(f"## {previous.name}\n{previous.memory_summary.strip()}")
+    return "\n\n".join(blocks)
 
 
 def _build_lore_text(*, player: Player, scene: Scene) -> str:
