@@ -229,6 +229,16 @@ def build_player_context(
     )
 
     parts.append(
+        "# OOC FEEDBACK\n"
+        "The GM may privately send OOC feedback tied to one of your existing public "
+        "declarations. OOC is meta-level discussion, not something your character hears "
+        "or says in the fiction. When an OOC revision request is explicitly presented, "
+        "reconsider only the referenced declaration. You may revise it if the feedback "
+        "warrants a change, or keep it unchanged. A revision replaces that declaration; "
+        "it does not create an additional action or a new turn."
+    )
+
+    parts.append(
         "# RESPONSE FORMAT\n"
         'Respond with a JSON object: '
         '{"action_type": "ACT|PASS|ACT_OUT_OF_TURN", "public": "...", "private_to_gm": "..."}\n'
