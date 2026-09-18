@@ -186,6 +186,7 @@
   </span>
 
   <button id="gm-send-button" type="submit" class="btn btn-primary"
+          data-round-blocked="{% if scene.mode == 'ROUND' and not round_ready %}1{% else %}0{% endif %}"
           {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% endif %}>Send</button>
 
   {% if scene.mode == "ROUND" or scene.mode == "MANUAL" %}
@@ -364,6 +365,9 @@ function toggleComposerMode() {
   button.textContent = isOoc ? "OOC" : "IC";
   button.classList.toggle("ooc-composer-mode", isOoc);
   send.textContent = isOoc ? "Send OOC" : "Send";
+  send.disabled = isOoc ? false : send.dataset.roundBlocked === "1";
+  send.title = isOoc ? "Отправить метаинформацию приватно выбранным игрокам" :
+    (send.dataset.roundBlocked === "1" ? "Confirm ROUND player order first" : "");
   form.querySelectorAll(".ic-only").forEach((node) => node.hidden = isOoc);
   form.querySelectorAll(".ooc-only").forEach((node) => node.hidden = !isOoc);
   const textarea = document.getElementById("gm-composer-input");
