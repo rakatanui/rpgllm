@@ -299,6 +299,7 @@
           </div>
           {% if not scene.is_closed %}
             <form method="post" action="{% url 'send_private_message' scene.pk p.pk %}"
+                  class="private-message-form"
                   onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
               {% csrf_token %}
               <input type="hidden" name="client_turn_id" value="">
@@ -484,8 +485,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.key === "Enter") {
-      event.preventDefault();
-      document.getElementById("gm-send-button")?.click();
+      const privateForm = event.target?.closest?.("form.private-message-form");
+      if (privateForm) {
+        event.preventDefault();
+        privateForm.requestSubmit();
+        return;
+      }
+      const composer = event.target?.closest?.("#composer");
+      if (composer) {
+        event.preventDefault();
+        document.getElementById("gm-send-button")?.click();
+        return;
+      }
     }
     if (event.altKey && event.key.toLowerCase() === "s") {
       event.preventDefault();
