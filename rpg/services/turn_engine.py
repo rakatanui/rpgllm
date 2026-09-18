@@ -315,6 +315,7 @@ def _run_execution(
         )
         _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
         _validate_response_discipline(
+            turn=turn,
             out_of_turn=out_of_turn,
             response=response,
         )
@@ -364,7 +365,15 @@ def _response_budget_text(text: str) -> str:
     return _CONTROL_MARKUP_RE.sub("", text).strip()
 
 
-def _validate_response_discipline(*, out_of_turn: bool, response: LLMResponse) -> None:
+def _validate_response_discipline(
+    *,
+    turn: Turn,
+    out_of_turn: bool,
+    response: LLMResponse,
+) -> None:
+    if turn.is_private:
+        return
+
     action = (response.action_type or "ACT").upper()
     if action == "PASS":
         return
