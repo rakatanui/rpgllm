@@ -117,9 +117,10 @@ Campaign.system_prompt
 + Campaign.shared_memory
 + Player.character_prompt
 + Player.memory_summary
++ predecessor Scene.memory_summary values visible to this player
 + Scene.description
 + Scene.memory_summary
-+ newest visible message tail
++ newest visible message tail across inherited scene history
 + current GM trigger
 ```
 
@@ -156,18 +157,57 @@ universally known facts as `GLOBAL`; route specialist/secret knowledge through
 `SCENE` or `PLAYER` so models do not receive information their characters
 should not know.
 
+## Scenes as playable sessions
+
+A `Scene` is now effectively a playable session/thread with an explicit
+participant list and optional predecessor scenes.
+
+- `SceneParticipant` defines which campaign players are actually present.
+- `PUBLIC` means public to the participants of that scene, not every player in
+  the whole campaign.
+- ROUND order must contain every participant of the current scene exactly once.
+- A scene may inherit one or more closed predecessor scenes through
+  `previous_scenes`. This supports parallel POV threads that later converge.
+- When building context, a player inherits only predecessor scenes in which that
+  player participated. Parallel scenes belonging to other characters remain
+  invisible.
+- Predecessor `memory_summary` fields are also inherited for players who
+  participated in those scenes, so important history survives transcript
+  trimming.
+
+Scenes can be closed from the main scene UI. Closing is one-way in normal play:
+the scene becomes read-only and no new public/private messages or turns may be
+created there. A closed scene can then be used as the predecessor of a new
+scene via **New scene from here**.
+
+This makes the practical flow:
+
+```
+solo/parallel scenes
+        ↓
+shared scene
+        ↓
+close scene
+        ↓
+new session inheriting selected history
+```
+
+Existing scenes are migrated with every campaign player as a participant so
+pre-upgrade behavior is preserved until those scenes are edited.
+
 ## Architecture
 
 ```
 models
-services/context_builder   # privacy + lore routing + bounded recent history
+services/context_builder   # privacy + inherited scene history + bounded context
 services/turn_engine        # MANUAL / ROUND / SIMULTANEOUS / TABLE + state machine
 services/llm                # LLMClient: MockLLMClient | LiteLLMClient
 views / templates           # thin; no business logic in views
 ```
 
 Message visibility: `PUBLIC`, `PRIVATE_GM_PLAYER`, `GM_ONLY`. A single message
-table with visibility rules — not separate chats.
+table with visibility rules — not separate chats. `PUBLIC` is scoped to the
+participant list of the scene where the message was created.
 
 Turn states: `PENDING / RUNNING / COMPLETED / FAILED`. Each player call has
 its own `TurnExecution` state (`PENDING / RUNNING / COMPLETED / FAILED /
