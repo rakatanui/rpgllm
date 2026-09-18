@@ -221,14 +221,18 @@ def search_history(request, scene_id):
 
     if q:
         query = query.filter(content__icontains=q)
+    author_player_id = None
     if author == "GM":
         query = query.filter(author_type=AuthorType.GM)
     elif author.startswith("player:"):
         try:
-            player_id = int(author.split(":", 1)[1])
+            author_player_id = int(author.split(":", 1)[1])
         except ValueError:
             return HttpResponseBadRequest("invalid author filter")
-        query = query.filter(author_type=AuthorType.PLAYER, author_player_id=player_id)
+        query = query.filter(
+            author_type=AuthorType.PLAYER,
+            author_player_id=author_player_id,
+        )
     if action:
         query = query.filter(action_type=action)
     if visibility:
@@ -246,6 +250,7 @@ def search_history(request, scene_id):
             "players": players,
             "q": q,
             "author_filter": author,
+            "author_player_id": author_player_id,
             "action_filter": action,
             "visibility_filter": visibility,
         },
