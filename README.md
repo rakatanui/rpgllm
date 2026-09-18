@@ -257,9 +257,10 @@ message `⋯` menu:
   campaign memory, scene memory, the speaking player's private memory, or a
   scene-scoped LoreEntry.
 
-The scene toolbar also exposes **Undo last turn**. It removes only the most
-recent public Turn; when that Turn advanced ROUND, the active player position is
-restored to the turn's frozen active-player snapshot.
+The scene toolbar also exposes **Undo last turn**. It removes the most recent
+Turn and its linked messages. When a public ROUND Turn had advanced the round,
+the active player position is restored to the turn's frozen active-player
+snapshot.
 
 ### GM workbench
 
