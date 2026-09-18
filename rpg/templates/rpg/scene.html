@@ -168,9 +168,12 @@
         <div class="messages">
         {% for item in player_private|get:p.pk %}
           {% with m=item.message %}
-          <div class="msg {% if m.author_type == "GM" %}gm{% else %}private{% endif %}">
-            <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ p.display_name }}{% endif %}</span>:
-            {{ m.content }}
+          <div class="msg {% if m.author_type == "GM" %}gm{% else %}private {{ player_color_by_id|get:p.pk }}{% endif %}">
+            <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ p.display_name }}{% endif %}</span>
+            {% if m.author_type == "PLAYER" and m.action_type %}
+              <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
+            {% endif %}
+            {% if m.action_type != "PASS" %}{{ m.content }}{% endif %}
             {% if m.author_type == "PLAYER" %}
               {% if item.public_message %}
                 <div class="private-ref">
