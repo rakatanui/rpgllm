@@ -1139,3 +1139,55 @@ def test_undo_latest_round_turn_restores_active_player(mock_backend):
     assert scene.active_player_index == 0
     assert not Turn.objects.filter(pk=turn_id).exists()
     assert not Message.objects.filter(turn_id=turn_id).exists()
+
+
+
+@pytest.mark.django_db
+def test_first_regen_of_legacy_message_preserves_old_version(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+        history_message_ids=[],
+    )
+    legacy = Message.objects.create(
+        campaign=camp,
+        scene=scene,
+        turn=turn,
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Legacy visible answer.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+    assert legacy.revisions.count() == 0
+
+    class LegacyRegenClient(MockLLMClient):
+        def generate(self, **kwargs):
+            return _resp("Lucien", public="Fresh answer.")
+
+    with patch(
+        "rpg.services.turn_engine.get_llm_client",
+        return_value=LegacyRegenClient(),
+    ):
+        turn_engine.regenerate_execution(execution)
+
+    legacy.refresh_from_db()
+    revisions = list(legacy.revisions.order_by("revision_index"))
+    assert legacy.content == "Fresh answer."
+    assert [revision.content for revision in revisions] == [
+        "Legacy visible answer.",
+        "Fresh answer.",
+    ]
+    assert [revision.reason for revision in revisions] == ["ORIGINAL", "REGEN"]
