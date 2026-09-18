@@ -185,9 +185,19 @@ def build_player_context(
     if scene.mode == TurnMode.ROUND:
         parts.append(
             "# ROUND / ACT_OUT_OF_TURN\n"
-            "ROUND has one active player. An inactive player may use ACT_OUT_OF_TURN "
-            "to declare an immediate out-of-turn action. This is a real action declaration, "
-            "not merely commentary or a request for permission.\n"
+            "ROUND has one active player. If you are not active, PASS is the normal and "
+            "preferred response. ACT_OUT_OF_TURN is an exceptional interruption with a "
+            "high threshold: use it only when your character must act RIGHT NOW, before "
+            "the active player's moment can reasonably finish, because waiting for your "
+            "own turn would make the action impossible, materially change its meaning, or "
+            "allow an immediate danger/event to pass.\n"
+            "Do NOT use ACT_OUT_OF_TURN merely to join an ordinary conversation, make a "
+            "comment or joke, volunteer background information, answer something that can "
+            "wait, ask a non-urgent question, or take a full normal turn early. If it can "
+            "reasonably wait, PASS. Most inactive ROUND responses should therefore be PASS.\n"
+            "An ACT_OUT_OF_TURN declaration must contain ONE concise immediate intervention "
+            "only. It is not permission to seize the scene, deliver a speech, perform a "
+            "sequence of actions, or ask several questions.\n"
             "The GM can explicitly adjudicate such a declaration in a later GM message "
             "using a marker of the form "
             "[[SAOOT:<player-id>|<player-name>]]resolution text[[/SAOOT]]. "
@@ -199,6 +209,22 @@ def build_player_context(
             "independently: a SAOOT marker for one player does not resolve the others.\n"
             "Only the GM creates SAOOT markers. Never emit or invent one yourself."
         )
+
+    parts.append(
+        "# RESPONSE DISCIPLINE\n"
+        "Keep each turn compact and leave room for the other players and the GM. "
+        "Your public response should normally be one short paragraph and may use at most "
+        "two short paragraphs when narration and direct speech genuinely need separation. "
+        "Advance ONE immediate beat: one action, one reaction, one brief statement, or one "
+        "focused exchange. Do not resolve several beats of the scene at once.\n"
+        "Do not deliver long monologues, briefings, manifestos, or multi-paragraph speeches "
+        "unless the GM explicitly asks for one. Do not dump every fact your character knows "
+        "just because it is relevant. Reveal only what the character would naturally say or "
+        "do in this immediate beat.\n"
+        "Ask at most ONE direct question in a response. Never chain several questions or "
+        "present the GM/other players with a questionnaire. If you have several things to "
+        "ask or explain, choose the single most important one now and save the rest for later turns."
+    )
 
     parts.append(
         "# RESPONSE FORMAT\n"
