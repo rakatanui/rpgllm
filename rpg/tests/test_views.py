@@ -8,7 +8,9 @@ from django.urls import reverse
 from rpg.models import (
     AuthorType,
     ExecutionState,
+    LoreEntry,
     Message,
+    MessageRevision,
     Turn,
     TurnExecution,
     TurnMode,
@@ -17,7 +19,7 @@ from rpg.models import (
 )
 from rpg.services import turn_engine
 from rpg.services.llm import LLMResponse, MockLLMClient
-from rpg.tests.factories import make_campaign, make_player, make_scene
+from rpg.tests.factories import make_campaign, make_model, make_player, make_scene
 
 
 class PrivateNoteClient(MockLLMClient):
@@ -1170,3 +1172,422 @@ def test_silence_view_rejects_non_round_non_manual_mode():
 
     assert response.status_code == 400
     silent.assert_not_called()
+
+
+
+@pytest.mark.django_db
+def test_scene_exposes_ooc_mode_private_panel_controls_search_and_hotkeys():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert 'id="gm-mode-toggle"' in html
+    assert 'id="ooc-target"' in html
+    assert "All players" in html
+    assert 'id="private-toggle"' in html
+    assert 'id="private-autoopen"' in html
+    assert "mraz.private.autoopen" in html
+    assert 'id="public-filter-text"' in html
+    assert "Ctrl" not in html  # shortcuts are behavior, not visual clutter
+    assert 'event.ctrlKey && event.key === "Enter"' in html
+    assert "min-height:150px" in html
+    assert "minmax(440px, .9fr)" in html
+
+
+@pytest.mark.django_db
+def test_ooc_meta_can_target_all_or_one_player():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien, mila])
+
+    all_response = Client().post(
+        reverse("send_ooc_meta", kwargs={"scene_id": scene.pk}),
+        {"content": "Это метаинформация.", "target": "all"},
+    )
+    assert all_response.status_code == 302
+    assert Message.objects.filter(
+        scene=scene,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        author_type=AuthorType.GM,
+        content="[OOC META]\nЭто метаинформация.",
+    ).count() == 2
+
+    one_response = Client().post(
+        reverse("send_ooc_meta", kwargs={"scene_id": scene.pk}),
+        {"content": "Только Миле.", "target": str(mila.pk)},
+    )
+    assert one_response.status_code == 302
+    only_mila = Message.objects.get(scene=scene, content="[OOC META]\nТолько Миле.")
+    assert only_mila.private_player_id == mila.pk
+
+
+@pytest.mark.django_db
+def test_nudge_endpoint_sets_and_clears_one_shot_instruction():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    response = Client().post(
+        reverse("set_player_nudge", kwargs={"scene_id": scene.pk, "player_id": lucien.pk}),
+        {"content": "Не раскрывай секрет."},
+    )
+    assert response.status_code == 302
+    lucien.refresh_from_db()
+    assert lucien.pending_nudge == "Не раскрывай секрет."
+
+    response = Client().post(
+        reverse("set_player_nudge", kwargs={"scene_id": scene.pk, "player_id": lucien.pk}),
+        {"content": ""},
+    )
+    assert response.status_code == 302
+    lucien.refresh_from_db()
+    assert lucien.pending_nudge == ""
+
+
+@pytest.mark.django_db
+def test_failed_execution_offers_fallback_retry_and_debug():
+    campaign = make_campaign()
+    primary = make_model("Primary UI", gateway_model="primary-ui")
+    fallback = make_model("Fallback UI", gateway_model="fallback-ui")
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        model_config=primary,
+        fallback_model_config=fallback,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.FAILED,
+        participants=[lucien.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        order_index=0,
+        state=ExecutionState.FAILED,
+        error="boom",
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert reverse(
+        "retry_execution_fallback",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) in html
+    assert "Retry Fallback UI" in html
+    assert reverse(
+        "execution_debug",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) in html
+
+
+@pytest.mark.django_db
+def test_fallback_retry_view_passes_player_fallback_model():
+    campaign = make_campaign()
+    fallback = make_model("Fallback Route", gateway_model="fallback-route")
+    lucien = make_player(campaign, "Люсьен", fallback_model_config=fallback)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.FAILED,
+        participants=[lucien.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        state=ExecutionState.FAILED,
+        error="timeout",
+    )
+
+    with patch("rpg.views.turn_engine.retry_execution") as retry:
+        response = Client().post(
+            reverse(
+                "retry_execution_fallback",
+                kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+            )
+        )
+
+    assert response.status_code == 302
+    retry.assert_called_once()
+    assert retry.call_args.kwargs["model_config"].pk == fallback.pk
+
+
+@pytest.mark.django_db
+def test_execution_debug_page_displays_snapshots():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    turn = Turn.objects.create(scene=scene, mode=TurnMode.MANUAL, participants=[lucien.pk])
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+        model_used="model-x",
+        system_prompt_snapshot="SYSTEM SNAPSHOT",
+        request_messages=[{"role": "user", "content": "hello"}],
+        raw_response='{"action_type":"ACT"}',
+        latency_ms=321,
+    )
+
+    response = Client().get(
+        reverse("execution_debug", kwargs={"scene_id": scene.pk, "execution_id": execution.pk})
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "model-x" in html
+    assert "321 ms" in html
+    assert "SYSTEM SNAPSHOT" in html
+    assert "Raw provider response" in html
+
+
+@pytest.mark.django_db
+def test_message_versions_page_and_restore_route():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    turn = Turn.objects.create(scene=scene, mode=TurnMode.MANUAL, participants=[lucien.pk])
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+    message = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Current.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+    old = MessageRevision.objects.create(
+        message=message,
+        revision_index=1,
+        content="Old.",
+        action_type="ACT",
+        reason="ORIGINAL",
+    )
+    MessageRevision.objects.create(
+        message=message,
+        revision_index=2,
+        content="Current.",
+        action_type="ACT",
+        reason="REGEN",
+    )
+
+    page = Client().get(
+        reverse("message_versions", kwargs={"scene_id": scene.pk, "message_id": message.pk})
+    )
+    assert page.status_code == 200
+    assert "Versions" not in page.content.decode() or "v2" in page.content.decode()
+
+    restored = Client().post(
+        reverse(
+            "restore_message_version",
+            kwargs={
+                "scene_id": scene.pk,
+                "message_id": message.pk,
+                "revision_id": old.pk,
+            },
+        )
+    )
+    assert restored.status_code == 302
+    message.refresh_from_db()
+    assert message.content == "Old."
+
+
+@pytest.mark.django_db
+def test_pin_message_to_scene_shared_player_memory_and_lore():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    message = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="Important.",
+        visibility=Visibility.PUBLIC,
+    )
+
+    client = Client()
+    for target, text in [
+        ("scene", "Scene fact"),
+        ("shared", "Shared fact"),
+        (f"player:{lucien.pk}", "Lucien fact"),
+        ("lore", "Lore fact"),
+    ]:
+        response = client.post(
+            reverse(
+                "pin_message_memory",
+                kwargs={"scene_id": scene.pk, "message_id": message.pk},
+            ),
+            {"target": target, "content": text},
+        )
+        assert response.status_code == 302
+
+    scene.refresh_from_db()
+    campaign.refresh_from_db()
+    lucien.refresh_from_db()
+    assert "Scene fact" in scene.memory_summary
+    assert "Shared fact" in campaign.shared_memory
+    assert "Lucien fact" in lucien.memory_summary
+    assert LoreEntry.objects.filter(campaign=campaign, content="Lore fact").exists()
+
+
+@pytest.mark.django_db
+def test_prepare_and_apply_close_summary_requires_gm_confirmation():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен", memory_summary="Old memory.")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    def fake_summary(target_scene):
+        draft = {
+            "scene_summary": "Scene draft.",
+            "open_hooks": "Unresolved hook.",
+            "players": {str(lucien.pk): "New player memory."},
+        }
+        target_scene.close_summary_draft = draft
+        target_scene.save(update_fields=["close_summary_draft", "updated_at"])
+        return draft
+
+    with patch("rpg.views.generate_close_summary", side_effect=fake_summary):
+        response = Client().post(
+            reverse("prepare_close_summary", kwargs={"scene_id": scene.pk})
+        )
+
+    assert response.status_code == 302
+    scene.refresh_from_db()
+    assert scene.is_closed is False
+    assert scene.close_summary_draft["scene_summary"] == "Scene draft."
+
+    page = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = page.content.decode()
+    assert "Close-scene review" in html
+    assert "Scene draft." in html
+    assert "New player memory." in html
+
+    applied = Client().post(
+        reverse("apply_close_summary", kwargs={"scene_id": scene.pk}),
+        {
+            "scene_summary": "Edited scene summary.",
+            "open_hooks": "Edited hook.",
+            f"player_memory_{lucien.pk}": "Edited player memory.",
+        },
+    )
+    assert applied.status_code == 302
+    scene.refresh_from_db()
+    lucien.refresh_from_db()
+    assert scene.is_closed is True
+    assert "Edited scene summary." in scene.memory_summary
+    assert "Edited hook." in scene.memory_summary
+    assert "Old memory." in lucien.memory_summary
+    assert "Edited player memory." in lucien.memory_summary
+
+
+@pytest.mark.django_db
+def test_private_channel_fragment_contains_both_sides_without_replacing_composer():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="GM private",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=lucien,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Player private",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=lucien,
+        gm_unread=True,
+    )
+
+    fragment = Client().get(
+        reverse("private_channel", kwargs={"scene_id": scene.pk, "player_id": lucien.pk})
+    )
+    html = fragment.content.decode()
+    assert fragment.status_code == 200
+    assert "GM private" in html
+    assert "Player private" in html
+    assert 'name="content"' not in html
+
+    scene_page = Client().get(reverse("scene", kwargs={"scene_id": scene.pk})).content.decode()
+    assert 'placeholder="Private to Люсьен..."' in scene_page
+    assert "hx-trigger=\"load, every 3s\"" in scene_page
+
+
+
+@pytest.mark.django_db
+def test_history_search_spans_predecessor_scenes_and_filters_author_action():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    old_scene = make_scene(
+        campaign,
+        name="Old scene",
+        mode=TurnMode.MANUAL,
+        participants=[lucien, mila],
+        is_closed=True,
+    )
+    new_scene = make_scene(
+        campaign,
+        name="New scene",
+        mode=TurnMode.MANUAL,
+        participants=[lucien, mila],
+        predecessors=[old_scene],
+    )
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=old_scene,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Старый след про Сибиллу.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=new_scene,
+        author_type=AuthorType.PLAYER,
+        author_player=mila,
+        content="Новая реплика.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+
+    response = Client().get(
+        reverse("search_history", kwargs={"scene_id": new_scene.pk}),
+        {
+            "q": "Сибиллу",
+            "author": f"player:{lucien.pk}",
+            "action": "ACT",
+            "visibility": "PUBLIC",
+        },
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "Старый след про Сибиллу." in html
+    assert "Old scene" in html
+    assert "Новая реплика." not in html

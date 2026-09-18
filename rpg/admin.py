@@ -7,6 +7,7 @@ from rpg.models import (
     Campaign,
     LoreEntry,
     Message,
+    MessageRevision,
     ModelConfig,
     Player,
     Scene,
@@ -27,7 +28,7 @@ class ModelConfigAdmin(admin.ModelAdmin):
 class PlayerInline(admin.TabularInline):
     model = Player
     extra = 1
-    fields = ("display_name", "character_prompt", "model_config", "status")
+    fields = ("display_name", "character_prompt", "model_config", "fallback_model_config", "status")
     readonly_fields = ("status",)
     show_change_link = True
 
@@ -158,6 +159,8 @@ class PlayerAdmin(admin.ModelAdmin):
         "character_prompt",
         "memory_summary",
         "model_config",
+        "fallback_model_config",
+        "pending_nudge",
         "status",
     )
 
@@ -214,3 +217,10 @@ class TurnExecutionAdmin(admin.ModelAdmin):
     list_filter = ("state", "action_type")
     search_fields = ("player__display_name", "error")
     readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(MessageRevision)
+class MessageRevisionAdmin(admin.ModelAdmin):
+    list_display = ("message", "revision_index", "reason", "created_at")
+    list_filter = ("reason",)
+    search_fields = ("message__content", "content")

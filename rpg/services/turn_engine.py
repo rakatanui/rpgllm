@@ -7,16 +7,21 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Max
 
 from rpg.models import (
     AuthorType,
     ExecutionState,
     Message,
+    MessageRevision,
+    ModelConfig,
     Player,
     PlayerStatus,
     Scene,
@@ -146,14 +151,19 @@ def start_turn(
             turn.trigger_message = gm_message
             turn.save(update_fields=["trigger_message"])
 
-        executions = [
-            TurnExecution.objects.create(
+        executions = []
+        for index, player in enumerate(targets):
+            nudge = (player.pending_nudge or "").strip()
+            execution = TurnExecution.objects.create(
                 turn=turn,
                 player=player,
                 order_index=index,
+                nudge_text=nudge,
             )
-            for index, player in enumerate(targets)
-        ]
+            executions.append(execution)
+            if nudge:
+                Player.objects.filter(pk=player.pk).update(pending_nudge="")
+                player.pending_nudge = ""
 
         # MANUAL/SIMULTANEOUS/ROUND/private freeze a per-player snapshot.
         # Each player may inherit a different predecessor chain, so one shared
@@ -175,8 +185,8 @@ def start_turn(
     client = get_llm_client()
     generated: list[Message] = []
 
-    for execution in executions:
-        if mode == TurnMode.TABLE and not is_private:
+    if mode == TurnMode.TABLE and not is_private:
+        for execution in executions:
             history_ids = [
                 message.pk
                 for message in get_player_history_messages(
@@ -189,17 +199,29 @@ def start_turn(
             )
             execution.history_message_ids = history_ids
 
-        out_of_turn = (
-            mode == TurnMode.ROUND
-            and execution.player_id != turn.active_player_id_snapshot
+    # ROUND contexts are frozen before any model call, so provider calls can run
+    # concurrently without leaking another player's response into the same round.
+    if mode == TurnMode.ROUND and not is_private and len(executions) > 1:
+        generated.extend(
+            _run_round_parallel(
+                executions=executions,
+                turn=turn,
+                client=client,
+            )
         )
-        message = _run_execution(
-            execution=execution,
-            client=client,
-            out_of_turn=out_of_turn,
-        )
-        if message is not None:
-            generated.append(message)
+    else:
+        for execution in executions:
+            out_of_turn = (
+                mode == TurnMode.ROUND
+                and execution.player_id != turn.active_player_id_snapshot
+            )
+            message = _run_execution(
+                execution=execution,
+                client=client,
+                out_of_turn=out_of_turn,
+            )
+            if message is not None:
+                generated.append(message)
 
     _refresh_turn_state(turn)
     turn.refresh_from_db()
@@ -233,7 +255,11 @@ def start_silent_turn(
     )
 
 
-def retry_execution(execution: TurnExecution) -> TurnResult:
+def retry_execution(
+    execution: TurnExecution,
+    *,
+    model_config: ModelConfig | None = None,
+) -> TurnResult:
     """Retry one FAILED/INVALID execution using its original frozen context."""
     with transaction.atomic():
         execution = (
@@ -259,6 +285,7 @@ def retry_execution(execution: TurnExecution) -> TurnResult:
         execution=execution,
         client=get_llm_client(),
         out_of_turn=out_of_turn,
+        model_config_override=model_config,
     )
     _refresh_turn_state(turn)
     turn.refresh_from_db()
@@ -272,7 +299,11 @@ def retry_execution(execution: TurnExecution) -> TurnResult:
     return TurnResult(turn, [message] if message is not None else [])
 
 
-def regenerate_execution(execution: TurnExecution) -> TurnResult:
+def regenerate_execution(
+    execution: TurnExecution,
+    *,
+    model_config: ModelConfig | None = None,
+) -> TurnResult:
     """Regenerate one successful public execution and replace its visible reply in place.
 
     The original frozen history and GM trigger are reused. Other players are never
@@ -316,6 +347,7 @@ def regenerate_execution(execution: TurnExecution) -> TurnResult:
             execution=execution,
             client=get_llm_client(),
             out_of_turn=out_of_turn,
+            model_config_override=model_config,
         )
         _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
         _validate_response_discipline(
@@ -339,9 +371,12 @@ def regenerate_execution(execution: TurnExecution) -> TurnResult:
                 raise RuntimeError("Execution changed state during regeneration")
 
             locked_message = Message.objects.select_for_update().get(pk=public_message.pk)
+            if not locked_message.revisions.exists():
+                _record_message_revision(locked_message, reason="ORIGINAL")
             locked_message.content = public_text or f"[{action}] {player.display_name}"
             locked_message.action_type = action
             locked_message.save(update_fields=["content", "action_type"])
+            _record_message_revision(locked_message, reason="REGEN")
 
             Message.objects.filter(
                 execution=locked_execution,
@@ -490,11 +525,14 @@ def revise_execution_ooc(
                 pk=public_message.pk
             )
             if changed:
+                if not locked_message.revisions.exists():
+                    _record_message_revision(locked_message, reason="ORIGINAL")
                 locked_message.content = (
                     public_text or f"[{action}] {player.display_name}"
                 )
                 locked_message.action_type = action
                 locked_message.save(update_fields=["content", "action_type"])
+                _record_message_revision(locked_message, reason="OOC")
                 locked_execution.action_type = action
                 locked_execution.save(
                     update_fields=["action_type", "updated_at"]
@@ -601,15 +639,15 @@ def _append_round_role_prompt(context, *, turn: Turn, out_of_turn: bool) -> None
         )
 
 
-def _generate_execution_response(
+def _build_execution_request(
     *,
     execution: TurnExecution,
-    client,
     out_of_turn: bool,
     trigger_message: Message | None = None,
     extra_history: list[Message] | None = None,
     extra_system_prompt: str = "",
-) -> LLMResponse:
+    model_config_override: ModelConfig | None = None,
+) -> tuple[str, list[dict], str, float]:
     execution.refresh_from_db()
     turn = execution.turn
     scene = turn.scene
@@ -631,15 +669,86 @@ def _generate_execution_response(
             "yielding the floor to the players. Do not invent a GM action just to create "
             "a prompt. In ROUND, normal active/inactive role rules still apply."
         )
+    if execution.nudge_text.strip():
+        context.system_prompt += (
+            "\n\n# ONE-SHOT GM NUDGE\n"
+            "This is private meta-level guidance from the GM for this execution only. "
+            "Do not quote it, mention it, or treat it as in-fiction dialogue:\n"
+            + execution.nudge_text.strip()
+        )
     if extra_system_prompt:
         context.system_prompt += extra_system_prompt
 
-    return client.generate(
-        system_prompt=context.system_prompt,
-        messages=context.messages,
-        model=_player_model(player),
-        temperature=_player_temp(player),
+    model = (
+        model_config_override.gateway_model
+        if model_config_override and model_config_override.enabled
+        else _player_model(player)
     )
+    temperature = (
+        model_config_override.temperature
+        if model_config_override and model_config_override.enabled
+        else _player_temp(player)
+    )
+    TurnExecution.objects.filter(pk=execution.pk).update(
+        model_used=model,
+        system_prompt_snapshot=context.system_prompt,
+        request_messages=context.messages,
+        raw_response="",
+        latency_ms=None,
+    )
+    return context.system_prompt, context.messages, model, temperature
+
+
+def _provider_generate(client, *, system_prompt, messages, model, temperature):
+    started = time.perf_counter()
+    try:
+        response = client.generate(
+            system_prompt=system_prompt,
+            messages=messages,
+            model=model,
+            temperature=temperature,
+        )
+    except Exception as exc:
+        return None, int((time.perf_counter() - started) * 1000), exc
+    return response, int((time.perf_counter() - started) * 1000), None
+
+
+def _generate_execution_response(
+    *,
+    execution: TurnExecution,
+    client,
+    out_of_turn: bool,
+    trigger_message: Message | None = None,
+    extra_history: list[Message] | None = None,
+    extra_system_prompt: str = "",
+    model_config_override: ModelConfig | None = None,
+) -> LLMResponse:
+    system_prompt, messages, model, temperature = _build_execution_request(
+        execution=execution,
+        out_of_turn=out_of_turn,
+        trigger_message=trigger_message,
+        extra_history=extra_history,
+        extra_system_prompt=extra_system_prompt,
+        model_config_override=model_config_override,
+    )
+    response, elapsed, error = _provider_generate(
+        client,
+        system_prompt=system_prompt,
+        messages=messages,
+        model=model,
+        temperature=temperature,
+    )
+    if error is not None:
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            latency_ms=elapsed,
+            raw_response=getattr(error, "raw_text", "") or "",
+        )
+        raise error
+    TurnExecution.objects.filter(pk=execution.pk).update(
+        raw_response=response.raw_text or "",
+        latency_ms=elapsed,
+    )
+    return response
 
 
 def _require_public_body(response: LLMResponse) -> None:
@@ -648,11 +757,130 @@ def _require_public_body(response: LLMResponse) -> None:
         raise InvalidActionError("Non-PASS response must contain a public declaration")
 
 
+def _finalize_execution_response(
+    *,
+    execution: TurnExecution,
+    response: LLMResponse,
+    out_of_turn: bool,
+) -> Message | None:
+    turn = execution.turn
+    player = execution.player
+    _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
+    _validate_response_discipline(
+        turn=turn,
+        out_of_turn=out_of_turn,
+        response=response,
+    )
+    message = _persist_player_response(
+        execution=execution,
+        response=response,
+    )
+    TurnExecution.objects.filter(pk=execution.pk).update(
+        state=ExecutionState.COMPLETED,
+        action_type=response.action_type,
+        error="",
+    )
+    _set_player_status(player, PlayerStatus.IDLE)
+    return message
+
+
+def _mark_execution_error(execution: TurnExecution, exc: Exception) -> None:
+    player = execution.player
+    if isinstance(exc, InvalidActionError):
+        logger.info("Invalid action from %s: %s", player.display_name, exc)
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.INVALID,
+            error=str(exc),
+        )
+    else:
+        logger.warning("LLM call failed for player %s: %s", player.display_name, exc)
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.FAILED,
+            error=str(exc),
+        )
+    _set_player_status(player, PlayerStatus.ERROR)
+
+
+def _run_round_parallel(
+    *,
+    executions: list[TurnExecution],
+    turn: Turn,
+    client,
+) -> list[Message]:
+    prepared = []
+    for execution in executions:
+        execution.refresh_from_db()
+        out_of_turn = execution.player_id != turn.active_player_id_snapshot
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.RUNNING,
+            error="",
+        )
+        _set_player_status(execution.player, PlayerStatus.GENERATING)
+        try:
+            system_prompt, messages, model, temperature = _build_execution_request(
+                execution=execution,
+                out_of_turn=out_of_turn,
+            )
+        except Exception as exc:
+            _mark_execution_error(execution, exc)
+            continue
+        prepared.append(
+            (execution, out_of_turn, system_prompt, messages, model, temperature)
+        )
+
+    if not prepared:
+        return []
+
+    generated = []
+    with ThreadPoolExecutor(max_workers=min(6, len(prepared))) as pool:
+        futures = [
+            (
+                execution,
+                out_of_turn,
+                pool.submit(
+                    _provider_generate,
+                    client,
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    model=model,
+                    temperature=temperature,
+                ),
+            )
+            for execution, out_of_turn, system_prompt, messages, model, temperature in prepared
+        ]
+        for execution, out_of_turn, future in futures:
+            response, elapsed, error = future.result()
+            if error is not None:
+                TurnExecution.objects.filter(pk=execution.pk).update(
+                    latency_ms=elapsed,
+                    raw_response=getattr(error, "raw_text", "") or "",
+                )
+                _mark_execution_error(execution, error)
+                continue
+            TurnExecution.objects.filter(pk=execution.pk).update(
+                raw_response=response.raw_text or "",
+                latency_ms=elapsed,
+            )
+            try:
+                message = _finalize_execution_response(
+                    execution=execution,
+                    response=response,
+                    out_of_turn=out_of_turn,
+                )
+            except Exception as exc:
+                _mark_execution_error(execution, exc)
+                continue
+            if message is not None:
+                generated.append(message)
+    return generated
+
+
 def _run_execution(
     *,
     execution: TurnExecution,
     client,
     out_of_turn: bool,
+    model_config_override: ModelConfig | None = None,
 ) -> Message | None:
     execution.refresh_from_db()
     turn = execution.turn
@@ -670,40 +898,16 @@ def _run_execution(
             execution=execution,
             client=client,
             out_of_turn=out_of_turn,
+            model_config_override=model_config_override,
         )
-        _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
-        _validate_response_discipline(
-            turn=turn,
-            out_of_turn=out_of_turn,
-            response=response,
-        )
-
-        message = _persist_player_response(
+        return _finalize_execution_response(
             execution=execution,
             response=response,
+            out_of_turn=out_of_turn,
         )
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            state=ExecutionState.COMPLETED,
-            action_type=response.action_type,
-            error="",
-        )
-        _set_player_status(player, PlayerStatus.IDLE)
-        return message
-    except InvalidActionError as exc:
-        logger.info("Invalid action from %s: %s", player.display_name, exc)
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            state=ExecutionState.INVALID,
-            error=str(exc),
-        )
-        _set_player_status(player, PlayerStatus.ERROR)
     except Exception as exc:
-        logger.warning("LLM call failed for player %s: %s", player.display_name, exc)
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            state=ExecutionState.FAILED,
-            error=str(exc),
-        )
-        _set_player_status(player, PlayerStatus.ERROR)
-    return None
+        _mark_execution_error(execution, exc)
+        return None
 
 
 class InvalidActionError(ValueError):
@@ -826,6 +1030,7 @@ def _persist_player_response(
                 visibility=Visibility.PUBLIC,
                 action_type=action,
             )
+            _record_message_revision(main_message, reason="ORIGINAL")
 
         private_text = (response.private_to_gm or "").strip()
         public_text = (response.public or "").strip()
@@ -845,6 +1050,80 @@ def _persist_player_response(
             )
 
     return main_message
+
+
+def _record_message_revision(message: Message, *, reason: str) -> MessageRevision:
+    current_max = (
+        MessageRevision.objects.filter(message=message)
+        .aggregate(value=Max("revision_index"))
+        .get("value")
+        or 0
+    )
+    return MessageRevision.objects.create(
+        message=message,
+        revision_index=current_max + 1,
+        content=message.content,
+        action_type=message.action_type,
+        reason=reason,
+    )
+
+
+def ensure_message_revision(message: Message) -> list[MessageRevision]:
+    if not message.revisions.exists():
+        _record_message_revision(message, reason="ORIGINAL")
+    return list(message.revisions.order_by("revision_index", "pk"))
+
+
+def restore_message_revision(
+    *,
+    message: Message,
+    revision: MessageRevision,
+) -> Message:
+    message = Message.objects.select_related("scene", "execution").get(pk=message.pk)
+    if message.scene is None or message.scene.is_closed:
+        raise RuntimeError("Cannot restore a message in a closed scene")
+    if revision.message_id != message.pk:
+        raise RuntimeError("Revision does not belong to this message")
+    if message.author_type != AuthorType.PLAYER or message.execution_id is None:
+        raise RuntimeError("Only generated player declarations can be restored")
+
+    with transaction.atomic():
+        locked = Message.objects.select_for_update().get(pk=message.pk)
+        locked.content = revision.content
+        locked.action_type = revision.action_type
+        locked.save(update_fields=["content", "action_type"])
+        TurnExecution.objects.filter(pk=locked.execution_id).update(
+            action_type=revision.action_type
+        )
+        _record_message_revision(locked, reason="RESTORE")
+    return locked
+
+
+def undo_latest_public_turn(scene: Scene) -> None:
+    with transaction.atomic():
+        locked_scene = Scene.objects.select_for_update().get(pk=scene.pk)
+        if locked_scene.is_closed:
+            raise RuntimeError("Cannot undo in a closed scene")
+        latest = (
+            Turn.objects.select_for_update()
+            .filter(scene=locked_scene)
+            .order_by("-created_at", "-pk")
+            .first()
+        )
+        if latest is None:
+            raise RuntimeError("There is no turn to undo")
+        if latest.mode == TurnMode.ROUND and not latest.is_private and latest.round_advanced:
+            order = list(locked_scene.round_order or [])
+            if latest.active_player_id_snapshot in order:
+                locked_scene.active_player_index = order.index(
+                    latest.active_player_id_snapshot
+                )
+                locked_scene.save(
+                    update_fields=["active_player_index", "updated_at"]
+                )
+
+        Message.objects.filter(turn=latest).delete()
+        latest.delete()
 
 
 def _refresh_turn_state(turn: Turn) -> None:

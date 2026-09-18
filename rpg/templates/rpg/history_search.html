@@ -1,0 +1,50 @@
+{% extends "rpg/base.html" %}
+{% load rpg_extras %}
+{% block title %}History search · {{ scene.name }}{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:1200px;margin:0 auto">
+  <div class="toolbar">
+    <a class="btn" href="{% url 'scene' scene.pk %}">← Scene</a>
+    <strong>History search · {{ scene.name }}</strong>
+  </div>
+  <form method="get" class="toolbar">
+    <input type="text" name="q" value="{{ q }}" placeholder="Text…" style="flex:1;min-width:220px">
+    <select name="author" style="width:auto">
+      <option value="">All authors</option>
+      <option value="GM" {% if author_filter == "GM" %}selected{% endif %}>GM</option>
+      {% for p in players %}
+        <option value="player:{{ p.pk }}" {% if author_player_id == p.pk %}selected{% endif %}>{{ p.display_name }}</option>
+      {% endfor %}
+    </select>
+    <select name="action" style="width:auto">
+      <option value="">All actions</option>
+      <option value="ACT" {% if action_filter == "ACT" %}selected{% endif %}>ACT</option>
+      <option value="PASS" {% if action_filter == "PASS" %}selected{% endif %}>PASS</option>
+      <option value="ACT_OUT_OF_TURN" {% if action_filter == "ACT_OUT_OF_TURN" %}selected{% endif %}>ACT_OUT_OF_TURN</option>
+    </select>
+    <select name="visibility" style="width:auto">
+      <option value="">All visibility</option>
+      <option value="PUBLIC" {% if visibility_filter == "PUBLIC" %}selected{% endif %}>Public</option>
+      <option value="PRIVATE_GM_PLAYER" {% if visibility_filter == "PRIVATE_GM_PLAYER" %}selected{% endif %}>Private</option>
+      <option value="GM_ONLY" {% if visibility_filter == "GM_ONLY" %}selected{% endif %}>GM only</option>
+    </select>
+    <button class="btn btn-primary" type="submit">Search</button>
+  </form>
+
+  {% for m in results %}
+    <div class="round-block">
+      <div class="msg-header">
+        <strong>{% if m.author_type == "GM" %}GM{% elif m.author_player %}{{ m.author_player.display_name }}{% else %}{{ m.author_type }}{% endif %}</strong>
+        {% if m.action_type %}<span class="action-tag">[{{ m.action_type }}]</span>{% endif %}
+        <span class="chip">{{ m.visibility }}</span>
+        <a class="meta" href="{% url 'scene' m.scene.pk %}#message-{{ m.pk }}">{{ m.scene.name }}</a>
+        <span class="meta" style="margin-left:auto">{{ m.created_at }}</span>
+      </div>
+      <div class="msg-content">{{ m.content|message_format }}</div>
+      {% if m.private_player %}<div class="meta">Private with: {{ m.private_player.display_name }}</div>{% endif %}
+    </div>
+  {% empty %}
+    <p class="meta">Nothing found.</p>
+  {% endfor %}
+</div>
+{% endblock %}

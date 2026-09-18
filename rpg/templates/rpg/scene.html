@@ -9,9 +9,7 @@
 
 <div class="toolbar">
   <strong>{{ scene.name }}</strong>
-  {% if scene.is_closed %}
-    <span class="chip">CLOSED</span>
-  {% endif %}
+  {% if scene.is_closed %}<span class="chip">CLOSED</span>{% endif %}
   <span class="meta">Mode:</span>
   {% if scene.is_closed %}
     <span class="chip">{{ scene.mode }}</span>
@@ -19,9 +17,9 @@
     <form id="mode-form" method="post" action="{% url 'set_mode' scene.pk %}" class="inline">
       {% csrf_token %}
       <select name="mode" data-round-ready="{% if round_ready %}1{% else %}0{% endif %}" onchange="handleModeChange(this)">
-      {% for value, label in modes %}
-        <option value="{{ value }}" {% if scene.mode == value %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
+        {% for value, label in modes %}
+          <option value="{{ value }}" {% if scene.mode == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
       </select>
     </form>
   {% endif %}
@@ -45,12 +43,29 @@
   {% endif %}
   <a class="btn" href="/">Home</a>
   <a class="btn" href="/admin/rpg/scene/{{ scene.pk }}/change/">Edit</a>
+
   {% if not scene.is_closed %}
-    <form method="post" action="{% url 'close_scene' scene.pk %}" class="inline"
-          onsubmit="return confirm('Close this scene? It will become read-only.');">
+    {% if latest_turn %}
+      <form method="post" action="{% url 'undo_latest_turn' scene.pk %}" class="inline"
+            onsubmit="return confirm('Удалить последний Turn целиком и вернуть ROUND-позицию?');">
+        {% csrf_token %}
+        <button class="btn" type="submit">Undo last turn</button>
+      </form>
+    {% endif %}
+    <form method="post" action="{% url 'prepare_close_summary' scene.pk %}" class="inline">
       {% csrf_token %}
-      <button class="btn" type="submit">Close scene</button>
+      <button class="btn" type="submit">Close…</button>
     </form>
+    <details class="msg-menu">
+      <summary title="Закрытие без сводки">⋯</summary>
+      <div class="msg-menu-popover">
+        <form method="post" action="{% url 'close_scene' scene.pk %}"
+              onsubmit="return confirm('Закрыть без подготовки summary?');">
+          {% csrf_token %}
+          <button type="submit">Close without summary</button>
+        </form>
+      </div>
+    </details>
   {% endif %}
 </div>
 
@@ -83,58 +98,112 @@
   </form>
 </div>
 
+{% if close_summary_draft and not scene.is_closed %}
+<div class="close-review">
+  <strong>Close-scene review</strong>
+  <p class="meta">Сводка ничего не меняет, пока ты не нажмёшь Apply & close. Модели, наконец, могут предлагать, а не самовольно переписывать историю.</p>
+  <form method="post" action="{% url 'apply_close_summary' scene.pk %}">
+    {% csrf_token %}
+    <label>Scene summary</label>
+    <textarea name="scene_summary">{{ close_summary_draft.scene_summary }}</textarea>
+    <label>Open hooks</label>
+    <textarea name="open_hooks">{{ close_summary_draft.open_hooks }}</textarea>
+    {% for p in players %}
+      <label>{{ p.display_name }} memory update</label>
+      <textarea name="player_memory_{{ p.pk }}">{{ close_player_drafts|get:p.pk }}</textarea>
+    {% endfor %}
+    <button class="btn btn-primary" type="submit">Apply & close</button>
+  </form>
+  <form method="post" action="{% url 'discard_close_summary' scene.pk %}" class="inline">
+    {% csrf_token %}
+    <button class="btn" type="submit">Discard draft</button>
+  </form>
+</div>
+{% endif %}
+
 {% if not scene.is_closed %}
-<form id="composer" class="gm-composer-sticky" method="post" action="{% url 'send_gm_message' scene.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
+<form id="composer"
+      class="gm-composer-sticky"
+      method="post"
+      action="{% url 'send_gm_message' scene.pk %}"
+      data-ic-action="{% url 'send_gm_message' scene.pk %}"
+      data-ooc-action="{% url 'send_ooc_meta' scene.pk %}"
+      onsubmit="return prepareComposerSubmit(this, event)">
 {% csrf_token %}
 <input type="hidden" name="client_turn_id" value="">
+<input type="hidden" name="composer_mode" id="composer-mode" value="IC">
 <div class="toolbar composer-toolbar">
-  <textarea id="gm-composer-input" class="gm-composer-input" name="content" rows="4" placeholder="GM public message..." autofocus></textarea>
-  <button type="button" class="btn" onclick="formatSelectedAsDialogue(document.getElementById('gm-composer-input'))"
-          title="Преобразовать выделенный текст в реплику">Реплика</button>
+  <textarea id="gm-composer-input" class="gm-composer-input" name="content" rows="7"
+            placeholder="GM public message..." autofocus></textarea>
+
+  <button id="gm-mode-toggle" type="button" class="btn" onclick="toggleComposerMode()">IC</button>
+
+  <span class="ic-only">
+    <button id="dialogue-button" type="button" class="btn"
+            onclick="formatSelectedAsDialogue(document.getElementById('gm-composer-input'))"
+            title="Преобразовать выделенный текст в реплику">Реплика</button>
+  </span>
+
   {% if scene.mode == "ROUND" %}
-    <select id="saoot-target" class="saoot-target" {% if not saoot_candidates %}disabled{% endif %}
-            title="Чью заявку ACT_OUT_OF_TURN разрешает выделенный текст">
-      {% for candidate in saoot_candidates %}
-        <option value="{{ candidate.author_player.pk }}"
-                data-player-name="{{ candidate.author_player.display_name }}">
-          {{ candidate.author_player.display_name }} · {{ candidate.content|truncatechars:55 }}
-        </option>
-      {% empty %}
-        <option>нет ACT_OUT_OF_TURN</option>
+    <span class="ic-only">
+      <select id="saoot-target" class="saoot-target" {% if not saoot_candidates %}disabled{% endif %}
+              title="Чью заявку ACT_OUT_OF_TURN разрешает выделенный текст">
+        {% for candidate in saoot_candidates %}
+          <option value="{{ candidate.author_player.pk }}"
+                  data-player-name="{{ candidate.author_player.display_name }}">
+            {{ candidate.author_player.display_name }} · {{ candidate.content|truncatechars:55 }}
+          </option>
+        {% empty %}
+          <option>нет ACT_OUT_OF_TURN</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-saoot"
+              onclick="formatSelectedAsSaoot(document.getElementById('gm-composer-input'), document.getElementById('saoot-target'))"
+              {% if not saoot_candidates %}disabled title="В последнем ROUND нет заявок ACT_OUT_OF_TURN"{% else %}title="Пометить выделенный текст как явное разрешение ACT_OUT_OF_TURN"{% endif %}>
+        SAOOT
+      </button>
+    </span>
+  {% endif %}
+
+  <span class="ic-only">
+    <label><input type="checkbox" name="run_turn" value="1" checked> Run turn</label>
+    {% if scene.mode == "MANUAL" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
+      <span class="meta">Players:</span>
+      {% for p in players %}
+        <label><input type="checkbox" name="selected_players" value="{{ p.pk }}" {% if scene.mode == "MANUAL" %}checked{% endif %}> {{ p.display_name }}</label>
       {% endfor %}
+    {% endif %}
+  </span>
+
+  <span class="ooc-only" hidden>
+    <span class="meta">OOC target:</span>
+    <select id="ooc-target" name="target" style="width:auto; min-width:150px">
+      <option value="all">All players</option>
+      {% for p in players %}<option value="{{ p.pk }}">{{ p.display_name }}</option>{% endfor %}
     </select>
-    <button type="button" class="btn btn-saoot"
-            onclick="formatSelectedAsSaoot(document.getElementById('gm-composer-input'), document.getElementById('saoot-target'))"
-            {% if not saoot_candidates %}disabled title="В последнем ROUND нет заявок ACT_OUT_OF_TURN"{% else %}title="Пометить выделенный текст как явное разрешение ACT_OUT_OF_TURN"{% endif %}>
-      SAOOT
-    </button>
-  {% endif %}
-  <label><input type="checkbox" name="run_turn" value="1" checked> Run turn</label>
-  {% if scene.mode == "MANUAL" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
-    <span class="meta">Players:</span>
-    {% for p in players %}
-      <label><input type="checkbox" name="selected_players" value="{{ p.pk }}" {% if scene.mode == "MANUAL" %}checked{% endif %}> {{ p.display_name }}</label>
-    {% endfor %}
-  {% endif %}
+  </span>
+
   <button id="gm-send-button" type="submit" class="btn btn-primary"
+          data-round-blocked="{% if scene.mode == 'ROUND' and not round_ready %}1{% else %}0{% endif %}"
           {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% endif %}>Send</button>
+
   {% if scene.mode == "ROUND" or scene.mode == "MANUAL" %}
-    <button id="gm-silence-button"
-            type="submit"
-            formaction="{% url 'silent_turn' scene.pk %}"
-            class="btn"
-            onclick="return prepareSilentTurn(this.form, '{{ scene.mode }}')"
-            {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% else %}title="GM ничего не добавляет; запустить следующий ход из текущего состояния"{% endif %}>
-      Молчание
-    </button>
+    <span class="ic-only">
+      <button id="gm-silence-button"
+              type="submit"
+              formaction="{% url 'silent_turn' scene.pk %}"
+              class="btn"
+              onclick="return prepareSilentTurn(this.form, '{{ scene.mode }}')"
+              {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% else %}title="GM ничего не добавляет; запустить следующий ход из текущего состояния"{% endif %}>
+        Молчание
+      </button>
+    </span>
   {% endif %}
 </div>
 </form>
 {% else %}
 <div class="gm-composer-sticky">
-  <div class="round-warning">
-    This scene is closed and read-only. Its history can be inherited by a new scene.
-  </div>
+  <div class="round-warning">This scene is closed and read-only. Its history can be inherited by a new scene.</div>
   <form method="post" action="{% url 'create_followup_scene' scene.pk %}">
     {% csrf_token %}
     <div class="toolbar composer-toolbar">
@@ -154,8 +223,7 @@
 {% endif %}
 </div>
 
-<div class="grid3">
-  <!-- LEFT: players -->
+<div id="scene-grid" class="grid3">
   <div class="panel">
     <h3>Players</h3>
     <div id="players"
@@ -165,9 +233,25 @@
     </div>
   </div>
 
-  <!-- CENTER: public scene -->
   <div class="panel">
-    <h3>Public Scene</h3>
+    <div class="private-panel-header">
+      <h3>Public Scene</h3>
+      <a class="btn btn-small" href="{% url 'search_history' scene.pk %}">History search</a>
+    </div>
+    <div class="public-filter">
+      <input id="public-filter-text" type="text" placeholder="Search…" oninput="filterPublicMessages()">
+      <select id="public-filter-author" onchange="filterPublicMessages()">
+        <option value="">All authors</option>
+        <option value="GM">GM</option>
+        {% for p in players %}<option value="{{ p.display_name }}">{{ p.display_name }}</option>{% endfor %}
+      </select>
+      <select id="public-filter-action" onchange="filterPublicMessages()">
+        <option value="">All actions</option>
+        <option value="ACT">ACT</option>
+        <option value="PASS">PASS</option>
+        <option value="ACT_OUT_OF_TURN">ACT_OUT_OF_TURN</option>
+      </select>
+    </div>
     <div id="public-scene"
          hx-get="{% url 'scene_fragment' scene.pk %}"
          hx-trigger="load, every 3s"
@@ -176,10 +260,17 @@
     </div>
   </div>
 
-  <!-- RIGHT: private channels -->
-  <div class="panel">
-    <h3>Private (GM ↔ Player)</h3>
-    <div x-data="{ tab: 0 }">
+  <div id="private-panel" class="panel private-panel">
+    <div class="private-panel-header">
+      <h3><span class="private-panel-title-text">Private (GM ↔ Player)</span></h3>
+      <label class="meta private-panel-title-text" title="Автоматически разворачивать панель при новом приватном сообщении игрока">
+        <input id="private-autoopen" type="checkbox" onchange="setPrivateAutoOpen(this)"> auto-open
+      </label>
+      <button id="private-toggle" class="btn btn-small" type="button" onclick="togglePrivatePanel()">◀</button>
+    </div>
+    <div class="private-panel-body"
+         x-data="{ tab: 0 }"
+         @open-private.window="tab = $event.detail.playerId">
       <div class="toolbar">
         {% for p in players %}
           <form class="private-tab-form" method="post" action="{% url 'mark_private_read' scene.pk p.pk %}"
@@ -196,60 +287,36 @@
       </div>
       <p class="meta" x-show="tab === 0">Select a player to open the private channel.</p>
       {% for p in players %}
-      <div x-show="tab === {{ p.pk }}" style="display:none">
-        <h3>{{ p.display_name }} — status: <span class="chip {{ p.status }}">{{ p.status }}</span></h3>
-        <div class="messages">
-        {% for item in player_private|get:p.pk %}
-          {% with m=item.message %}
-          <div class="msg {% if m.author_type == "GM" %}gm{% else %}private {{ player_color_by_id|get:p.pk }}{% endif %}">
-            <div class="msg-header">
-              <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ p.display_name }}{% endif %}</span>
-              {% if m.author_type == "PLAYER" and m.action_type %}
-                <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
-              {% endif %}
-              <button type="button" class="copy-message-btn" onclick="copyMessage(this)"
-                      title="Копировать сообщение" aria-label="Копировать сообщение">Copy</button>
-            </div>
-            {% if m.action_type != "PASS" %}
-              <div class="msg-content">{{ m.content|message_format }}</div>
-            {% endif %}
-            {% if m.author_type == "PLAYER" %}
-              {% if item.public_message %}
-                <div class="private-ref">
-                  К публичному ходу:
-                  <a href="#message-{{ item.public_message.pk }}">
-                    «{{ item.public_message.content|truncatechars:150 }}»
-                  </a>
-                </div>
-              {% elif item.trigger_message %}
-                <div class="private-ref">
-                  Ответ на:
-                  «{{ item.trigger_message.content|truncatechars:150 }}»
-                </div>
-              {% endif %}
-            {% endif %}
+        <div x-show="tab === {{ p.pk }}" style="display:none">
+          <h3>{{ p.display_name }} — status: <span class="chip {{ p.status }}">{{ p.status }}</span></h3>
+          <div id="private-channel-{{ p.pk }}"
+               hx-get="{% url 'private_channel' scene.pk p.pk %}"
+               hx-trigger="load, every 3s"
+               hx-swap="innerHTML">
+            {% with entries=player_private|get:p.pk player=p player_color=player_color_by_id|get:p.pk %}
+              {% include "rpg/_private_messages.html" %}
+            {% endwith %}
           </div>
-          {% endwith %}
-        {% empty %}
-          <p class="meta">No private messages.</p>
-        {% endfor %}
+          {% if not scene.is_closed %}
+            <form method="post" action="{% url 'send_private_message' scene.pk p.pk %}"
+                  class="private-message-form"
+                  onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
+              {% csrf_token %}
+              <input type="hidden" name="client_turn_id" value="">
+              <div class="private-composer">
+                <textarea name="content" rows="5" placeholder="Private to {{ p.display_name }}..."></textarea>
+                <div class="toolbar">
+                  <label title="Unchecked: store the message as private context only, without calling the model.">
+                    <input type="checkbox" name="run_turn" value="1"> Ask for response
+                  </label>
+                  <button class="btn btn-primary" type="submit">Send</button>
+                </div>
+              </div>
+            </form>
+          {% else %}
+            <p class="meta">Scene closed: private history is read-only.</p>
+          {% endif %}
         </div>
-        {% if not scene.is_closed %}
-        <form method="post" action="{% url 'send_private_message' scene.pk p.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
-        {% csrf_token %}
-        <input type="hidden" name="client_turn_id" value="">
-        <div class="toolbar">
-          <input type="text" name="content" placeholder="Private to {{ p.display_name }}..." style="flex:1">
-          <label title="Unchecked: store the message as private context only, without calling the model.">
-            <input type="checkbox" name="run_turn" value="1"> Ask for response
-          </label>
-          <button class="btn btn-primary" type="submit">Send</button>
-        </div>
-        </form>
-        {% else %}
-          <p class="meta">Scene closed: private history is read-only.</p>
-        {% endif %}
-      </div>
       {% endfor %}
     </div>
   </div>
@@ -262,7 +329,6 @@
 function handleModeChange(select) {
   const roundSetup = document.getElementById("round-setup");
   const sendButton = document.getElementById("gm-send-button");
-
   if (select.value === "ROUND") {
     if (select.dataset.roundReady === "1") {
       select.form.submit();
@@ -273,15 +339,12 @@ function handleModeChange(select) {
     sendButton.title = "Confirm ROUND player order first";
     return;
   }
-
   roundSetup.hidden = true;
   select.form.submit();
 }
 
 function validateRoundOrder(form) {
-  const values = Array.from(form.querySelectorAll('select[name="round_order"]'))
-    .map((select) => select.value);
-
+  const values = Array.from(form.querySelectorAll('select[name="round_order"]')).map((select) => select.value);
   if (!values.length) {
     alert("ROUND requires at least one player.");
     return false;
@@ -293,7 +356,53 @@ function validateRoundOrder(form) {
   return true;
 }
 
+function toggleComposerMode() {
+  const form = document.getElementById("composer");
+  if (!form) return;
+  const field = document.getElementById("composer-mode");
+  const button = document.getElementById("gm-mode-toggle");
+  const send = document.getElementById("gm-send-button");
+  const isOoc = field.value !== "OOC";
+  field.value = isOoc ? "OOC" : "IC";
+  button.textContent = isOoc ? "OOC" : "IC";
+  button.classList.toggle("ooc-composer-mode", isOoc);
+  send.textContent = isOoc ? "Send OOC" : "Send";
+  send.disabled = isOoc ? false : send.dataset.roundBlocked === "1";
+  send.title = isOoc ? "Отправить метаинформацию приватно выбранным игрокам" :
+    (send.dataset.roundBlocked === "1" ? "Confirm ROUND player order first" : "");
+  form.querySelectorAll(".ic-only").forEach((node) => node.hidden = isOoc);
+  form.querySelectorAll(".ooc-only").forEach((node) => node.hidden = !isOoc);
+  const textarea = document.getElementById("gm-composer-input");
+  textarea.placeholder = isOoc
+    ? "OOC / meta information for one or all players..."
+    : "GM public message...";
+}
+
+function prepareComposerSubmit(form, event) {
+  const submitter = event?.submitter;
+  if (submitter?.id === "gm-silence-button") {
+    if (!form.client_turn_id.value) form.client_turn_id.value = crypto.randomUUID();
+    return true;
+  }
+
+  const mode = document.getElementById("composer-mode")?.value || "IC";
+  const content = form.querySelector('textarea[name="content"]')?.value.trim() || "";
+  if (!content) {
+    alert("Сообщение пустое.");
+    return false;
+  }
+  if (mode === "OOC") {
+    form.action = form.dataset.oocAction;
+    return true;
+  }
+  form.action = form.dataset.icAction;
+  if (!form.client_turn_id.value) form.client_turn_id.value = crypto.randomUUID();
+  return true;
+}
+
 function prepareSilentTurn(form, mode) {
+  document.getElementById("composer-mode").value = "IC";
+  form.action = "{% url 'silent_turn' scene.pk %}";
   if (mode === "MANUAL") {
     const selected = form.querySelectorAll('input[name="selected_players"]:checked');
     if (selected.length !== 1) {
@@ -301,53 +410,40 @@ function prepareSilentTurn(form, mode) {
       return false;
     }
   }
-
   const textarea = form.querySelector('textarea[name="content"]');
   if (textarea && textarea.value.trim()) {
-    return window.confirm(
-      "В поле GM есть текст. Молчание его НЕ отправит. Запустить ход без реплики GM?"
-    );
+    return window.confirm("В поле GM есть текст. Молчание его НЕ отправит. Запустить ход без реплики GM?");
   }
+  if (!form.client_turn_id.value) form.client_turn_id.value = crypto.randomUUID();
   return true;
 }
 
 function formatSelectedAsDialogue(textarea) {
   if (!textarea) return;
-
   const start = textarea.selectionStart ?? 0;
   const end = textarea.selectionEnd ?? start;
   const selected = textarea.value.slice(start, end);
-
   if (!selected) {
     const before = textarea.value.slice(0, start);
-    const needsNewline = before && !before.endsWith("\n");
-    const insert = (needsNewline ? "\n" : "") + "— ";
+    const insert = (before && !before.endsWith("\n") ? "\n" : "") + "— ";
     textarea.setRangeText(insert, start, end, "end");
     textarea.focus();
     return;
   }
-
-  const formatted = selected
-    .split("\n")
-    .map((line) => {
-      if (!line.trim()) return line;
-      if (/^\s*[—–-]\s+/.test(line)) return line;
-      const indent = line.match(/^\s*/)?.[0] || "";
-      return indent + "— " + line.slice(indent.length);
-    })
-    .join("\n");
-
+  const formatted = selected.split("\n").map((line) => {
+    if (!line.trim() || /^\s*[—–-]\s+/.test(line)) return line;
+    const indent = line.match(/^\s*/)?.[0] || "";
+    return indent + "— " + line.slice(indent.length);
+  }).join("\n");
   textarea.setRangeText(formatted, start, end, "select");
   textarea.focus();
 }
 
 function formatSelectedAsSaoot(textarea, targetSelect) {
   if (!textarea || !targetSelect || targetSelect.disabled) return;
-
   const start = textarea.selectionStart ?? 0;
   const end = textarea.selectionEnd ?? start;
   const selected = textarea.value.slice(start, end);
-
   if (!selected.trim()) {
     alert("Сначала выделите текст, который разрешает ACT_OUT_OF_TURN.");
     textarea.focus();
@@ -355,21 +451,15 @@ function formatSelectedAsSaoot(textarea, targetSelect) {
   }
   if (selected.includes("[[SAOOT:") || selected.includes("[[/SAOOT]]")) {
     alert("Выделение уже содержит SAOOT-разметку.");
-    textarea.focus();
     return;
   }
-
   const option = targetSelect.options[targetSelect.selectedIndex];
-  if (!option || !option.value) return;
-
   const playerId = option.value;
   const playerName = option.dataset.playerName || option.textContent.trim();
-  const marked =
-    "[[SAOOT:" + playerId + "|" + playerName + "]]" +
-    selected +
-    "[[/SAOOT]]";
-
-  textarea.setRangeText(marked, start, end, "select");
+  textarea.setRangeText(
+    "[[SAOOT:" + playerId + "|" + playerName + "]]" + selected + "[[/SAOOT]]",
+    start, end, "select"
+  );
   textarea.focus();
 }
 
@@ -381,11 +471,51 @@ async function markPrivateRead(form, playerId) {
       headers: { "X-Requested-With": "XMLHttpRequest" },
       credentials: "same-origin",
     });
-    document.querySelectorAll('[data-unread-player="' + playerId + '"]')
-      .forEach((node) => node.remove());
+    document.querySelectorAll('[data-unread-player="' + playerId + '"]').forEach((node) => node.remove());
   } catch (error) {
     console.warn("Failed to mark private messages read", error);
   }
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  const auto = document.getElementById("private-autoopen");
+  if (auto) auto.checked = privateAutoOpenEnabled();
+  if (localStorage.getItem("mraz.private.collapsed") === "1") togglePrivatePanel(false);
+  maybeAutoOpenPrivate({ initial: true });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.ctrlKey && event.key === "Enter") {
+      const privateForm = event.target?.closest?.("form.private-message-form");
+      if (privateForm) {
+        event.preventDefault();
+        privateForm.requestSubmit();
+        return;
+      }
+      const composer = event.target?.closest?.("#composer");
+      if (composer) {
+        event.preventDefault();
+        document.getElementById("gm-send-button")?.click();
+        return;
+      }
+    }
+    if (event.altKey && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      document.getElementById("gm-silence-button")?.click();
+    }
+    if (event.altKey && event.key.toLowerCase() === "r") {
+      event.preventDefault();
+      document.getElementById("dialogue-button")?.click();
+    }
+    if (event.altKey && event.key.toLowerCase() === "o") {
+      event.preventDefault();
+      toggleComposerMode();
+    }
+  });
+});
+
+document.body.addEventListener("htmx:afterSwap", (event) => {
+  if (event.target?.id === "players") maybeAutoOpenPrivate();
+  if (event.target?.id === "public-scene") filterPublicMessages();
+});
 </script>
 {% endblock %}

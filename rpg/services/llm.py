@@ -136,7 +136,16 @@ class LiteLLMClient:
             raise
 
         text = data["choices"][0]["message"]["content"]
-        return parse_structured_response(text)
+        try:
+            return parse_structured_response(text)
+        except Exception as exc:
+            # TurnExecution debug can preserve the exact provider payload even
+            # when structured parsing itself is what failed.
+            try:
+                setattr(exc, "raw_text", text)
+            except Exception:
+                pass
+            raise
 
     def close(self) -> None:
         self._client.close()

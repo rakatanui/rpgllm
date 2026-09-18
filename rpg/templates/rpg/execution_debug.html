@@ -1,0 +1,32 @@
+{% extends "rpg/base.html" %}
+{% block title %}Execution #{{ execution.pk }} debug{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:1200px;margin:0 auto">
+  <div class="toolbar">
+    <a class="btn" href="{% url 'scene' scene.pk %}">← Scene</a>
+    <strong>Execution #{{ execution.pk }} · {{ execution.player.display_name }}</strong>
+  </div>
+  <p>
+    state: <span class="chip {{ execution.state|lower }}">{{ execution.state }}</span>
+    action: <span class="chip">{{ execution.action_type|default:"—" }}</span>
+    model: <span class="chip">{{ execution.model_used|default:"—" }}</span>
+    latency: <span class="chip">{% if execution.latency_ms != None %}{{ execution.latency_ms }} ms{% else %}—{% endif %}</span>
+  </p>
+  {% if execution.error %}
+    <h3>Error</h3>
+    <pre style="white-space:pre-wrap">{{ execution.error }}</pre>
+  {% endif %}
+  {% if execution.nudge_text %}
+    <h3>One-shot Nudge</h3>
+    <pre style="white-space:pre-wrap">{{ execution.nudge_text }}</pre>
+  {% endif %}
+  <h3>Frozen history IDs</h3>
+  <pre style="white-space:pre-wrap">{{ execution.history_message_ids }}</pre>
+  <h3>System prompt</h3>
+  <pre style="white-space:pre-wrap;max-height:420px;overflow:auto">{{ execution.system_prompt_snapshot }}</pre>
+  <h3>Request messages</h3>
+  <pre style="white-space:pre-wrap;max-height:420px;overflow:auto">{{ execution.request_messages }}</pre>
+  <h3>Raw provider response</h3>
+  <pre style="white-space:pre-wrap;max-height:420px;overflow:auto">{{ execution.raw_response }}</pre>
+</div>
+{% endblock %}

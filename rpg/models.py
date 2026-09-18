@@ -129,6 +129,11 @@ class Scene(models.Model):
             "included in player context even when old messages are trimmed."
         ),
     )
+    close_summary_draft = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="GM-reviewed draft produced before closing a scene.",
+    )
     mode = models.CharField(max_length=20, choices=TurnMode.choices, default=TurnMode.ROUND)
     round_order = models.JSONField(
         default=list,
@@ -207,6 +212,18 @@ class Player(models.Model):
     )
     model_config = models.ForeignKey(
         ModelConfig, on_delete=models.SET_NULL, null=True, blank=True, related_name="players"
+    )
+    fallback_model_config = models.ForeignKey(
+        ModelConfig,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="fallback_players",
+        help_text="Optional model used for one-off fallback retries.",
+    )
+    pending_nudge = models.TextField(
+        blank=True,
+        help_text="One-shot private GM instruction consumed by the player's next execution.",
     )
     status = models.CharField(max_length=20, choices=PlayerStatus.choices, default=PlayerStatus.IDLE)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -346,6 +363,12 @@ class TurnExecution(models.Model):
     action_type = models.CharField(max_length=30, blank=True, default="")
     error = models.TextField(blank=True)
     history_message_ids = models.JSONField(default=list, blank=True)
+    nudge_text = models.TextField(blank=True)
+    model_used = models.CharField(max_length=200, blank=True, default="")
+    system_prompt_snapshot = models.TextField(blank=True)
+    request_messages = models.JSONField(default=list, blank=True)
+    raw_response = models.TextField(blank=True)
+    latency_ms = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -360,6 +383,31 @@ class TurnExecution(models.Model):
 
     def __str__(self):
         return f"Turn #{self.turn_id} / {self.player} ({self.state})"
+
+
+class MessageRevision(models.Model):
+    message = models.ForeignKey(
+        "Message",
+        on_delete=models.CASCADE,
+        related_name="revisions",
+    )
+    revision_index = models.PositiveIntegerField()
+    content = models.TextField()
+    action_type = models.CharField(max_length=30, blank=True, default="")
+    reason = models.CharField(max_length=30, default="ORIGINAL")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["revision_index", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["message", "revision_index"],
+                name="uniq_message_revision_index",
+            )
+        ]
+
+    def __str__(self):
+        return f"Message #{self.message_id} revision {self.revision_index}"
 
 
 class Message(models.Model):

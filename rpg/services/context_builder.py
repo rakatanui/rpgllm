@@ -236,13 +236,17 @@ def build_player_context(
     )
 
     parts.append(
-        "# OOC FEEDBACK\n"
-        "The GM may privately send OOC feedback tied to one of your existing public "
-        "declarations. OOC is meta-level discussion, not something your character hears "
-        "or says in the fiction. When an OOC revision request is explicitly presented, "
-        "reconsider only the referenced declaration. You may revise it if the feedback "
-        "warrants a change, or keep it unchanged. A revision replaces that declaration; "
-        "it does not create an additional action or a new turn."
+        "# OOC FEEDBACK / META INFORMATION\n"
+        "The GM may privately send OOC feedback or meta-information. OOC is meta-level discussion; "
+        "it is not something "
+        "your character hears or says in the fiction. Messages beginning with [OOC META] "
+        "are authoritative out-of-character information for you to remember and account "
+        "for, but they do not themselves create an in-fiction event or force an immediate "
+        "public action.\n"
+        "When an OOC revision request is explicitly tied to one of your existing public "
+        "declarations, reconsider only that referenced declaration. You may revise it if "
+        "the feedback warrants a change, or keep it unchanged. A revision replaces that "
+        "declaration; it does not create an additional action or a new turn."
     )
 
     parts.append(

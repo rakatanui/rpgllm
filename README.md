@@ -238,7 +238,8 @@ and calls only that player. Models are explicitly told that Silence means the GM
 has yielded the floor and that they must continue only from already established
 scene state/history rather than inventing a new GM event.
 
-Successful public player replies also expose two GM correction controls:
+Successful public player replies expose GM correction/history controls in the
+message `⋯` menu:
 
 - **OOC** asks the GM for a private meta-comment tied to that exact public
   declaration. The same player model receives the comment privately and may
@@ -246,10 +247,58 @@ Successful public player replies also expose two GM correction controls:
   updates the existing public Message row in place, so it does not create a new
   action, new turn, or another ROUND advance.
 - **Regen** asks only that player's model for a fresh variant from the original
-  frozen turn context. The old public Message row is replaced in place only
-  after the new response passes the normal action/length validation. Other
-  players are never replayed and ROUND advancement is never repeated.
+  frozen turn context. The old version is kept in `MessageRevision`; a successful
+  variant replaces the visible Message in place and may later be restored.
+- **Versions / restore** shows every retained declaration version (original,
+  Regen, OOC revision, restore) and lets the GM restore an earlier one.
+- **Debug** shows the exact model alias, latency, frozen history ids, system
+  prompt, request messages, raw provider response, execution state and error.
+- **Memory pins** can append an edited message-derived note directly to shared
+  campaign memory, scene memory, the speaking player's private memory, or a
+  scene-scoped LoreEntry.
 
+The scene toolbar also exposes **Undo last turn**. It removes the most recent
+Turn and its linked messages. When a public ROUND Turn had advanced the round,
+the active player position is restored to the turn's frozen active-player
+snapshot.
+
+### GM workbench
+
+Players can have an optional fallback `ModelConfig`. Failed/invalid executions
+then offer both a same-model retry and a one-off fallback retry without changing
+the player's normal model assignment.
+
+Each player card also has **Nudge**. A Nudge is a one-shot private GM
+instruction snapshotted into the next execution for that player, then consumed.
+It is never presented as in-fiction dialogue and retries of that same execution
+retain the snapshotted Nudge.
+
+Public ROUND provider calls run concurrently after every participant's context
+has been frozen. ORM/context construction and result persistence remain ordered,
+so one player's response cannot enter another player's same-round context.
+
+The public pane has quick current-scene text/author/action filters plus a
+**History search** page spanning the current scene and its predecessor lineage,
+with text, author, action and visibility filters.
+
+The GM composer has an **IC / OOC** switch. OOC mode stores meta-information in
+the selected player's private context or broadcasts it to all current scene
+participants. It does not create a public event or call a model immediately.
+
+The private pane is wider, collapsible, and keeps its text composers outside the
+polling fragment so typed drafts survive refreshes. Unread player messages still
+show the existing dot beside the player name. By default a newly appearing
+unread dot expands the private pane and selects that player's tab; **auto-open**
+can be disabled and is stored in browser localStorage.
+
+At scene close, **Close…** asks models for a draft public scene summary, open
+hooks, and privacy-filtered per-player memory updates. The draft is editable and
+does not change memory or close the scene until the GM presses **Apply & close**.
+Direct close without summary remains available from the adjacent `⋯` menu.
+
+GM keyboard shortcuts on the scene page:
+`Ctrl+Enter` Send, `Alt+S` Silence, `Alt+R` dialogue formatting, and
+`Alt+O` IC/OOC mode.
 
 ROUND treats `ACT_OUT_OF_TURN` as an exceptional interrupt rather than a
 normal alternate action. Inactive players are explicitly instructed to prefer
