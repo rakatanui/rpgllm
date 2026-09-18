@@ -59,3 +59,42 @@ def test_parse_json_embedded_in_prose():
     r = parse_structured_response('Here is my response:\n{"action_type": "ACT", "public": "I attack!", "private_to_gm": ""}\nDone.')
     assert r.action_type == "ACT"
     assert r.public == "I attack!"
+
+
+def test_parse_json_with_literal_newlines_inside_string():
+    raw = (
+        '{"action_type":"ACT","public":"Матис задумался.\n'
+        'Puis il répond.\n\n'
+        '[[SPEECH]]Je suis prêt.[[RU]]Я готов.[[/SPEECH]]",'
+        '"private_to_gm":""}'
+    )
+
+    r = parse_structured_response(raw)
+
+    assert r.action_type == "ACT"
+    assert r.public.startswith("Матис задумался.")
+    assert "Puis il répond." in r.public
+    assert "[[SPEECH]]Je suis prêt." in r.public
+    assert r.private_to_gm == ""
+
+
+def test_parse_fenced_json_with_literal_newlines_inside_string():
+    raw = (
+        "```json\n"
+        '{"action_type":"ACT","public":"Первая строка.\nВторая строка.",'
+        '"private_to_gm":"секрет"}\n'
+        "```"
+    )
+
+    r = parse_structured_response(raw)
+
+    assert r.action_type == "ACT"
+    assert r.public == "Первая строка.\nВторая строка."
+    assert r.private_to_gm == "секрет"
+
+
+def test_malformed_json_envelope_is_not_published_as_plain_text():
+    raw = '{"action_type":"ACT","public":"Начало ответа","private_to_gm":"'
+
+    with pytest.raises(ValueError, match="malformed structured JSON"):
+        parse_structured_response(raw)
