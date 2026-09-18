@@ -1112,10 +1112,7 @@ def undo_latest_public_turn(scene: Scene) -> None:
         )
         if latest is None:
             raise RuntimeError("There is no turn to undo")
-        if latest.is_private:
-            raise RuntimeError("Latest turn is private; undo it before the public turn")
-
-        if latest.mode == TurnMode.ROUND and latest.round_advanced:
+        if latest.mode == TurnMode.ROUND and not latest.is_private and latest.round_advanced:
             order = list(locked_scene.round_order or [])
             if latest.active_player_id_snapshot in order:
                 locked_scene.active_player_index = order.index(
