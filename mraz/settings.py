@@ -116,7 +116,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ---- MRAZ Master app config ----
 LLM_BACKEND = os.environ.get("LLM_BACKEND", "mock")  # "mock" | "litellm"
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://litellm:4000")
-LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "sk-litellm-default")
+LITELLM_API_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-litellm-default")
 DEFAULT_LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "60"))
 
 # Logging - never log API keys.
