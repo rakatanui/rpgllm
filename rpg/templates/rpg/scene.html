@@ -480,7 +480,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const auto = document.getElementById("private-autoopen");
   if (auto) auto.checked = privateAutoOpenEnabled();
   if (localStorage.getItem("mraz.private.collapsed") === "1") togglePrivatePanel(false);
-  maybeAutoOpenPrivate();
+  maybeAutoOpenPrivate({ initial: true });
 
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.key === "Enter") {
