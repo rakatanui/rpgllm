@@ -1,6 +1,6 @@
 """Views for MRAZ Master. Business rules live in services."""
 from django.core.exceptions import ValidationError
-from django.http import HttpResponseBadRequest
+from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
@@ -60,6 +60,29 @@ def _round_order_is_ready(scene):
     return 0 <= scene.active_player_index < len(scene.round_order)
 
 
+def _active_round_player_id(scene):
+    order = list(scene.round_order or [])
+    if scene.mode != TurnMode.ROUND or not order:
+        return None
+    if not (0 <= scene.active_player_index < len(order)):
+        return None
+    return order[scene.active_player_index]
+
+
+def _unread_private_player_ids(scene):
+    return list(
+        Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PRIVATE_GM_PLAYER,
+            author_type=AuthorType.PLAYER,
+            gm_unread=True,
+            private_player__isnull=False,
+        )
+        .values_list("private_player_id", flat=True)
+        .distinct()
+    )
+
+
 def campaigns(request):
     campaigns = Campaign.objects.prefetch_related("scenes").all()
     scenes = Scene.objects.all()
@@ -85,6 +108,7 @@ def scene_view(request, scene_id):
         if round_ready and scene.active_player_index < len(round_players)
         else None
     )
+    unread_private_player_ids = _unread_private_player_ids(scene)
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
         .select_related("author_player")
@@ -147,6 +171,8 @@ def scene_view(request, scene_id):
             "round_setup_players": round_setup_players,
             "round_ready": round_ready,
             "active_round_player": active_round_player,
+            "unread_private_player_ids": unread_private_player_ids,
+            "active_round_player_id": _active_round_player_id(scene),
         },
     )
 
@@ -179,7 +205,16 @@ def players_status(request, scene_id):
         .select_related("model_config")
         .order_by("created_at", "pk")
     )
-    return render(request, "rpg/_players.html", {"scene": scene, "players": players})
+    return render(
+        request,
+        "rpg/_players.html",
+        {
+            "scene": scene,
+            "players": players,
+            "unread_private_player_ids": _unread_private_player_ids(scene),
+            "active_round_player_id": _active_round_player_id(scene),
+        },
+    )
 
 
 def _selected_players_from_request(request, scene):
@@ -271,6 +306,20 @@ def send_private_message(request, scene_id, player_id):
         return HttpResponseBadRequest(str(exc))
 
     return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def mark_private_read(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = get_object_or_404(Player, pk=player_id, campaign=scene.campaign)
+    Message.objects.filter(
+        scene=scene,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        author_type=AuthorType.PLAYER,
+        private_player=player,
+        gm_unread=True,
+    ).update(gm_unread=False)
+    return HttpResponse(status=204)
 
 
 @require_http_methods(["POST"])
