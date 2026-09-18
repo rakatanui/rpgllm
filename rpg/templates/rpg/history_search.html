@@ -1,4 +1,5 @@
 {% extends "rpg/base.html" %}
+{% load rpg_extras %}
 {% block title %}History search · {{ scene.name }}{% endblock %}
 {% block content %}
 <div class="panel" style="max-width:1200px;margin:0 auto">
@@ -39,7 +40,7 @@
         <a class="meta" href="{% url 'scene' m.scene.pk %}#message-{{ m.pk }}">{{ m.scene.name }}</a>
         <span class="meta" style="margin-left:auto">{{ m.created_at }}</span>
       </div>
-      <div class="msg-content">{{ m.content }}</div>
+      <div class="msg-content">{{ m.content|message_format }}</div>
       {% if m.private_player %}<div class="meta">Private with: {{ m.private_player.display_name }}</div>{% endif %}
     </div>
   {% empty %}
