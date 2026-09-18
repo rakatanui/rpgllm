@@ -225,7 +225,7 @@ def scene_view(request, scene_id):
     unread_private_player_ids = _unread_private_player_ids(scene)
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
-        .select_related("author_player")
+        .select_related("author_player", "execution")
         .order_by("-created_at", "-pk")
     )
     player_color_by_id = _player_color_classes(players)
@@ -316,7 +316,7 @@ def scene_view_fragment(request, scene):
     players = _scene_players(scene)
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
-        .select_related("author_player")
+        .select_related("author_player", "execution")
         .order_by("-created_at", "-pk")
     )
     return render(
@@ -519,6 +519,59 @@ def retry_execution(request, scene_id, execution_id):
         return HttpResponseBadRequest(str(exc))
 
     return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def regenerate_execution(request, scene_id, execution_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    execution = get_object_or_404(
+        TurnExecution.objects.select_related("turn__scene", "player"),
+        pk=execution_id,
+        turn__scene=scene,
+    )
+    if execution.state != ExecutionState.COMPLETED:
+        return HttpResponseBadRequest("only a completed execution can be regenerated")
+
+    try:
+        turn_engine.regenerate_execution(execution)
+    except (RuntimeError, ValidationError) as exc:
+        return HttpResponseBadRequest(str(exc))
+
+    return redirect(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+        + f"#message-{request.POST.get('message_id', '')}"
+    )
+
+
+@require_http_methods(["POST"])
+def ooc_revision(request, scene_id, message_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    message = get_object_or_404(
+        Message.objects.select_related(
+            "author_player",
+            "execution__turn__scene",
+        ),
+        pk=message_id,
+        scene=scene,
+        visibility=Visibility.PUBLIC,
+        author_type=AuthorType.PLAYER,
+    )
+    comment = (request.POST.get("comment") or "").strip()
+    if not comment:
+        return HttpResponseBadRequest("OOC comment cannot be empty")
+
+    try:
+        turn_engine.revise_execution_ooc(
+            public_message=message,
+            gm_comment=comment,
+        )
+    except (RuntimeError, ValidationError) as exc:
+        return HttpResponseBadRequest(str(exc))
+
+    return redirect(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+        + f"#message-{message.pk}"
+    )
 
 
 @require_http_methods(["POST"])

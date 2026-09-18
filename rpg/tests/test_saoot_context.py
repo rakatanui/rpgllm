@@ -153,3 +153,6 @@ def test_round_prompt_makes_interruptions_rare_and_turns_compact():
     assert "no more than 650 visible characters" in ctx.system_prompt
     assert "no more than 2 paragraphs" in ctx.system_prompt
     assert "no more than 1 direct question" in ctx.system_prompt
+    assert "# OOC FEEDBACK" in ctx.system_prompt
+    assert "meta-level discussion" in ctx.system_prompt
+    assert "it does not create an additional action or a new turn" in ctx.system_prompt

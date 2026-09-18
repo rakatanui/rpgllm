@@ -17,6 +17,16 @@ urlpatterns = [
         views.retry_execution,
         name="retry_execution",
     ),
+    path(
+        "scene/<int:scene_id>/regenerate/<int:execution_id>/",
+        views.regenerate_execution,
+        name="regenerate_execution",
+    ),
+    path(
+        "scene/<int:scene_id>/ooc/<int:message_id>/",
+        views.ooc_revision,
+        name="ooc_revision",
+    ),
     path("scene/<int:scene_id>/close/", views.close_scene, name="close_scene"),
     path(
         "scene/<int:scene_id>/follow-up/",
