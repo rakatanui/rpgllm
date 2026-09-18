@@ -12,7 +12,7 @@
       <option value="">All authors</option>
       <option value="GM" {% if author_filter == "GM" %}selected{% endif %}>GM</option>
       {% for p in players %}
-        <option value="player:{{ p.pk }}" {% if author_filter == "player:"|add:p.pk|stringformat:"s" %}selected{% endif %}>{{ p.display_name }}</option>
+        <option value="player:{{ p.pk }}" {% if author_player_id == p.pk %}selected{% endif %}>{{ p.display_name }}</option>
       {% endfor %}
     </select>
     <select name="action" style="width:auto">
