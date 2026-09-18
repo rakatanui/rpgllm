@@ -18,6 +18,26 @@ model_list:
       model: ollama/gemma4:31b-cloud
       api_base: os.environ/OLLAMA_BASE_URL
 
+  - model_name: ollama-glm-5-3
+    litellm_params:
+      model: ollama/glm-5.3:cloud
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama-qwen3-5-397b
+    litellm_params:
+      model: ollama/qwen3.5:397b-cloud
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama-nemotron-3-ultra
+    litellm_params:
+      model: ollama/nemotron-3-ultra:cloud
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama-mistral-large-3-675b
+    litellm_params:
+      model: ollama/mistral-large-3:675b-cloud
+      api_base: os.environ/OLLAMA_BASE_URL
+
   # --- OpenAI ---
   - model_name: openai-gpt4o
     litellm_params:
