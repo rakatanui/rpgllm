@@ -500,7 +500,37 @@ def test_mock_mode_makes_no_http_call(mock_backend):
 
 
 @pytest.mark.django_db
-def test_public_turn_rejects_three_paragraph_response(mock_backend):
+def test_public_act_allows_five_paragraphs_and_two_questions(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class AllowedClient(MockLLMClient):
+        def generate(self, **kwargs):
+            return _resp(
+                "Lucien",
+                public=(
+                    "Первый абзац.\n\n"
+                    "Второй абзац.\n\n"
+                    "Третий абзац.\n\n"
+                    "Четвёртый абзац. Где он?\n\n"
+                    "Пятый абзац. Кто его видел?"
+                ),
+            )
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=AllowedClient()):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+
+    execution = result.turn.executions.get(player=lucien)
+    assert execution.state == ExecutionState.COMPLETED
+
+
+@pytest.mark.django_db
+def test_public_act_rejects_six_paragraphs(mock_backend):
     camp = make_campaign()
     lucien = make_player(camp, "Lucien")
     scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
@@ -509,7 +539,10 @@ def test_public_turn_rejects_three_paragraph_response(mock_backend):
         def generate(self, **kwargs):
             return _resp(
                 "Lucien",
-                public="Первый абзац.\n\nВторой абзац.\n\nТретий абзац.",
+                public=(
+                    "Первый.\n\nВторой.\n\nТретий.\n\n"
+                    "Четвёртый.\n\nПятый.\n\nШестой."
+                ),
             )
 
     with patch("rpg.services.turn_engine.get_llm_client", return_value=VerboseClient()):
@@ -521,11 +554,11 @@ def test_public_turn_rejects_three_paragraph_response(mock_backend):
 
     execution = result.turn.executions.get(player=lucien)
     assert execution.state == ExecutionState.INVALID
-    assert "maximum is 2 short paragraphs" in execution.error
+    assert "ACT response has 6 paragraphs; maximum is 5" in execution.error
 
 
 @pytest.mark.django_db
-def test_public_turn_rejects_multiple_questions(mock_backend):
+def test_public_act_rejects_three_questions(mock_backend):
     camp = make_campaign()
     lucien = make_player(camp, "Lucien")
     scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
@@ -534,7 +567,7 @@ def test_public_turn_rejects_multiple_questions(mock_backend):
         def generate(self, **kwargs):
             return _resp(
                 "Lucien",
-                public="Где он? Кто его видел?",
+                public="Где он? Кто его видел? Когда это случилось?",
             )
 
     with patch("rpg.services.turn_engine.get_llm_client", return_value=QuestionnaireClient()):
@@ -546,7 +579,38 @@ def test_public_turn_rejects_multiple_questions(mock_backend):
 
     execution = result.turn.executions.get(player=lucien)
     assert execution.state == ExecutionState.INVALID
-    assert "maximum is 1 direct question" in execution.error
+    assert "ACT response asks 3 questions; maximum is 2" in execution.error
+
+
+@pytest.mark.django_db
+def test_out_of_turn_keeps_two_paragraph_one_question_limits(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    mila = make_player(camp, "Mila")
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+        participants=[lucien, mila],
+    )
+
+    class InterruptClient(MockLLMClient):
+        def generate(self, *, system_prompt, **kwargs):
+            if "NOT the active" in system_prompt:
+                return _resp(
+                    "Mila",
+                    action="ACT_OUT_OF_TURN",
+                    public="Первый вопрос? Второй вопрос?",
+                )
+            return _resp("Lucien", action="ACT", public="Lucien waits.")
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=InterruptClient()):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+
+    execution = result.turn.executions.get(player=mila)
+    assert execution.state == ExecutionState.INVALID
+    assert "ACT_OUT_OF_TURN response asks 2 questions; maximum is 1" in execution.error
 
 
 @pytest.mark.django_db
