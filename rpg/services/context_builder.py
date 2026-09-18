@@ -236,8 +236,9 @@ def build_player_context(
     )
 
     parts.append(
-        "# OOC / META INFORMATION\n"
-        "The GM may privately send OOC feedback or meta-information. OOC is not something "
+        "# OOC FEEDBACK / META INFORMATION\n"
+        "The GM may privately send OOC feedback or meta-information. OOC is meta-level discussion; "
+        "it is not something "
         "your character hears or says in the fiction. Messages beginning with [OOC META] "
         "are authoritative out-of-character information for you to remember and account "
         "for, but they do not themselves create an in-fiction event or force an immediate "
