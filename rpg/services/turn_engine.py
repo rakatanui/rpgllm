@@ -184,11 +184,13 @@ def start_turn(
         if message is not None:
             generated.append(message)
 
-    if mode == TurnMode.ROUND and not is_private:
-        _advance_round_once(turn)
-
     _refresh_turn_state(turn)
     turn.refresh_from_db()
+
+    if mode == TurnMode.ROUND and not is_private and turn.state == TurnState.COMPLETED:
+        _advance_round_once(turn)
+        turn.refresh_from_db()
+
     return TurnResult(turn, generated)
 
 
@@ -437,7 +439,7 @@ def _validated_round_players(scene: Scene) -> list[Player]:
     scene.full_clean()
     order_ids = list(scene.round_order or [])
     if not order_ids:
-        return []
+        raise ValidationError("ROUND mode requires a confirmed player order")
     players_by_id = {
         player.pk: player
         for player in Player.objects.filter(
