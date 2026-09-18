@@ -237,6 +237,10 @@ class Message(models.Model):
         Player, on_delete=models.SET_NULL, null=True, blank=True, related_name="private_messages_for"
     )
     action_type = models.CharField(max_length=30, blank=True, default="")
+    gm_unread = models.BooleanField(
+        default=False,
+        help_text="True for a player private message the GM has not opened yet.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

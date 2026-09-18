@@ -2,7 +2,10 @@
 {% load rpg_extras %}
 {% block title %}{{ scene.name }} — MRAZ Master{% endblock %}
 {% block meta %}{{ campaign.name }} · {{ scene.name }} · {{ scene.mode }}{% endblock %}
+{% block body_class %}scene-page{% endblock %}
 {% block content %}
+<div class="scene-shell">
+<div class="scene-controls">
 
 <div class="toolbar">
   <strong>{{ scene.name }}</strong>
@@ -57,7 +60,7 @@
   </form>
 </div>
 
-<form id="composer" method="post" action="{% url 'send_gm_message' scene.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
+<form id="composer" class="gm-composer-sticky" method="post" action="{% url 'send_gm_message' scene.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
 {% csrf_token %}
 <input type="hidden" name="client_turn_id" value="">
 <div class="toolbar composer-toolbar">
@@ -73,6 +76,7 @@
           {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% endif %}>Send</button>
 </div>
 </form>
+</div>
 
 <div class="grid3">
   <!-- LEFT: players -->
@@ -99,12 +103,22 @@
   <!-- RIGHT: private channels -->
   <div class="panel">
     <h3>Private (GM ↔ Player)</h3>
-    <div x-data="{ tab: {{ players.0.pk|default:'0' }} }">
+    <div x-data="{ tab: 0 }">
       <div class="toolbar">
         {% for p in players %}
-          <button class="btn" @click="tab = {{ p.pk }}" :class="{ 'btn-primary': tab === {{ p.pk }} }">{{ p.display_name }}</button>
+          <form class="private-tab-form" method="post" action="{% url 'mark_private_read' scene.pk p.pk %}"
+                @submit.prevent="tab = {{ p.pk }}; markPrivateRead($event.currentTarget, {{ p.pk }})">
+            {% csrf_token %}
+            <button class="btn" type="submit" :class="{ 'btn-primary': tab === {{ p.pk }} }">
+              {{ p.display_name }}
+              {% if p.pk in unread_private_player_ids %}
+                <span class="private-unread-dot" data-unread-player="{{ p.pk }}" title="Unread private message">●</span>
+              {% endif %}
+            </button>
+          </form>
         {% endfor %}
       </div>
+      <p class="meta" x-show="tab === 0">Select a player to open the private channel.</p>
       {% for p in players %}
       <div x-show="tab === {{ p.pk }}" style="display:none">
         <h3>{{ p.display_name }} — status: <span class="chip {{ p.status }}">{{ p.status }}</span></h3>
@@ -140,7 +154,9 @@
         <input type="hidden" name="client_turn_id" value="">
         <div class="toolbar">
           <input type="text" name="content" placeholder="Private to {{ p.display_name }}..." style="flex:1">
-          <label><input type="checkbox" name="run_turn" value="1" checked> Ask</label>
+          <label title="Unchecked: store the message as private context only, without calling the model.">
+            <input type="checkbox" name="run_turn" value="1"> Ask for response
+          </label>
           <button class="btn btn-primary" type="submit">Send</button>
         </div>
         </form>
@@ -148,6 +164,7 @@
       {% endfor %}
     </div>
   </div>
+</div>
 </div>
 {% endblock %}
 
@@ -181,6 +198,21 @@ function validateRoundOrder(form) {
     return false;
   }
   return true;
+}
+
+async function markPrivateRead(form, playerId) {
+  try {
+    await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      credentials: "same-origin",
+    });
+    document.querySelectorAll('[data-unread-player="' + playerId + '"]')
+      .forEach((node) => node.remove());
+  } catch (error) {
+    console.warn("Failed to mark private messages read", error);
+  }
 }
 </script>
 {% endblock %}

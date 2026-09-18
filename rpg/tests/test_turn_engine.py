@@ -202,11 +202,82 @@ def test_private_to_gm_not_stored_on_public_message(mock_backend):
     )
     assert "hidden detail" not in public.content
     assert not hasattr(public, "private_to_gm")
-    assert Message.objects.filter(
+    private = Message.objects.get(
         turn=result.turn,
         visibility=Visibility.PRIVATE_GM_PLAYER,
         content="hidden detail",
+    )
+    assert private.gm_unread is True
+
+
+@pytest.mark.django_db
+def test_private_to_gm_exact_public_duplicate_is_not_stored(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL)
+
+    class DuplicatePrivateClient(MockLLMClient):
+        def generate(self, **kwargs):
+            return LLMResponse(
+                raw_text="{}",
+                action_type="ACT",
+                public="I inspect the lock.",
+                private_to_gm="I inspect the lock.",
+            )
+
+    with patch(
+        "rpg.services.turn_engine.get_llm_client",
+        return_value=DuplicatePrivateClient(),
+    ):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+
+    assert Message.objects.filter(
+        turn=result.turn,
+        visibility=Visibility.PUBLIC,
+        content="I inspect the lock.",
+    ).count() == 1
+    assert not Message.objects.filter(
+        turn=result.turn,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
     ).exists()
+
+
+@pytest.mark.django_db
+def test_private_turn_player_reply_is_marked_unread(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL)
+
+    class PrivateReplyClient(MockLLMClient):
+        def generate(self, **kwargs):
+            return LLMResponse(
+                raw_text="{}",
+                action_type="ACT",
+                public="Я отвечаю мастеру.",
+                private_to_gm="",
+            )
+
+    with patch(
+        "rpg.services.turn_engine.get_llm_client",
+        return_value=PrivateReplyClient(),
+    ):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="Что ты делаешь?",
+            selected_players=[lucien],
+            private_to_player=lucien,
+        )
+
+    reply = Message.objects.get(
+        turn=result.turn,
+        author_type=AuthorType.PLAYER,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+    )
+    assert reply.gm_unread is True
 
 
 @pytest.mark.django_db
