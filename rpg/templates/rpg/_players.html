@@ -2,28 +2,55 @@
 {% for p in players %}
   {% with failed=failed_execution_by_player|get:p.pk %}
   <div class="player-row {% if scene.mode == "ROUND" and p.pk == active_round_player_id %}active{% endif %}">
-    <div>
+    <div class="player-row-title">
       <strong>{{ p.display_name }}</strong>
       {% if p.pk in unread_private_player_ids %}
         <span class="private-unread-dot" data-unread-player="{{ p.pk }}" title="Unread private message from {{ p.display_name }}">●</span>
       {% endif %}
+      {% if p.pending_nudge %}
+        <span class="chip" title="{{ p.pending_nudge }}">NUDGE</span>
+      {% endif %}
     </div>
     <div class="meta">
       model: {% if p.model_config %}{{ p.model_config.name }}{% else %}—{% endif %}
+      {% if p.fallback_model_config %} · fallback: {{ p.fallback_model_config.name }}{% endif %}
     </div>
     <div>status: <span class="chip {{ p.status }}">{{ p.status }}</span></div>
+
+    {% if not scene.is_closed %}
+      <form method="post" action="{% url 'set_player_nudge' scene.pk p.pk %}"
+            class="nudge-form" onsubmit="return preparePlayerNudge(this, '{{ p.display_name|escapejs }}')">
+        {% csrf_token %}
+        <input type="hidden" name="content" value="">
+        <button class="btn btn-small" type="submit" title="Одноразовая мета-инструкция на следующий вызов модели">
+          Nudge
+        </button>
+      </form>
+    {% endif %}
+
     {% if failed %}
       <div class="execution-error" title="{{ failed.error }}">
         {{ failed.state }}{% if failed.error %}: {{ failed.error|truncatechars:90 }}{% endif %}
       </div>
-      <form method="post"
-            action="{% url 'retry_execution' scene.pk failed.pk %}"
-            class="retry-execution-form">
-        {% csrf_token %}
-        <button class="btn btn-retry" type="submit">
-          Retry {{ p.display_name }} only
-        </button>
-      </form>
+      <div class="retry-row">
+        <form method="post"
+              action="{% url 'retry_execution' scene.pk failed.pk %}"
+              class="retry-execution-form">
+          {% csrf_token %}
+          <button class="btn btn-retry" type="submit">Retry</button>
+        </form>
+        {% if p.fallback_model_config and p.fallback_model_config.enabled %}
+          <form method="post"
+                action="{% url 'retry_execution_fallback' scene.pk failed.pk %}"
+                class="retry-execution-form">
+            {% csrf_token %}
+            <button class="btn btn-retry" type="submit">
+              Retry {{ p.fallback_model_config.name }}
+            </button>
+          </form>
+        {% endif %}
+        <a class="btn btn-small" href="{% url 'execution_debug' scene.pk failed.pk %}">Debug</a>
+      </div>
     {% endif %}
   </div>
   {% endwith %}
