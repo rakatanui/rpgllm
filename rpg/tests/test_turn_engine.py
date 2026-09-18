@@ -289,7 +289,60 @@ def test_retry_round_does_not_advance_again(mock_backend):
     with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
         result = turn_engine.start_turn(scene=scene, gm_message_text="go")
         scene.refresh_from_db()
-        assert scene.active_player_index == 1
+        assert scene.active_player_index == 0
+        turn_engine.retry_execution(result.turn.executions.get(player=mila))
+
+    scene.refresh_from_db()
+    assert scene.active_player_index == 1
+
+
+@pytest.mark.django_db
+def test_round_rejects_empty_order(recording_client):
+    camp = make_campaign()
+    make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.ROUND, round_order=[])
+
+    with pytest.raises(ValidationError, match="confirmed player order"):
+        turn_engine.start_turn(scene=scene, gm_message_text="go")
+
+    assert recording_client.calls == []
+    assert Turn.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_failed_round_does_not_advance_until_retry_succeeds(mock_backend):
+    camp = make_campaign()
+    lucien, mila, _ = make_three_players(camp)
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+
+    class FailMilaOnce(MockLLMClient):
+        def __init__(self):
+            self.failed = False
+
+        def generate(self, *, system_prompt, messages, model, temperature=0.7):
+            name = next(
+                line[len("[PLAYER:"):].rstrip("]").strip()
+                for line in system_prompt.splitlines()
+                if line.startswith("[PLAYER:")
+            )
+            if name == "Mila" and not self.failed:
+                self.failed = True
+                raise RuntimeError("temporary")
+            action = "PASS" if "NOT the active" in system_prompt else "ACT"
+            return _resp(name, action=action)
+
+    client = FailMilaOnce()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+        scene.refresh_from_db()
+        assert scene.active_player_index == 0
+        assert result.turn.state == TurnState.FAILED
+
         turn_engine.retry_execution(result.turn.executions.get(player=mila))
 
     scene.refresh_from_db()

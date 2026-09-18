@@ -28,11 +28,22 @@
   .btn:hover { border-color:var(--accent); }
   .btn-primary { background:#238636; border-color:#238636; color:#fff; }
   .btn-primary:hover { background:#2ea043; }
+  .btn:disabled { opacity:0.45; cursor:not-allowed; border-color:var(--border); }
   input[type=text], textarea, select {
     background:var(--bg); color:var(--text); border:1px solid var(--border);
     border-radius:6px; padding:6px 8px; font-family:inherit; font-size:13px; width:100%;
   }
   textarea { min-height:60px; resize:vertical; }
+  .composer-toolbar { align-items:flex-end; }
+  .gm-composer-input { flex:1 1 100%; min-height:96px; }
+  .round-setup { margin:0 0 10px; padding:10px 12px; border:1px solid var(--border);
+                 border-radius:8px; background:var(--panel); }
+  .round-setup-header { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; margin-bottom:8px; }
+  .round-order-grid { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+  .round-order-row { display:flex; gap:6px; align-items:center; }
+  .round-order-row select { min-width:140px; }
+  .round-position { color:var(--muted); }
+  .round-warning { margin-top:8px; color:var(--err); font-size:12px; }
   .grid3 { display:grid; grid-template-columns: 240px 1fr 320px; gap:12px; height:calc(100vh - 50px); }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px; overflow:auto; }
   .panel h3 { margin-top:0; font-size:13px; color:var(--muted); text-transform:uppercase; }
