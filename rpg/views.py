@@ -12,7 +12,11 @@ from django.views.decorators.http import require_http_methods
 from rpg.models import (
     AuthorType,
     Campaign,
+    LoreEntry,
+    LoreScope,
     Message,
+    MessageRevision,
+    ModelConfig,
     Player,
     Scene,
     SceneParticipant,
@@ -23,12 +27,13 @@ from rpg.models import (
     Visibility,
 )
 from rpg.services import turn_engine
+from rpg.services.scene_summary import generate_close_summary
 
 
 def _scene_players(scene):
     return list(
         Player.objects.filter(scene_participations__scene=scene)
-        .select_related("model_config")
+        .select_related("model_config", "fallback_model_config")
         .order_by("scene_participations__order", "scene_participations__pk")
     )
 
@@ -303,6 +308,8 @@ def scene_view(request, scene_id):
                 .order_by("created_at", "pk")
             ),
             "source_participant_ids": [player.pk for player in players],
+            "latest_turn": scene.turns.order_by("-created_at", "-pk").first(),
+            "close_summary_draft": scene.close_summary_draft or {},
         },
     )
 
@@ -554,6 +561,29 @@ def retry_execution(request, scene_id, execution_id):
 
 
 @require_http_methods(["POST"])
+def retry_execution_fallback(request, scene_id, execution_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    execution = get_object_or_404(
+        TurnExecution.objects.select_related(
+            "turn__scene",
+            "player__fallback_model_config",
+        ),
+        pk=execution_id,
+        turn__scene=scene,
+    )
+    fallback = execution.player.fallback_model_config
+    if fallback is None or not fallback.enabled:
+        return HttpResponseBadRequest("player has no enabled fallback model")
+    if execution.state not in (ExecutionState.FAILED, ExecutionState.INVALID):
+        return HttpResponseBadRequest("execution is not retryable")
+    try:
+        turn_engine.retry_execution(execution, model_config=fallback)
+    except (RuntimeError, ValidationError) as exc:
+        return HttpResponseBadRequest(str(exc))
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
 def regenerate_execution(request, scene_id, execution_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     execution = get_object_or_404(
@@ -604,6 +634,234 @@ def ooc_revision(request, scene_id, message_id):
         reverse("scene", kwargs={"scene_id": scene.pk})
         + f"#message-{message.pk}"
     )
+
+
+@require_http_methods(["POST"])
+def set_player_nudge(request, scene_id, player_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    player = get_object_or_404(
+        Player,
+        pk=player_id,
+        scene_participations__scene=scene,
+    )
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
+    player.pending_nudge = (request.POST.get("content") or "").strip()
+    player.save(update_fields=["pending_nudge", "updated_at"])
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def send_ooc_meta(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
+    content = (request.POST.get("content") or "").strip()
+    if not content:
+        return HttpResponseBadRequest("empty OOC content")
+
+    players = _scene_players(scene)
+    target = (request.POST.get("target") or "all").strip()
+    if target == "all":
+        targets = players
+    else:
+        try:
+            target_id = int(target)
+        except ValueError:
+            return HttpResponseBadRequest("invalid OOC target")
+        targets = [player for player in players if player.pk == target_id]
+        if not targets:
+            return HttpResponseBadRequest("OOC target is not a scene participant")
+
+    for player in targets:
+        Message.objects.create(
+            campaign=scene.campaign,
+            scene=scene,
+            author_type=AuthorType.GM,
+            content=f"[OOC META]\n{content}",
+            visibility=Visibility.PRIVATE_GM_PLAYER,
+            private_player=player,
+        )
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+def execution_debug(request, scene_id, execution_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    execution = get_object_or_404(
+        TurnExecution.objects.select_related("player", "turn"),
+        pk=execution_id,
+        turn__scene=scene,
+    )
+    return render(
+        request,
+        "rpg/execution_debug.html",
+        {"scene": scene, "execution": execution},
+    )
+
+
+def message_versions(request, scene_id, message_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    message = get_object_or_404(
+        Message.objects.select_related("author_player", "execution"),
+        pk=message_id,
+        scene=scene,
+    )
+    try:
+        revisions = turn_engine.ensure_message_revision(message)
+    except RuntimeError as exc:
+        return HttpResponseBadRequest(str(exc))
+    return render(
+        request,
+        "rpg/message_versions.html",
+        {"scene": scene, "message": message, "revisions": revisions},
+    )
+
+
+@require_http_methods(["POST"])
+def restore_message_version(request, scene_id, message_id, revision_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    message = get_object_or_404(Message, pk=message_id, scene=scene)
+    revision = get_object_or_404(
+        MessageRevision,
+        pk=revision_id,
+        message=message,
+    )
+    try:
+        turn_engine.restore_message_revision(message=message, revision=revision)
+    except RuntimeError as exc:
+        return HttpResponseBadRequest(str(exc))
+    return redirect(
+        reverse("scene", kwargs={"scene_id": scene.pk}) + f"#message-{message.pk}"
+    )
+
+
+@require_http_methods(["POST"])
+def undo_latest_turn(request, scene_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    try:
+        turn_engine.undo_latest_public_turn(scene)
+    except RuntimeError as exc:
+        return HttpResponseBadRequest(str(exc))
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+def _append_memory(existing, addition):
+    existing = (existing or "").strip()
+    addition = (addition or "").strip()
+    if not addition:
+        return existing
+    if addition in existing:
+        return existing
+    return f"{existing}\n\n{addition}".strip()
+
+
+@require_http_methods(["POST"])
+def pin_message_memory(request, scene_id, message_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    message = get_object_or_404(Message, pk=message_id, scene=scene)
+    content = (request.POST.get("content") or "").strip()
+    target = (request.POST.get("target") or "").strip()
+    if not content:
+        return HttpResponseBadRequest("memory text cannot be empty")
+
+    if target == "shared":
+        campaign = scene.campaign
+        campaign.shared_memory = _append_memory(campaign.shared_memory, content)
+        campaign.save(update_fields=["shared_memory", "updated_at"])
+    elif target == "scene":
+        scene.memory_summary = _append_memory(scene.memory_summary, content)
+        scene.save(update_fields=["memory_summary", "updated_at"])
+    elif target.startswith("player:"):
+        try:
+            player_id = int(target.split(":", 1)[1])
+        except ValueError:
+            return HttpResponseBadRequest("invalid player memory target")
+        player = get_object_or_404(
+            Player,
+            pk=player_id,
+            scene_participations__scene=scene,
+        )
+        player.memory_summary = _append_memory(player.memory_summary, content)
+        player.save(update_fields=["memory_summary", "updated_at"])
+    elif target == "lore":
+        title = (request.POST.get("title") or "").strip() or content[:80]
+        lore = LoreEntry.objects.create(
+            campaign=scene.campaign,
+            title=title,
+            category="GM pin",
+            content=content,
+            scope=LoreScope.SCENE,
+            priority=100,
+            enabled=True,
+        )
+        lore.scenes.add(scene)
+    else:
+        return HttpResponseBadRequest("invalid memory target")
+    return redirect(
+        reverse("scene", kwargs={"scene_id": scene.pk}) + f"#message-{message.pk}"
+    )
+
+
+@require_http_methods(["POST"])
+def prepare_close_summary(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is already closed")
+    if scene.turns.filter(state=TurnState.RUNNING).exists():
+        return HttpResponseBadRequest("cannot summarize a scene with a running turn")
+    try:
+        generate_close_summary(scene)
+    except Exception as exc:
+        return HttpResponseBadRequest(f"summary generation failed: {exc}")
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}) + "?close_review=1")
+
+
+@require_http_methods(["POST"])
+def apply_close_summary(request, scene_id):
+    with transaction.atomic():
+        scene = get_object_or_404(
+            Scene.objects.select_for_update().select_related("campaign"),
+            pk=scene_id,
+        )
+        if scene.is_closed:
+            return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+        if scene.turns.filter(state=TurnState.RUNNING).exists():
+            return HttpResponseBadRequest("cannot close a scene with a running turn")
+
+        scene_summary = (request.POST.get("scene_summary") or "").strip()
+        open_hooks = (request.POST.get("open_hooks") or "").strip()
+        combined = scene_summary
+        if open_hooks:
+            combined = f"{combined}\n\nOpen hooks:\n{open_hooks}".strip()
+        scene.memory_summary = combined
+
+        players = _scene_players(scene)
+        for player in players:
+            update = (request.POST.get(f"player_memory_{player.pk}") or "").strip()
+            if update:
+                player.memory_summary = _append_memory(player.memory_summary, update)
+                player.save(update_fields=["memory_summary", "updated_at"])
+
+        scene.close_summary_draft = {}
+        scene.is_closed = True
+        scene.closed_at = timezone.now()
+        scene.save(
+            update_fields=[
+                "memory_summary",
+                "close_summary_draft",
+                "is_closed",
+                "closed_at",
+                "updated_at",
+            ]
+        )
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def discard_close_summary(request, scene_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    Scene.objects.filter(pk=scene.pk).update(close_summary_draft={})
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
 
 
 @require_http_methods(["POST"])
