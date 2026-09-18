@@ -14,6 +14,8 @@ from rpg.models import (
     Player,
     Scene,
     SceneParticipant,
+    ExecutionState,
+    TurnExecution,
     TurnMode,
     TurnState,
     Visibility,
@@ -76,6 +78,51 @@ def _active_round_player_id(scene):
     return order[scene.active_player_index]
 
 
+def _player_color_classes(players):
+    return {
+        player.pk: f"speaker-player-{index % 6}"
+        for index, player in enumerate(players)
+    }
+
+
+def _public_message_blocks(public_messages):
+    blocks = []
+    current_key = None
+    current = None
+
+    for message in public_messages:
+        # A real turn is one visual block: GM trigger + every public player reply.
+        # Standalone/imported messages remain individually readable instead of
+        # collapsing all turn-less archive material into one giant slab.
+        key = ("turn", message.turn_id) if message.turn_id else ("message", message.pk)
+        if key != current_key:
+            current = {
+                "key": key,
+                "turn_id": message.turn_id,
+                "messages": [],
+                "tone": "round-block-alt" if len(blocks) % 2 else "round-block-base",
+            }
+            blocks.append(current)
+            current_key = key
+        current["messages"].append(message)
+
+    return blocks
+
+
+def _failed_execution_by_player(scene):
+    latest_turn = scene.turns.order_by("-created_at", "-pk").first()
+    if latest_turn is None:
+        return {}
+    failures = (
+        latest_turn.executions.filter(
+            state__in=[ExecutionState.FAILED, ExecutionState.INVALID]
+        )
+        .select_related("player")
+        .order_by("order_index", "pk")
+    )
+    return {execution.player_id: execution for execution in failures}
+
+
 def _unread_private_player_ids(scene):
     return list(
         Message.objects.filter(
@@ -121,6 +168,9 @@ def scene_view(request, scene_id):
         .select_related("author_player")
         .order_by("created_at", "pk")
     )
+    player_color_by_id = _player_color_classes(players)
+    public_blocks = _public_message_blocks(public_messages)
+    failed_execution_by_player = _failed_execution_by_player(scene)
     gm_only_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.GM_ONLY)
         .order_by("created_at", "pk")
@@ -171,6 +221,9 @@ def scene_view(request, scene_id):
             "campaign": scene.campaign,
             "players": players,
             "public_messages": public_messages,
+            "public_blocks": public_blocks,
+            "player_color_by_id": player_color_by_id,
+            "failed_execution_by_player": failed_execution_by_player,
             "gm_only_messages": gm_only_messages,
             "player_private": player_private,
             "modes": TurnMode.choices,
@@ -207,7 +260,13 @@ def scene_view_fragment(request, scene):
     return render(
         request,
         "rpg/_scene_messages.html",
-        {"scene": scene, "players": players, "public_messages": public_messages},
+        {
+            "scene": scene,
+            "players": players,
+            "public_messages": public_messages,
+            "public_blocks": _public_message_blocks(public_messages),
+            "player_color_by_id": _player_color_classes(players),
+        },
     )
 
 
@@ -222,6 +281,7 @@ def players_status(request, scene_id):
             "players": players,
             "unread_private_player_ids": _unread_private_player_ids(scene),
             "active_round_player_id": _active_round_player_id(scene),
+            "failed_execution_by_player": _failed_execution_by_player(scene),
         },
     )
 
@@ -375,6 +435,25 @@ def set_mode(request, scene_id):
     if mode == TurnMode.ROUND:
         update_fields.extend(["round_order", "active_player_index"])
     scene.save(update_fields=update_fields)
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def retry_execution(request, scene_id, execution_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    execution = get_object_or_404(
+        TurnExecution.objects.select_related("turn__scene", "player"),
+        pk=execution_id,
+        turn__scene=scene,
+    )
+    if execution.state not in (ExecutionState.FAILED, ExecutionState.INVALID):
+        return HttpResponseBadRequest("execution is not retryable")
+
+    try:
+        turn_engine.retry_execution(execution)
+    except (RuntimeError, ValidationError) as exc:
+        return HttpResponseBadRequest(str(exc))
+
     return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
 
 

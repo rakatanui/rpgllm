@@ -5,7 +5,16 @@ import pytest
 from django.test import Client
 from django.urls import reverse
 
-from rpg.models import AuthorType, Message, TurnMode, Visibility
+from rpg.models import (
+    AuthorType,
+    ExecutionState,
+    Message,
+    Turn,
+    TurnExecution,
+    TurnMode,
+    TurnState,
+    Visibility,
+)
 from rpg.services import turn_engine
 from rpg.services.llm import LLMResponse, MockLLMClient
 from rpg.tests.factories import make_campaign, make_player, make_scene
@@ -263,6 +272,210 @@ def test_manual_scene_preselects_participants_in_composer():
         f'name="selected_players" value="{lucien.pk}" checked'
         in html
     )
+
+
+@pytest.mark.django_db
+def test_scene_visually_groups_round_and_colors_each_player():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    mathis = make_player(campaign, "Матис")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mila.pk, mathis.pk],
+        active_player_index=0,
+    )
+
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.ROUND,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk, mila.pk, mathis.pk],
+        active_player_id_snapshot=lucien.pk,
+    )
+    gm = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        author_type=AuthorType.GM,
+        content="Машина остановилась.",
+        visibility=Visibility.PUBLIC,
+    )
+    turn.trigger_message = gm
+    turn.save(update_fields=["trigger_message"])
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Люсьен выходит из машины.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        author_type=AuthorType.PLAYER,
+        author_player=mila,
+        content="Мила остаётся внутри.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT_OUT_OF_TURN",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        author_type=AuthorType.PLAYER,
+        author_player=mathis,
+        content="[PASS] Матис",
+        visibility=Visibility.PUBLIC,
+        action_type="PASS",
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert f'data-turn-id="{turn.pk}"' in html
+    assert html.count('class="round-block ') == 1
+    assert "speaker-player-0" in html
+    assert "speaker-player-1" in html
+    assert "speaker-player-2" in html
+    assert "[ACT]" in html
+    assert "[ACT_OUT_OF_TURN]" in html
+    assert "[PASS]" in html
+    assert "Люсьен выходит из машины." in html
+    assert "[PASS] Матис" not in html
+
+
+@pytest.mark.django_db
+def test_latest_failed_execution_shows_single_model_retry_button():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mathis = make_player(campaign, "Матис")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mathis.pk],
+        active_player_index=0,
+    )
+
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.ROUND,
+        state=TurnState.FAILED,
+        participants=[lucien.pk, mathis.pk],
+        active_player_id_snapshot=lucien.pk,
+        error="Матис: timed out",
+    )
+    TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        order_index=0,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+    failed = TurnExecution.objects.create(
+        turn=turn,
+        player=mathis,
+        order_index=1,
+        state=ExecutionState.FAILED,
+        error="timed out",
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert "Retry Матис only" in html
+    assert "Retry Люсьен only" not in html
+    assert reverse(
+        "retry_execution",
+        kwargs={"scene_id": scene.pk, "execution_id": failed.pk},
+    ) in html
+    assert "timed out" in html
+
+
+@pytest.mark.django_db
+def test_retry_execution_view_retries_only_requested_failed_execution():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mathis = make_player(campaign, "Матис")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mathis.pk],
+        active_player_index=0,
+    )
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.ROUND,
+        state=TurnState.FAILED,
+        participants=[lucien.pk, mathis.pk],
+        active_player_id_snapshot=lucien.pk,
+    )
+    completed = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        order_index=0,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+    failed = TurnExecution.objects.create(
+        turn=turn,
+        player=mathis,
+        order_index=1,
+        state=ExecutionState.FAILED,
+        error="timed out",
+    )
+
+    with patch("rpg.views.turn_engine.retry_execution") as retry:
+        response = Client().post(
+            reverse(
+                "retry_execution",
+                kwargs={"scene_id": scene.pk, "execution_id": failed.pk},
+            )
+        )
+
+    assert response.status_code == 302
+    retry.assert_called_once()
+    assert retry.call_args.args[0].pk == failed.pk
+    assert retry.call_args.args[0].pk != completed.pk
+
+
+@pytest.mark.django_db
+def test_retry_execution_view_rejects_completed_execution():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        order_index=0,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+
+    with patch("rpg.views.turn_engine.retry_execution") as retry:
+        response = Client().post(
+            reverse(
+                "retry_execution",
+                kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+            )
+        )
+
+    assert response.status_code == 400
+    retry.assert_not_called()
 
 
 @pytest.mark.django_db
