@@ -34,6 +34,7 @@ from rpg.models import (
     Message,
     Player,
     Scene,
+    SceneParticipant,
     Visibility,
 )
 
@@ -65,16 +66,22 @@ def build_player_context(
     """
     campaign = player.campaign
 
-    if history is None:
-        history = list(
-            Message.objects.filter(scene=scene)
-            .select_related("author_player")
-            .order_by("created_at", "pk")
+    visible_scene_ids = _visible_scene_ids(player=player, scene=scene)
+    if scene.pk not in visible_scene_ids:
+        raise ValueError(
+            f"Player {player.pk} is not a participant in scene {scene.pk}."
         )
+
+    if history is None:
+        history = get_player_history_messages(player=player, scene=scene)
     else:
         history = list(history)
 
-    visible_history = [m for m in history if _player_can_see(m, player)]
+    visible_history = [
+        m
+        for m in history
+        if _player_can_see(m, player, visible_scene_ids=visible_scene_ids)
+    ]
     recent_history = _trim_history(
         visible_history,
         max_chars=getattr(settings, "CONTEXT_HISTORY_MAX_CHARS", 40000),
@@ -165,12 +172,92 @@ def build_player_context(
     # The trigger must always be present even if a custom caller passed a history
     # snapshot that did not contain it.
     if trigger_message is not None and not _already_included(recent_history, trigger_message):
-        if _player_can_see(trigger_message, player):
+        if _player_can_see(
+            trigger_message,
+            player,
+            visible_scene_ids=visible_scene_ids,
+        ):
             entry = _message_to_chat(trigger_message, player)
             if entry is not None:
                 chat.append(entry)
 
     return BuiltContext(system_prompt=system_prompt, messages=chat)
+
+
+def get_scene_lineage(scene: Scene) -> list[Scene]:
+    """Return predecessor scenes in deterministic topological order, then scene.
+
+    The graph is allowed to merge multiple earlier threads. Cycles and
+    cross-campaign links are ignored defensively; admin/runtime validation
+    should prevent them from being created in normal use.
+    """
+    ordered: list[Scene] = []
+    visited: set[int] = set()
+    visiting: set[int] = set()
+
+    def visit(current: Scene) -> None:
+        if current.pk in visited or current.pk in visiting:
+            return
+        if current.campaign_id != scene.campaign_id:
+            return
+
+        visiting.add(current.pk)
+        predecessors = list(
+            current.previous_scenes.filter(campaign_id=scene.campaign_id)
+            .order_by("created_at", "pk")
+        )
+        for predecessor in predecessors:
+            visit(predecessor)
+        visiting.remove(current.pk)
+        visited.add(current.pk)
+        ordered.append(current)
+
+    visit(scene)
+    return ordered
+
+
+def _visible_scene_ids(*, player: Player, scene: Scene) -> set[int]:
+    lineage = get_scene_lineage(scene)
+    lineage_ids = [item.pk for item in lineage]
+    return set(
+        SceneParticipant.objects.filter(
+            scene_id__in=lineage_ids,
+            player=player,
+        ).values_list("scene_id", flat=True)
+    )
+
+
+def get_player_history_messages(*, player: Player, scene: Scene) -> list[Message]:
+    """Return canonical visible history inherited from this scene's predecessors.
+
+    PUBLIC means public to the participants of that scene, not to every player
+    in the campaign. Private history remains visible only to its named player.
+    """
+    lineage = get_scene_lineage(scene)
+    visible_scene_ids = _visible_scene_ids(player=player, scene=scene)
+    if scene.pk not in visible_scene_ids:
+        return []
+
+    messages = list(
+        Message.objects.filter(scene_id__in=visible_scene_ids)
+        .select_related("author_player")
+        .order_by("created_at", "pk")
+    )
+    by_scene: dict[int, list[Message]] = {}
+    for message in messages:
+        if not _player_can_see(
+            message,
+            player,
+            visible_scene_ids=visible_scene_ids,
+        ):
+            continue
+        by_scene.setdefault(message.scene_id, []).append(message)
+
+    ordered: list[Message] = []
+    for lineage_scene in lineage:
+        if lineage_scene.pk in visible_scene_ids:
+            ordered.extend(by_scene.get(lineage_scene.pk, []))
+    return ordered
 
 
 def _build_lore_text(*, player: Player, scene: Scene) -> str:
@@ -256,8 +343,21 @@ def _already_included(history: Iterable[Message], msg: Message) -> bool:
     return False
 
 
-def _player_can_see(msg: Message, player: Player) -> bool:
+def _player_can_see(
+    msg: Message,
+    player: Player,
+    *,
+    visible_scene_ids: set[int] | None = None,
+) -> bool:
     """Strict visibility check. This is the privacy boundary."""
+    if msg.scene_id is not None:
+        if visible_scene_ids is None:
+            visible_scene_ids = set(
+                SceneParticipant.objects.filter(player=player)
+                .values_list("scene_id", flat=True)
+            )
+        if msg.scene_id not in visible_scene_ids:
+            return False
     if msg.visibility == Visibility.PUBLIC:
         return True
     if msg.visibility == Visibility.PRIVATE_GM_PLAYER:
