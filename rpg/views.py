@@ -50,6 +50,8 @@ def _validate_round_order(scene, order):
 
 def _round_order_from_request(request, scene):
     raw_ids = request.POST.getlist("round_order")
+    if not raw_ids:
+        return _validate_round_order(scene, list(scene.round_order or []))
     try:
         order = [int(value) for value in raw_ids]
     except ValueError as exc:
