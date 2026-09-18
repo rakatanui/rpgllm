@@ -12,6 +12,8 @@ urlpatterns = [
          name="send_private_message"),
     path("scene/<int:scene_id>/private/<int:player_id>/read/", views.mark_private_read,
          name="mark_private_read"),
+    path("scene/<int:scene_id>/private/<int:player_id>/", views.private_channel,
+         name="private_channel"),
     path("scene/<int:scene_id>/mode/", views.set_mode, name="set_mode"),
     path(
         "scene/<int:scene_id>/retry/<int:execution_id>/",
