@@ -883,3 +883,191 @@ def test_scene_uses_fixed_viewport_layout_and_private_ask_is_opt_in():
     assert 'class="gm-composer-sticky"' in html
     assert "Ask for response" in html
     assert 'name="run_turn" value="1"> Ask for response' in html
+
+
+
+@pytest.mark.django_db
+def test_completed_player_reply_shows_ooc_regen_and_copy_controls():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        order_index=0,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        author_type=AuthorType.GM,
+        content="Мастерский текст.",
+        visibility=Visibility.PUBLIC,
+    )
+    player_message = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Люсьен отвечает.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert reverse(
+        "ooc_revision",
+        kwargs={"scene_id": scene.pk, "message_id": player_message.pk},
+    ) in html
+    assert reverse(
+        "regenerate_execution",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) in html
+    assert ">OOC</button>" in html
+    assert ">Regen</button>" in html
+    assert "prepareOocRevision" in html
+
+
+@pytest.mark.django_db
+def test_ooc_revision_view_targets_exact_public_player_message():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        order_index=0,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+    message = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Старая заявка.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+
+    with patch("rpg.views.turn_engine.revise_execution_ooc") as revise:
+        response = Client().post(
+            reverse(
+                "ooc_revision",
+                kwargs={"scene_id": scene.pk, "message_id": message.pk},
+            ),
+            {"comment": "Сделай короче."},
+        )
+
+    assert response.status_code == 302
+    revise.assert_called_once()
+    assert revise.call_args.kwargs["public_message"].pk == message.pk
+    assert revise.call_args.kwargs["gm_comment"] == "Сделай короче."
+
+
+@pytest.mark.django_db
+def test_regenerate_view_targets_only_requested_completed_execution():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien, mila])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk, mila.pk],
+    )
+    lucien_execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        order_index=0,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+    TurnExecution.objects.create(
+        turn=turn,
+        player=mila,
+        order_index=1,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+
+    with patch("rpg.views.turn_engine.regenerate_execution") as regenerate:
+        response = Client().post(
+            reverse(
+                "regenerate_execution",
+                kwargs={
+                    "scene_id": scene.pk,
+                    "execution_id": lucien_execution.pk,
+                },
+            ),
+            {"message_id": "123"},
+        )
+
+    assert response.status_code == 302
+    regenerate.assert_called_once()
+    assert regenerate.call_args.args[0].pk == lucien_execution.pk
+
+
+@pytest.mark.django_db
+def test_ooc_revision_rejects_empty_comment_before_model_call():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.COMPLETED,
+        participants=[lucien.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=lucien,
+        order_index=0,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+    message = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+        author_player=lucien,
+        content="Заявка.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+
+    with patch("rpg.views.turn_engine.revise_execution_ooc") as revise:
+        response = Client().post(
+            reverse(
+                "ooc_revision",
+                kwargs={"scene_id": scene.pk, "message_id": message.pk},
+            ),
+            {"comment": "   "},
+        )
+
+    assert response.status_code == 400
+    revise.assert_not_called()
