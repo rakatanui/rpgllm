@@ -77,11 +77,28 @@
       <div x-show="tab === {{ p.pk }}" style="display:none">
         <h3>{{ p.display_name }} — status: <span class="chip {{ p.status }}">{{ p.status }}</span></h3>
         <div class="messages">
-        {% for m in player_private|get:p.pk %}
+        {% for item in player_private|get:p.pk %}
+          {% with m=item.message %}
           <div class="msg {% if m.author_type == "GM" %}gm{% else %}private{% endif %}">
             <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ p.display_name }}{% endif %}</span>:
             {{ m.content }}
+            {% if m.author_type == "PLAYER" %}
+              {% if item.public_message %}
+                <div class="private-ref">
+                  К публичному ходу:
+                  <a href="#message-{{ item.public_message.pk }}">
+                    «{{ item.public_message.content|truncatechars:150 }}»
+                  </a>
+                </div>
+              {% elif item.trigger_message %}
+                <div class="private-ref">
+                  Ответ на:
+                  «{{ item.trigger_message.content|truncatechars:150 }}»
+                </div>
+              {% endif %}
+            {% endif %}
           </div>
+          {% endwith %}
         {% empty %}
           <p class="meta">No private messages.</p>
         {% endfor %}

@@ -44,6 +44,11 @@
   .msg.gm .author { color:var(--gm); }
   .msg.player .author { color:var(--player); }
   .msg.private .author { color:var(--private); }
+  .msg:target { outline:1px solid var(--accent); background:#1b2530; }
+  .private-ref { margin-top:6px; padding-top:5px; border-top:1px dashed var(--border);
+                 color:var(--muted); font-size:11px; line-height:1.35; }
+  .private-ref a { color:var(--muted); text-decoration:underline dotted; }
+  .private-ref a:hover { color:var(--accent); }
   .chip { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px;
           background:var(--bg); border:1px solid var(--border); color:var(--muted); }
   .chip.idle { color:var(--muted); }
