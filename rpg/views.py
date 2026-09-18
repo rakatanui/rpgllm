@@ -212,15 +212,6 @@ def send_gm_message(request, scene_id):
     if not content:
         return HttpResponseBadRequest("empty content")
 
-    mode = request.POST.get("mode")
-    if mode and mode in dict(TurnMode.choices) and mode != scene.mode:
-        scene.mode = mode
-        try:
-            scene.full_clean()
-        except ValidationError as exc:
-            return HttpResponseBadRequest(str(exc))
-        scene.save(update_fields=["mode", "updated_at"])
-
     if scene.mode == TurnMode.ROUND and not _round_order_is_ready(scene):
         return HttpResponseBadRequest(
             "ROUND mode requires a confirmed player order before sending messages."
