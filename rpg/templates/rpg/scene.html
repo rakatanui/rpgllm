@@ -7,30 +7,61 @@
 <div class="toolbar">
   <strong>{{ scene.name }}</strong>
   <span class="meta">Mode:</span>
-  <form method="post" action="{% url 'set_mode' scene.pk %}" class="inline">
+  <form id="mode-form" method="post" action="{% url 'set_mode' scene.pk %}" class="inline">
     {% csrf_token %}
-    <select name="mode" onchange="this.form.submit()">
+    <select name="mode" onchange="handleModeChange(this)">
     {% for value, label in modes %}
       <option value="{{ value }}" {% if scene.mode == value %}selected{% endif %}>{{ label }}</option>
     {% endfor %}
     </select>
   </form>
   {% if scene.mode == "ROUND" %}
-    <span class="meta">Active: <strong>{{ players|length|add:0 }}</strong>
-      {% with idx=scene.active_player_index %}
-        {% for p in players %}{% if forloop.counter0 == idx %}<span class="chip">{{ p.display_name }}</span>{% endif %}{% endfor %}
-      {% endwith %}
+    <span class="meta">Active:
+      {% if active_round_player %}
+        <span class="chip">{{ active_round_player.display_name }}</span>
+      {% else %}
+        <span class="chip error">order not confirmed</span>
+      {% endif %}
     </span>
   {% endif %}
   <a class="btn" href="/">Home</a>
   <a class="btn" href="/admin/rpg/scene/{{ scene.pk }}/change/">Edit</a>
 </div>
 
+<div id="round-setup" class="round-setup" {% if scene.mode != "ROUND" %}hidden{% endif %}>
+  <form method="post" action="{% url 'set_mode' scene.pk %}" onsubmit="return validateRoundOrder(this)">
+    {% csrf_token %}
+    <input type="hidden" name="mode" value="ROUND">
+    <div class="round-setup-header">
+      <strong>Round order</strong>
+      <span class="meta">Choose each player once, then confirm. ROUND is not usable until this is saved.</span>
+    </div>
+    <div class="round-order-grid">
+      {% for candidate in round_setup_players %}
+        <label class="round-order-row">
+          <span class="round-position">{{ forloop.counter }}.</span>
+          <select name="round_order">
+            {% for p in players %}
+              <option value="{{ p.pk }}" {% if p.pk == candidate.pk %}selected{% endif %}>{{ p.display_name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      {% empty %}
+        <span class="meta">No players in this campaign.</span>
+      {% endfor %}
+      <button class="btn btn-primary" type="submit">Confirm order</button>
+    </div>
+    {% if scene.mode == "ROUND" and not round_ready %}
+      <div class="round-warning">ROUND is blocked until a valid player order is confirmed.</div>
+    {% endif %}
+  </form>
+</div>
+
 <form id="composer" method="post" action="{% url 'send_gm_message' scene.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
 {% csrf_token %}
 <input type="hidden" name="client_turn_id" value="">
-<div class="toolbar">
-  <input type="text" name="content" placeholder="GM public message..." style="flex:1" autofocus>
+<div class="toolbar composer-toolbar">
+  <textarea class="gm-composer-input" name="content" rows="4" placeholder="GM public message..." autofocus></textarea>
   <label><input type="checkbox" name="run_turn" value="1" checked> Run turn</label>
   {% if scene.mode == "MANUAL" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
     <span class="meta">Players:</span>
@@ -38,7 +69,8 @@
       <label><input type="checkbox" name="selected_players" value="{{ p.pk }}"> {{ p.display_name }}</label>
     {% endfor %}
   {% endif %}
-  <button type="submit" class="btn btn-primary">Send</button>
+  <button id="gm-send-button" type="submit" class="btn btn-primary"
+          {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% endif %}>Send</button>
 </div>
 </form>
 
@@ -117,4 +149,38 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function handleModeChange(select) {
+  const roundSetup = document.getElementById("round-setup");
+  const sendButton = document.getElementById("gm-send-button");
+
+  if (select.value === "ROUND") {
+    roundSetup.hidden = false;
+    sendButton.disabled = true;
+    sendButton.title = "Confirm ROUND player order first";
+    return;
+  }
+
+  roundSetup.hidden = true;
+  select.form.submit();
+}
+
+function validateRoundOrder(form) {
+  const values = Array.from(form.querySelectorAll('select[name="round_order"]'))
+    .map((select) => select.value);
+
+  if (!values.length) {
+    alert("ROUND requires at least one player.");
+    return false;
+  }
+  if (new Set(values).size !== values.length) {
+    alert("Each player must appear exactly once in the ROUND order.");
+    return false;
+  }
+  return true;
+}
+</script>
 {% endblock %}
