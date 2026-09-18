@@ -595,8 +595,9 @@ def _append_round_role_prompt(context, *, turn: Turn, out_of_turn: bool) -> None
         context.system_prompt += (
             "\n\n# ROUND ROLE\n"
             "You are the active player this round. You may only ACT or PASS. "
-            "For ACT, the HARD LIMIT is 1200 visible characters, 5 paragraphs, "
-            "and 2 direct questions."
+            "For ACT, the HARD LIMIT is 1200 visible characters, 6 paragraphs, "
+            "and 2 direct questions. Six paragraphs is a ceiling, not a target; "
+            "prefer 2-3 paragraphs unless more are genuinely necessary."
         )
 
 
