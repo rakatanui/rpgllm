@@ -371,6 +371,8 @@ def regenerate_execution(
                 raise RuntimeError("Execution changed state during regeneration")
 
             locked_message = Message.objects.select_for_update().get(pk=public_message.pk)
+            if not locked_message.revisions.exists():
+                _record_message_revision(locked_message, reason="ORIGINAL")
             locked_message.content = public_text or f"[{action}] {player.display_name}"
             locked_message.action_type = action
             locked_message.save(update_fields=["content", "action_type"])
@@ -523,6 +525,8 @@ def revise_execution_ooc(
                 pk=public_message.pk
             )
             if changed:
+                if not locked_message.revisions.exists():
+                    _record_message_revision(locked_message, reason="ORIGINAL")
                 locked_message.content = (
                     public_text or f"[{action}] {player.display_name}"
                 )
@@ -735,7 +739,10 @@ def _generate_execution_response(
         temperature=temperature,
     )
     if error is not None:
-        TurnExecution.objects.filter(pk=execution.pk).update(latency_ms=elapsed)
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            latency_ms=elapsed,
+            raw_response=getattr(error, "raw_text", "") or "",
+        )
         raise error
     TurnExecution.objects.filter(pk=execution.pk).update(
         raw_response=response.raw_text or "",
@@ -844,7 +851,10 @@ def _run_round_parallel(
         for execution, out_of_turn, future in futures:
             response, elapsed, error = future.result()
             if error is not None:
-                TurnExecution.objects.filter(pk=execution.pk).update(latency_ms=elapsed)
+                TurnExecution.objects.filter(pk=execution.pk).update(
+                    latency_ms=elapsed,
+                    raw_response=getattr(error, "raw_text", "") or "",
+                )
                 _mark_execution_error(execution, error)
                 continue
             TurnExecution.objects.filter(pk=execution.pk).update(
