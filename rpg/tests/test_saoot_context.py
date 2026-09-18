@@ -48,6 +48,7 @@ def test_round_context_explains_saoot_and_preserves_action_type_in_history():
     assert "NO SAOOT marker" in ctx.system_prompt
     assert "treat that declaration as successful" in ctx.system_prompt
     assert "a SAOOT marker for one player does not resolve the others" in ctx.system_prompt
+    assert "A GM SILENCE turn also counts as proceeding without a SAOOT marker" in ctx.system_prompt
     assert "Мила [ACT_OUT_OF_TURN]" in history
     assert f"[[SAOOT:{mila.pk}|Мила]]" in history
 
