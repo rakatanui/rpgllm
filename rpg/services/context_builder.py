@@ -162,7 +162,8 @@ def build_player_context(
         "# RESPONSE FORMAT\n"
         'Respond with a JSON object: '
         '{"action_type": "ACT|PASS|ACT_OUT_OF_TURN", "public": "...", "private_to_gm": "..."}\n'
-        '"public" is seen by everyone. "private_to_gm" is seen only by the Game Master.\n'
+        '"public" is seen by all participants of the current scene. '
+        '"private_to_gm" is seen only by the Game Master.\n'
         'Use "private_to_gm" sparingly. Leave it as an empty string for ordinary thoughts, '
         'routine reasoning, atmosphere, or anything already conveyed by "public". '
         'Use it only when you intentionally need to hide important information from the '
