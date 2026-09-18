@@ -371,10 +371,9 @@ def set_mode(request, scene_id):
 @require_http_methods(["POST"])
 def close_scene(request, scene_id):
     with transaction.atomic():
-        scene = (
-            Scene.objects.select_for_update()
-            .select_related("campaign")
-            .get(pk=scene_id)
+        scene = get_object_or_404(
+            Scene.objects.select_for_update().select_related("campaign"),
+            pk=scene_id,
         )
         if scene.is_closed:
             return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
