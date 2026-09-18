@@ -225,7 +225,20 @@ the marked text resolves. If the GM proceeds without a SAOOT adjudication for a
 given declaration, that declaration is treated as successful as stated.
 
 The Public and Private panes are display-only newest-first feeds; model context
-continues to use canonical chronological order.
+continues to use canonical chronological order. Every visible GM/player message
+has a Copy control that copies the author/action header plus the visible message
+text; the HTTP `mraz.local` deployment falls back to the legacy browser copy
+command when the secure Clipboard API is unavailable.
+
+ROUND treats `ACT_OUT_OF_TURN` as an exceptional interrupt rather than a
+normal alternate action. Inactive players are explicitly instructed to prefer
+`PASS` unless waiting would make the intervention impossible or materially
+change it. Public model responses are also guarded server-side: normal public
+turns are limited to 1200 visible characters, out-of-turn interruptions to 650,
+with at most two short paragraphs and one direct question. Hidden Russian hover
+translations do not count toward the visible-character limit. Violations make
+that execution `INVALID`, so it can be retried without replaying successful
+players.
 
 Each scene may define a `dialogue_language` such as `French` or `Portuguese`.
 The model is instructed to keep narration in Russian while emitting every
