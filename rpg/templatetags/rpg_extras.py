@@ -33,13 +33,28 @@ _SAOOT_RENDER_RE = re.compile(
     r"\[\[SAOOT:(\d+)\|([^\]]+)\]\](.*?)\[\[/SAOOT\]\]",
     flags=re.DOTALL,
 )
+_SPEECH_RENDER_RE = re.compile(
+    r"\[\[SPEECH\]\](.*?)\[\[RU\]\](.*?)\[\[/SPEECH\]\]",
+    flags=re.DOTALL,
+)
 
 
-@register.filter
-def saoot_format(value):
-    """Escape message text and render GM SAOOT markers as readable highlights."""
-    escaped = escape(value or "")
+def _render_speech_markup(escaped):
+    def replace(match):
+        original = match.group(1).strip()
+        translation = match.group(2).strip()
+        return (
+            '<span class="translated-speech" tabindex="0" '
+            f'data-translation="{translation}" '
+            'aria-label="Перевод на русский">'
+            f'{original}'
+            '</span>'
+        )
 
+    return _SPEECH_RENDER_RE.sub(replace, escaped)
+
+
+def _render_saoot_markup(escaped):
     def replace(match):
         player_name = match.group(2)
         body = match.group(3)
@@ -50,4 +65,19 @@ def saoot_format(value):
             '</span>'
         )
 
-    return mark_safe(_SAOOT_RENDER_RE.sub(replace, escaped))
+    return _SAOOT_RENDER_RE.sub(replace, escaped)
+
+
+@register.filter
+def message_format(value):
+    """Escape message text, then render controlled SPEECH and SAOOT markup."""
+    escaped = escape(value or "")
+    rendered = _render_speech_markup(escaped)
+    rendered = _render_saoot_markup(rendered)
+    return mark_safe(rendered)
+
+
+@register.filter
+def saoot_format(value):
+    """Backward-compatible alias for templates/plugins using the old filter."""
+    return message_format(value)

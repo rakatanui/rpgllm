@@ -573,6 +573,7 @@ def create_followup_scene(request, scene_id):
             campaign=source.campaign,
             name=name,
             mode=TurnMode.MANUAL,
+            dialogue_language=source.dialogue_language,
         )
         SceneParticipant.objects.bulk_create(
             [

@@ -38,6 +38,7 @@ class SceneInline(admin.TabularInline):
     fields = (
         "name",
         "description",
+        "dialogue_language",
         "mode",
         "round_order",
         "active_player_index",
@@ -122,6 +123,7 @@ class SceneAdmin(admin.ModelAdmin):
                     "campaign",
                     "name",
                     "description",
+                    "dialogue_language",
                     "memory_summary",
                 )
             },

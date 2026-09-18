@@ -141,6 +141,10 @@ def build_player_context(
 
     parts.append("# SCENE STATE")
     scene_state = [f"Scene: {scene.name}"]
+    if scene.dialogue_language.strip():
+        scene_state.append(
+            f"Default spoken language: {scene.dialogue_language.strip()}"
+        )
     if scene.description.strip():
         scene_state.append(scene.description.strip())
     parts.append("\n".join(scene_state))
@@ -158,6 +162,25 @@ def build_player_context(
             "Use the supplied lore and compact memories as authoritative summaries "
             "of older important information."
         )
+
+    parts.append(
+        "# DIALOGUE LANGUAGE AND FORMAT\n"
+        "Narration and non-spoken action text in your public response must be in Russian. "
+        "Direct speech must be written in the language the character is actually speaking "
+        "in-world, not automatically in Russian just because the GM interface uses Russian. "
+        "If the scene has a Default spoken language above, use it for ordinary conversation "
+        "unless the GM or established fiction explicitly switches languages.\n"
+        "Every spoken sentence or short utterance must be encoded as its own bilingual block:\n"
+        "[[SPEECH]]original-language sentence[[RU]]Russian translation[[/SPEECH]]\n"
+        "The text before [[RU]] is the only version shown normally. The Russian translation "
+        "is hidden by the UI and appears on hover/focus. Do not print a second visible Russian "
+        "translation outside the block. Do not omit either half of the block.\n"
+        "Example for a French-speaking scene:\n"
+        "[[SPEECH]]Je vais vérifier la voiture.[[RU]]Я проверю машину.[[/SPEECH]]\n"
+        "If the character genuinely speaks Russian in-world, Russian may be the original; "
+        "still provide the [[RU]] half so the structure remains valid. "
+        "Never use SPEECH markup for narration."
+    )
 
     if scene.mode == TurnMode.ROUND:
         parts.append(
