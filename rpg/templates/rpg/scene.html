@@ -290,7 +290,9 @@
                hx-get="{% url 'private_channel' scene.pk p.pk %}"
                hx-trigger="load, every 3s"
                hx-swap="innerHTML">
-            <p class="meta">Loading {{ p.display_name }}…</p>
+            {% with entries=player_private|get:p.pk player=p player_color=player_color_by_id|get:p.pk %}
+              {% include "rpg/_private_channel.html" %}
+            {% endwith %}
           </div>
         </div>
       {% endfor %}
