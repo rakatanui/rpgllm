@@ -112,14 +112,12 @@
       <label>{{ p.display_name }} memory update</label>
       <textarea name="player_memory_{{ p.pk }}">{{ close_player_drafts|get:p.pk }}</textarea>
     {% endfor %}
-    <div class="toolbar">
-      <button class="btn btn-primary" type="submit">Apply & close</button>
+    <button class="btn btn-primary" type="submit">Apply & close</button>
   </form>
-      <form method="post" action="{% url 'discard_close_summary' scene.pk %}" class="inline">
-        {% csrf_token %}
-        <button class="btn" type="submit">Discard draft</button>
-      </form>
-    </div>
+  <form method="post" action="{% url 'discard_close_summary' scene.pk %}" class="inline">
+    {% csrf_token %}
+    <button class="btn" type="submit">Discard draft</button>
+  </form>
 </div>
 {% endif %}
 
@@ -130,7 +128,7 @@
       action="{% url 'send_gm_message' scene.pk %}"
       data-ic-action="{% url 'send_gm_message' scene.pk %}"
       data-ooc-action="{% url 'send_ooc_meta' scene.pk %}"
-      onsubmit="return prepareComposerSubmit(this)">
+      onsubmit="return prepareComposerSubmit(this, event)">
 {% csrf_token %}
 <input type="hidden" name="client_turn_id" value="">
 <input type="hidden" name="composer_mode" id="composer-mode" value="IC">
@@ -379,7 +377,13 @@ function toggleComposerMode() {
     : "GM public message...";
 }
 
-function prepareComposerSubmit(form) {
+function prepareComposerSubmit(form, event) {
+  const submitter = event?.submitter;
+  if (submitter?.id === "gm-silence-button") {
+    if (!form.client_turn_id.value) form.client_turn_id.value = crypto.randomUUID();
+    return true;
+  }
+
   const mode = document.getElementById("composer-mode")?.value || "IC";
   const content = form.querySelector('textarea[name="content"]')?.value.trim() || "";
   if (!content) {
