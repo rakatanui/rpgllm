@@ -1,0 +1,30 @@
+{% extends "rpg/base.html" %}
+{% block title %}Message #{{ message.pk }} versions{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:1000px;margin:0 auto">
+  <div class="toolbar">
+    <a class="btn" href="{% url 'scene' scene.pk %}#message-{{ message.pk }}">← Scene</a>
+    <strong>{{ message.author_player.display_name }} · message #{{ message.pk }}</strong>
+  </div>
+  {% for rev in revisions reversed %}
+    <div class="round-block">
+      <div class="msg-header">
+        <strong>v{{ rev.revision_index }}</strong>
+        <span class="chip">{{ rev.reason }}</span>
+        <span class="meta">{{ rev.created_at }}</span>
+        {% if not scene.is_closed %}
+          <form method="post" action="{% url 'restore_message_version' scene.pk message.pk rev.pk %}" style="margin-left:auto"
+                onsubmit="return confirm('Восстановить эту версию как текущую? Текущая версия останется в истории.');">
+            {% csrf_token %}
+            <button class="btn btn-small" type="submit">Restore</button>
+          </form>
+        {% endif %}
+      </div>
+      <div class="meta">[{{ rev.action_type|default:"ACT" }}]</div>
+      <pre style="white-space:pre-wrap">{{ rev.content }}</pre>
+    </div>
+  {% empty %}
+    <p class="meta">No revisions.</p>
+  {% endfor %}
+</div>
+{% endblock %}
