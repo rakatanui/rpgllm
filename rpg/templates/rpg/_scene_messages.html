@@ -13,7 +13,7 @@
           {% endif %}
         </div>
         {% if m.action_type != "PASS" %}
-          <div class="msg-content">{{ m.content|saoot_format }}</div>
+          <div class="msg-content">{{ m.content|message_format }}</div>
         {% endif %}
       </div>
     {% endfor %}
