@@ -30,6 +30,12 @@ class TurnState(models.TextChoices):
     FAILED = "FAILED", "Failed"
 
 
+class LoreScope(models.TextChoices):
+    GLOBAL = "GLOBAL", "Global"
+    SCENE = "SCENE", "Scene-specific"
+    PLAYER = "PLAYER", "Player-specific"
+
+
 class ExecutionState(models.TextChoices):
     PENDING = "PENDING", "Pending"
     RUNNING = "RUNNING", "Running"
@@ -69,6 +75,13 @@ class Campaign(models.Model):
         blank=True,
         help_text="Global system rules shared with all players (public part).",
     )
+    shared_memory = models.TextField(
+        blank=True,
+        help_text=(
+            "Compact shared campaign memory: established public facts and important "
+            "events that should survive history trimming."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -83,6 +96,13 @@ class Scene(models.Model):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="scenes")
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    memory_summary = models.TextField(
+        blank=True,
+        help_text=(
+            "Compact summary of older events/state for this scene. It is always "
+            "included in player context even when old messages are trimmed."
+        ),
+    )
     mode = models.CharField(max_length=20, choices=TurnMode.choices, default=TurnMode.ROUND)
     round_order = models.JSONField(
         default=list,
@@ -135,6 +155,13 @@ class Player(models.Model):
         blank=True,
         help_text="Character description / system prompt for this player's LLM.",
     )
+    memory_summary = models.TextField(
+        blank=True,
+        help_text=(
+            "Compact long-term memory known only to this player: secrets, promises, "
+            "relationships, intentions and older important events."
+        ),
+    )
     model_config = models.ForeignKey(
         ModelConfig, on_delete=models.SET_NULL, null=True, blank=True, related_name="players"
     )
@@ -148,6 +175,51 @@ class Player(models.Model):
 
     def __str__(self):
         return self.display_name
+
+
+class LoreEntry(models.Model):
+    campaign = models.ForeignKey(
+        Campaign,
+        on_delete=models.CASCADE,
+        related_name="lore_entries",
+    )
+    title = models.CharField(max_length=200)
+    category = models.CharField(max_length=80, blank=True)
+    content = models.TextField()
+    scope = models.CharField(
+        max_length=20,
+        choices=LoreScope.choices,
+        default=LoreScope.GLOBAL,
+        help_text=(
+            "GLOBAL: all campaign players. SCENE: only assigned scenes. "
+            "PLAYER: only assigned players."
+        ),
+    )
+    scenes = models.ManyToManyField(
+        Scene,
+        blank=True,
+        related_name="lore_entries",
+        help_text="Used when scope is SCENE.",
+    )
+    players = models.ManyToManyField(
+        Player,
+        blank=True,
+        related_name="lore_entries",
+        help_text="Used when scope is PLAYER.",
+    )
+    priority = models.PositiveSmallIntegerField(
+        default=100,
+        help_text="Lower values are included first when the lore context budget is full.",
+    )
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["priority", "title", "pk"]
+
+    def __str__(self):
+        return self.title
 
 
 class Turn(models.Model):

@@ -2,7 +2,7 @@
 from django.contrib import admin
 from django import forms
 
-from rpg.models import Campaign, Message, ModelConfig, Player, Scene, Turn, TurnExecution
+from rpg.models import Campaign, LoreEntry, Message, ModelConfig, Player, Scene, Turn, TurnExecution
 
 
 @admin.register(ModelConfig)
@@ -18,12 +18,14 @@ class PlayerInline(admin.TabularInline):
     extra = 1
     fields = ("display_name", "character_prompt", "model_config", "status")
     readonly_fields = ("status",)
+    show_change_link = True
 
 
 class SceneInline(admin.TabularInline):
     model = Scene
     extra = 1
     fields = ("name", "description", "mode", "round_order", "active_player_index")
+    show_change_link = True
 
 
 @admin.register(Campaign)
@@ -51,7 +53,36 @@ class PlayerAdmin(admin.ModelAdmin):
     list_display = ("display_name", "campaign", "model_config", "status", "created_at")
     list_filter = ("campaign", "status")
     search_fields = ("display_name",)
-    fields = ("campaign", "display_name", "character_prompt", "model_config", "status")
+    fields = (
+        "campaign",
+        "display_name",
+        "character_prompt",
+        "memory_summary",
+        "model_config",
+        "status",
+    )
+
+
+@admin.register(LoreEntry)
+class LoreEntryAdmin(admin.ModelAdmin):
+    list_display = ("title", "campaign", "category", "scope", "priority", "enabled", "updated_at")
+    list_filter = ("campaign", "scope", "enabled", "category")
+    search_fields = ("title", "category", "content")
+    list_editable = ("priority", "enabled")
+    filter_horizontal = ("scenes", "players")
+    fieldsets = (
+        (None, {"fields": ("campaign", "title", "category", "content")}),
+        (
+            "Context routing",
+            {
+                "fields": ("scope", "scenes", "players", "priority", "enabled"),
+                "description": (
+                    "GLOBAL ignores scene/player assignments. SCENE uses assigned scenes. "
+                    "PLAYER uses assigned players."
+                ),
+            },
+        ),
+    )
 
 
 @admin.register(Turn)

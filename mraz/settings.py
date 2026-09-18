@@ -129,6 +129,11 @@ LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://litellm:4000")
 LITELLM_API_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-litellm-default")
 DEFAULT_LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "60"))
 
+# Context manager. Character budgets are provider-agnostic and intentionally
+# conservative; set <= 0 to disable a specific limit.
+CONTEXT_HISTORY_MAX_CHARS = int(os.environ.get("CONTEXT_HISTORY_MAX_CHARS", "40000"))
+CONTEXT_LORE_MAX_CHARS = int(os.environ.get("CONTEXT_LORE_MAX_CHARS", "50000"))
+
 # Logging - never log API keys.
 LOGGING = {
     "version": 1,
