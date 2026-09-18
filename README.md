@@ -106,11 +106,61 @@ Django (LiteLLMClient)
       → Host Ollama (glm-5.2:cloud)
 ```
 
+## Context manager
+
+The app does not send the entire campaign transcript and all world lore on
+every LLM call anymore. Each player context is assembled from:
+
+```
+Campaign.system_prompt
++ relevant LoreEntry rows
++ Campaign.shared_memory
++ Player.character_prompt
++ Player.memory_summary
++ Scene.description
++ Scene.memory_summary
++ newest visible message tail
++ current GM trigger
+```
+
+`LoreEntry.scope` controls who receives an entry:
+
+- `GLOBAL`: every player in the campaign.
+- `SCENE`: only players being called in one of the entry's assigned scenes.
+- `PLAYER`: only the explicitly assigned players.
+
+Lore is packed by ascending `priority` (lower number = more important) up to
+`CONTEXT_LORE_MAX_CHARS`. Visible chat history is reduced to the newest
+contiguous tail up to `CONTEXT_HISTORY_MAX_CHARS`. Both limits are
+provider-agnostic character budgets so the same behavior works with Ollama,
+OpenAI, Anthropic, Gemini, etc.
+
+Default values:
+
+```env
+CONTEXT_HISTORY_MAX_CHARS=40000
+CONTEXT_LORE_MAX_CHARS=50000
+```
+
+Set either to `0` (or a negative value) to disable that limit.
+
+`Campaign.shared_memory`, `Player.memory_summary`, and
+`Scene.memory_summary` are compact long-term memory fields and are always
+included. In this MVP they are intentionally edited by the GM in Django Admin;
+automatic summarization/roll-up is a later layer. Starting a fresh campaign
+does not require filling them immediately: recent history remains available
+until it reaches the configured budget.
+
+World lore is managed in Admin under **Lore entries**. Keep only foundational,
+universally known facts as `GLOBAL`; route specialist/secret knowledge through
+`SCENE` or `PLAYER` so models do not receive information their characters
+should not know.
+
 ## Architecture
 
 ```
 models
-services/context_builder   # privacy boundary: Context(X) = PUBLIC + PRIVATE(GM,X)
+services/context_builder   # privacy + lore routing + bounded recent history
 services/turn_engine        # MANUAL / ROUND / SIMULTANEOUS / TABLE + state machine
 services/llm                # LLMClient: MockLLMClient | LiteLLMClient
 views / templates           # thin; no business logic in views
