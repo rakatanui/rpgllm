@@ -10,7 +10,7 @@
       <ul>
       {% for s in c.scenes.all %}
         <li><a href="{% url 'scene' s.pk %}">{{ s.name }}</a>
-          <span class="meta">({{ s.mode }})</span></li>
+          <span class="meta">({{ s.mode }}{% if s.is_closed %}, closed{% else %}, open{% endif %})</span></li>
       {% endfor %}
       </ul>
     </li>
