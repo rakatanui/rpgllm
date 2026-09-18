@@ -16,33 +16,39 @@ class Migration(migrations.Migration):
             name="shared_memory",
             field=models.TextField(
                 blank=True,
+                default="",
                 help_text=(
                     "Compact shared campaign memory: established public facts and important "
                     "events that should survive history trimming."
                 ),
             ),
+            preserve_default=False,
         ),
         migrations.AddField(
             model_name="player",
             name="memory_summary",
             field=models.TextField(
                 blank=True,
+                default="",
                 help_text=(
                     "Compact long-term memory known only to this player: secrets, promises, "
                     "relationships, intentions and older important events."
                 ),
             ),
+            preserve_default=False,
         ),
         migrations.AddField(
             model_name="scene",
             name="memory_summary",
             field=models.TextField(
                 blank=True,
+                default="",
                 help_text=(
                     "Compact summary of older events/state for this scene. It is always "
                     "included in player context even when old messages are trimmed."
                 ),
             ),
+            preserve_default=False,
         ),
         migrations.CreateModel(
             name="LoreEntry",
