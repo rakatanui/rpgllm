@@ -163,6 +163,66 @@ def test_scene_renders_large_gm_textarea_and_round_setup():
 
 
 @pytest.mark.django_db
+def test_manual_public_turn_requires_selected_player(mock_backend):
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    with patch("rpg.views.turn_engine.start_turn") as start_turn:
+        response = Client().post(
+            reverse("send_gm_message", kwargs={"scene_id": scene.pk}),
+            {"content": "Что вы делаете?", "run_turn": "1"},
+        )
+
+    assert response.status_code == 400
+    start_turn.assert_not_called()
+    assert not Message.objects.filter(scene=scene, content="Что вы делаете?").exists()
+
+
+@pytest.mark.django_db
+def test_public_run_turn_checkbox_can_be_unchecked(mock_backend):
+    campaign = make_campaign()
+    make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    with patch("rpg.views.turn_engine.start_turn") as start_turn:
+        response = Client().post(
+            reverse("send_gm_message", kwargs={"scene_id": scene.pk}),
+            {"content": "Просто запись без вызова модели."},
+        )
+
+    assert response.status_code == 302
+    start_turn.assert_not_called()
+    assert Message.objects.filter(
+        scene=scene,
+        content="Просто запись без вызова модели.",
+        author_type=AuthorType.GM,
+        visibility=Visibility.PUBLIC,
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_manual_scene_preselects_participants_in_composer():
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert (
+        f'name="selected_players" value="{mila.pk}" checked'
+        in html
+    )
+    assert (
+        f'name="selected_players" value="{lucien.pk}" checked'
+        in html
+    )
+
+
+@pytest.mark.django_db
 def test_private_gm_message_is_informational_by_default(mock_backend):
     campaign = make_campaign()
     mila = make_player(campaign, "Мила")

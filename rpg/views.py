@@ -250,7 +250,7 @@ def _selected_players_from_request(request, scene):
 def send_gm_message(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     content = (request.POST.get("content") or "").strip()
-    run_turn_flag = request.POST.get("run_turn", "1") == "1"
+    run_turn_flag = request.POST.get("run_turn", "0") == "1"
     if not content:
         return HttpResponseBadRequest("empty content")
     if scene.is_closed:
@@ -263,6 +263,14 @@ def send_gm_message(request, scene_id):
 
     try:
         selected_players = _selected_players_from_request(request, scene)
+        if (
+            run_turn_flag
+            and scene.mode == TurnMode.MANUAL
+            and not selected_players
+        ):
+            return HttpResponseBadRequest(
+                "MANUAL mode requires selecting at least one player."
+            )
         if run_turn_flag:
             turn_engine.start_turn(
                 scene=scene,
