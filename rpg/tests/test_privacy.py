@@ -89,3 +89,16 @@ def test_player_own_private_response_is_in_their_context():
     ctx_l = build_player_context(player=lucien, scene=scene)
     contents_l = " ".join(m["content"] for m in ctx_l.messages)
     assert "my secret reply" not in contents_l
+
+
+@pytest.mark.django_db
+def test_private_to_gm_prompt_requires_material_secret():
+    camp = make_campaign()
+    player = make_player(camp, "Lucien")
+    scene = make_scene(camp)
+
+    ctx = build_player_context(player=player, scene=scene)
+
+    assert 'Use "private_to_gm" sparingly.' in ctx.system_prompt
+    assert "Never duplicate or paraphrase the public response there." in ctx.system_prompt
+    assert "concealed intention" in ctx.system_prompt
