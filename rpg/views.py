@@ -894,7 +894,7 @@ def apply_close_summary(request, scene_id):
         combined = scene_summary
         if open_hooks:
             combined = f"{combined}\n\nOpen hooks:\n{open_hooks}".strip()
-        scene.memory_summary = combined
+        scene.memory_summary = _append_memory(scene.memory_summary, combined)
 
         players = _scene_players(scene)
         for player in players:
