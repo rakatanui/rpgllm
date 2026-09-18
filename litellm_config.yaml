@@ -1,0 +1,42 @@
+model_list:
+  # --- Host Ollama (default, uses OLLAMA_BASE_URL env) ---
+  # glm-5.2:cloud is served by the host Ollama (cloud-proxied). To use another
+  # model, change the `model:` value below to `ollama/<name>` (see `ollama list`).
+  - model_name: ollama-local
+    litellm_params:
+      model: ollama/glm-5.2:cloud
+      api_base: os.environ/OLLAMA_BASE_URL
+      # no key needed for local ollama
+
+  # --- OpenAI ---
+  - model_name: openai-gpt4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-gpt4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # --- Anthropic ---
+  - model_name: anthropic-claude-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # --- Google Gemini ---
+  - model_name: gemini-pro
+    litellm_params:
+      model: gemini/gemini-1.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+
+  # NOTE: "mock-echo" is intentionally absent. Mock mode is handled entirely
+  # by MRAZ Master's Django service (MockLLMClient), not by LiteLLM. Do not
+  # add a mock entry here — LiteLLM has no built-in mock provider.
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

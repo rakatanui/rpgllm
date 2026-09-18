@@ -1,0 +1,10 @@
+{% for m in public_messages %}
+  <div class="msg {% if m.author_type == "GM" %}gm{% else %}player{% endif %}">
+    <span class="author">
+      {% if m.author_type == "GM" %}GM{% elif m.author_player %}{{ m.author_player.display_name }}{% else %}System{% endif %}
+    </span>:
+    {% if m.action_type == "PASS" %}<span class="pass">[PASS]</span> {{ m.author_player.display_name }}{% else %}{{ m.content }}{% endif %}
+  </div>
+{% empty %}
+  <p class="meta">No public messages yet. Send a GM message above.</p>
+{% endfor %}

@@ -1,0 +1,12 @@
+.git
+.gitignore
+.air
+.env
+*.log
+__pycache__
+*.pyc
+.venv
+venv
+staticfiles
+media
+README.md

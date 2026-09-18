@@ -1,0 +1,101 @@
+{% extends "rpg/base.html" %}
+{% load rpg_extras %}
+{% block title %}{{ scene.name }} — MRAZ Master{% endblock %}
+{% block meta %}{{ campaign.name }} · {{ scene.name }} · {{ scene.mode }}{% endblock %}
+{% block content %}
+
+<div class="toolbar">
+  <strong>{{ scene.name }}</strong>
+  <span class="meta">Mode:</span>
+  <form method="post" action="{% url 'set_mode' scene.pk %}" class="inline">
+    {% csrf_token %}
+    <select name="mode" onchange="this.form.submit()">
+    {% for value, label in modes %}
+      <option value="{{ value }}" {% if scene.mode == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+    </select>
+  </form>
+  {% if scene.mode == "ROUND" %}
+    <span class="meta">Active: <strong>{{ players|length|add:0 }}</strong>
+      {% with idx=scene.active_player_index %}
+        {% for p in players %}{% if forloop.counter0 == idx %}<span class="chip">{{ p.display_name }}</span>{% endif %}{% endfor %}
+      {% endwith %}
+    </span>
+  {% endif %}
+  <a class="btn" href="/">Home</a>
+  <a class="btn" href="/admin/rpg/scene/{{ scene.pk }}/change/">Edit</a>
+</div>
+
+<form id="composer" method="post" action="{% url 'send_gm_message' scene.pk %}">
+{% csrf_token %}
+<div class="toolbar">
+  <input type="text" name="content" placeholder="GM public message..." style="flex:1" autofocus>
+  <label><input type="checkbox" name="run_turn" value="1" checked> Run turn</label>
+  {% if scene.mode == "MANUAL" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
+    <span class="meta">Players:</span>
+    {% for p in players %}
+      <label><input type="checkbox" name="selected_players" value="{{ p.pk }}"> {{ p.display_name }}</label>
+    {% endfor %}
+  {% endif %}
+  <button type="submit" class="btn btn-primary">Send</button>
+</div>
+</form>
+
+<div class="grid3">
+  <!-- LEFT: players -->
+  <div class="panel">
+    <h3>Players</h3>
+    <div id="players"
+         hx-get="{% url 'players_status' scene.pk %}"
+         hx-trigger="load, every 3s">
+      {% include "rpg/_players.html" %}
+    </div>
+  </div>
+
+  <!-- CENTER: public scene -->
+  <div class="panel">
+    <h3>Public Scene</h3>
+    <div id="public-scene"
+         hx-get="{% url 'scene_fragment' scene.pk %}"
+         hx-trigger="load, every 3s"
+         hx-target="#public-scene" hx-swap="innerHTML">
+      {% include "rpg/_scene_messages.html" %}
+    </div>
+  </div>
+
+  <!-- RIGHT: private channels -->
+  <div class="panel">
+    <h3>Private (GM ↔ Player)</h3>
+    <div x-data="{ tab: {{ players.0.pk|default:'0' }} }">
+      <div class="toolbar">
+        {% for p in players %}
+          <button class="btn" @click="tab = {{ p.pk }}" :class="{ 'btn-primary': tab === {{ p.pk }} }">{{ p.display_name }}</button>
+        {% endfor %}
+      </div>
+      {% for p in players %}
+      <div x-show="tab === {{ p.pk }}" style="display:none">
+        <h3>{{ p.display_name }} — status: <span class="chip {{ p.status }}">{{ p.status }}</span></h3>
+        <div class="messages">
+        {% for m in player_private|get:p.pk %}
+          <div class="msg {% if m.author_type == "GM" %}gm{% else %}private{% endif %}">
+            <span class="author">{% if m.author_type == "GM" %}GM{% else %}{{ p.display_name }}{% endif %}</span>:
+            {{ m.content }}
+          </div>
+        {% empty %}
+          <p class="meta">No private messages.</p>
+        {% endfor %}
+        </div>
+        <form method="post" action="{% url 'send_private_message' scene.pk p.pk %}">
+        {% csrf_token %}
+        <div class="toolbar">
+          <input type="text" name="content" placeholder="Private to {{ p.display_name }}..." style="flex:1">
+          <label><input type="checkbox" name="run_turn" value="1" checked> Ask</label>
+          <button class="btn btn-primary" type="submit">Send</button>
+        </div>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

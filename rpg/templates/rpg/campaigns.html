@@ -1,0 +1,24 @@
+{% extends "rpg/base.html" %}
+{% block title %}Campaigns — MRAZ Master{% endblock %}
+{% block content %}
+<h2>Campaigns</h2>
+{% if campaigns %}
+  <ul>
+  {% for c in campaigns %}
+    <li>
+      <strong>{{ c.name }}</strong> — <a href="/admin/rpg/campaign/{{ c.pk }}/change/">edit</a>
+      <ul>
+      {% for s in c.scenes.all %}
+        <li><a href="{% url 'scene' s.pk %}">{{ s.name }}</a>
+          <span class="meta">({{ s.mode }})</span></li>
+      {% endfor %}
+      </ul>
+    </li>
+  {% endfor %}
+  </ul>
+{% else %}
+  <p>No campaigns yet.</p>
+  <p>Run: <code>docker compose exec web python manage.py seed_demo</code></p>
+  <p>Or create one in <a href="/admin/">Admin</a>.</p>
+{% endif %}
+{% endblock %}
