@@ -25,6 +25,9 @@
       </select>
     </form>
   {% endif %}
+  {% if scene.dialogue_language %}
+    <span class="meta">Speech: <span class="chip">{{ scene.dialogue_language }}</span></span>
+  {% endif %}
   {% if scene.mode == "ROUND" %}
     <span class="meta">Active:
       {% if active_round_player %}
@@ -196,7 +199,7 @@
               {% endif %}
             </div>
             {% if m.action_type != "PASS" %}
-              <div class="msg-content">{{ m.content|saoot_format }}</div>
+              <div class="msg-content">{{ m.content|message_format }}</div>
             {% endif %}
             {% if m.author_type == "PLAYER" %}
               {% if item.public_message %}
