@@ -37,9 +37,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    depends_on:
-      db:
-        condition: service_healthy
     # No host port published
 
   web:
@@ -52,7 +49,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       LITELLM_BASE_URL: http://litellm:4000
-      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-default}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-default}
     depends_on:
       db:
         condition: service_healthy
