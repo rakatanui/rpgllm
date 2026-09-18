@@ -22,3 +22,13 @@ def test_rejects_unknown_host_without_star():
 def test_allowed_hosts_does_not_contain_star():
     from django.conf import settings
     assert "*" not in settings.ALLOWED_HOSTS
+
+
+def test_staticfiles_use_whitenoise_configuration():
+    from django.conf import settings
+
+    assert "whitenoise.middleware.WhiteNoiseMiddleware" in settings.MIDDLEWARE
+    assert (
+        settings.STORAGES["staticfiles"]["BACKEND"]
+        == "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    )
