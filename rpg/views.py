@@ -280,7 +280,9 @@ def send_private_message(request, scene_id, player_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     player = get_object_or_404(Player, pk=player_id, campaign=scene.campaign)
     content = (request.POST.get("content") or "").strip()
-    run_turn_flag = request.POST.get("run_turn", "1") == "1"
+    # Private messages are informational by default. The model is called only
+    # when the GM explicitly checks "Ask for response".
+    run_turn_flag = request.POST.get("run_turn", "0") == "1"
     if not content:
         return HttpResponseBadRequest("empty content")
 
