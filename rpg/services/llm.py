@@ -154,8 +154,52 @@ def _response_from_mapping(text: str, obj: dict) -> LLMResponse:
     )
 
 
+def _json_mapping(candidate: str) -> dict | None:
+    """Decode strict or nearly-valid JSON into a mapping.
+
+    Some providers honor response_format semantically but still emit literal
+    newlines/control characters inside JSON strings. Python's strict=False mode
+    accepts those without weakening the structure of the surrounding object.
+    """
+    for strict in (True, False):
+        try:
+            obj = json.loads(candidate, strict=strict)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+
+        # A few gateways double-encode the object as one JSON string.
+        if isinstance(obj, str):
+            try:
+                nested = json.loads(obj, strict=False)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                nested = None
+            if isinstance(nested, dict):
+                return nested
+
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _looks_like_structured_json(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        text.lstrip().startswith("{")
+        and (
+            '"action_type"' in lowered
+            or '"public"' in lowered
+            or '"private_to_gm"' in lowered
+        )
+    )
+
+
 def parse_structured_response(text: str) -> LLMResponse:
-    """Parse a model response into structured fields, with a conservative fallback."""
+    """Parse a model response into structured fields.
+
+    Plain prose still gets the legacy fallback. If the model clearly attempted
+    the required JSON envelope but produced irrecoverably malformed JSON, fail
+    instead of dumping the raw envelope into the public scene.
+    """
     stripped = text.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()
@@ -165,21 +209,20 @@ def parse_structured_response(text: str) -> LLMResponse:
             lines = lines[:-1]
         stripped = "\n".join(lines).strip()
 
-    try:
-        obj = json.loads(stripped)
-        if isinstance(obj, dict):
-            return _response_from_mapping(text, obj)
-    except (json.JSONDecodeError, TypeError):
-        pass
+    obj = _json_mapping(stripped)
+    if obj is not None:
+        return _response_from_mapping(text, obj)
 
     match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
     if match:
-        try:
-            obj = json.loads(match.group(0))
-            if isinstance(obj, dict):
-                return _response_from_mapping(text, obj)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        obj = _json_mapping(match.group(0))
+        if obj is not None:
+            return _response_from_mapping(text, obj)
+
+    if _looks_like_structured_json(stripped):
+        raise ValueError(
+            "Model returned malformed structured JSON; raw JSON was not published."
+        )
 
     action = "ACT"
     words = text.lower().split()

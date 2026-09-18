@@ -92,6 +92,8 @@ def test_round_uses_frozen_snapshot_and_advances_once(recording_client):
 
     scene.refresh_from_db()
     assert scene.active_player_index == 1
+    assert "1200 visible characters, 6 paragraphs" in recording_client.prompts["Lucien"]
+    assert "prefer 2-3 paragraphs" in recording_client.prompts["Lucien"]
 
 
 @pytest.mark.django_db
