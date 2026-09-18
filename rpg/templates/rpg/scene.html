@@ -118,6 +118,16 @@
   {% endif %}
   <button id="gm-send-button" type="submit" class="btn btn-primary"
           {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% endif %}>Send</button>
+  {% if scene.mode == "ROUND" or scene.mode == "MANUAL" %}
+    <button id="gm-silence-button"
+            type="submit"
+            formaction="{% url 'silent_turn' scene.pk %}"
+            class="btn"
+            onclick="return prepareSilentTurn(this.form, '{{ scene.mode }}')"
+            {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% else %}title="GM ничего не добавляет; запустить следующий ход из текущего состояния"{% endif %}>
+      Молчание
+    </button>
+  {% endif %}
 </div>
 </form>
 {% else %}
@@ -279,6 +289,24 @@ function validateRoundOrder(form) {
   if (new Set(values).size !== values.length) {
     alert("Each player must appear exactly once in the ROUND order.");
     return false;
+  }
+  return true;
+}
+
+function prepareSilentTurn(form, mode) {
+  if (mode === "MANUAL") {
+    const selected = form.querySelectorAll('input[name="selected_players"]:checked');
+    if (selected.length !== 1) {
+      window.alert("Для Молчания в MANUAL выберите ровно одного игрока.");
+      return false;
+    }
+  }
+
+  const textarea = form.querySelector('textarea[name="content"]');
+  if (textarea && textarea.value.trim()) {
+    return window.confirm(
+      "В поле GM есть текст. Молчание его НЕ отправит. Запустить ход без реплики GM?"
+    );
   }
   return true;
 }

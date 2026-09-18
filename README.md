@@ -230,6 +230,14 @@ has a Copy control that copies the author/action header plus the visible message
 text; the HTTP `mraz.local` deployment falls back to the legacy browser copy
 command when the secure Clipboard API is unavailable.
 
+ROUND and MANUAL also expose a **Молчание** (Silence) control. Silence
+creates a real player turn without creating a GM Message. In ROUND it runs the
+normal full round roster from the current active player and advances the round
+once all executions complete. In MANUAL it requires exactly one selected player
+and calls only that player. Models are explicitly told that Silence means the GM
+has yielded the floor and that they must continue only from already established
+scene state/history rather than inventing a new GM event.
+
 Successful public player replies also expose two GM correction controls:
 
 - **OOC** asks the GM for a private meta-comment tied to that exact public

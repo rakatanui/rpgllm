@@ -41,10 +41,11 @@ class TurnResult:
 def start_turn(
     *,
     scene: Scene,
-    gm_message_text: str,
+    gm_message_text: str | None = None,
     selected_players: list[Player] | None = None,
     private_to_player: Player | None = None,
     client_turn_id: str | uuid.UUID | None = None,
+    silent: bool = False,
 ) -> TurnResult:
     """Create and execute one immutable GM-triggered turn.
 
@@ -52,7 +53,13 @@ def start_turn(
     ROUND state. A repeated client_turn_id is idempotent and returns the
     existing turn without re-running model calls.
     """
-    if not gm_message_text.strip():
+    gm_message_text = (gm_message_text or "").strip()
+    if silent:
+        if private_to_player is not None:
+            raise ValidationError("Silent turns are public only.")
+        if gm_message_text:
+            raise ValidationError("Silent turn cannot include a GM message.")
+    elif not gm_message_text:
         raise ValidationError("GM message cannot be empty.")
 
     normalized_id = _normalize_client_turn_id(client_turn_id)
@@ -123,20 +130,21 @@ def start_turn(
             active_player_id_snapshot=active_player_id,
         )
 
-        visibility = (
-            Visibility.PRIVATE_GM_PLAYER if is_private else Visibility.PUBLIC
-        )
-        gm_message = Message.objects.create(
-            campaign=locked_scene.campaign,
-            scene=locked_scene,
-            turn=turn,
-            author_type=AuthorType.GM,
-            content=gm_message_text.strip(),
-            visibility=visibility,
-            private_player=private_to_player if is_private else None,
-        )
-        turn.trigger_message = gm_message
-        turn.save(update_fields=["trigger_message"])
+        if not silent:
+            visibility = (
+                Visibility.PRIVATE_GM_PLAYER if is_private else Visibility.PUBLIC
+            )
+            gm_message = Message.objects.create(
+                campaign=locked_scene.campaign,
+                scene=locked_scene,
+                turn=turn,
+                author_type=AuthorType.GM,
+                content=gm_message_text,
+                visibility=visibility,
+                private_player=private_to_player if is_private else None,
+            )
+            turn.trigger_message = gm_message
+            turn.save(update_fields=["trigger_message"])
 
         executions = [
             TurnExecution.objects.create(
@@ -201,6 +209,28 @@ def start_turn(
         turn.refresh_from_db()
 
     return TurnResult(turn, generated)
+
+
+def start_silent_turn(
+    *,
+    scene: Scene,
+    selected_players: list[Player] | None = None,
+    client_turn_id: str | uuid.UUID | None = None,
+) -> TurnResult:
+    """Run a public turn without creating a GM message.
+
+    ROUND calls the full round roster and advances normally when all executions
+    complete. MANUAL calls only the explicitly selected player(s).
+    """
+    if scene.mode not in (TurnMode.ROUND, TurnMode.MANUAL):
+        raise ValidationError("Silence is available only in ROUND or MANUAL mode.")
+    return start_turn(
+        scene=scene,
+        gm_message_text="",
+        selected_players=selected_players,
+        client_turn_id=client_turn_id,
+        silent=True,
+    )
 
 
 def retry_execution(execution: TurnExecution) -> TurnResult:
@@ -591,6 +621,15 @@ def _generate_execution_response(
         history=_execution_history(execution, extra_history=extra_history),
     )
     _append_round_role_prompt(context, turn=turn, out_of_turn=out_of_turn)
+    if turn.trigger_message_id is None:
+        context.system_prompt += (
+            "\n\n# GM SILENCE\n"
+            "The GM has deliberately chosen SILENCE for this turn. There is no new GM "
+            "statement, event, or hidden instruction to infer. Continue only from the "
+            "already established scene state and visible history. Treat this as the GM "
+            "yielding the floor to the players. Do not invent a GM action just to create "
+            "a prompt. In ROUND, normal active/inactive role rules still apply."
+        )
     if extra_system_prompt:
         context.system_prompt += extra_system_prompt
 

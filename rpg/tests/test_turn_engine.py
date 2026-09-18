@@ -879,3 +879,76 @@ def test_ooc_feedback_may_leave_declaration_unchanged(mock_backend):
     assert changed is False
     assert public.content == original_text
     assert "без изменений" in private_reply.content
+
+
+
+@pytest.mark.django_db
+def test_round_silence_runs_round_without_gm_message_and_advances(recording_client):
+    camp = make_campaign()
+    lucien, mila, mathis = make_three_players(camp)
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        participants=[lucien, mila, mathis],
+        round_order=[lucien.pk, mila.pk, mathis.pk],
+        active_player_index=0,
+    )
+
+    result = turn_engine.start_silent_turn(scene=scene)
+
+    assert result.turn.trigger_message_id is None
+    assert recording_client.calls == ["Lucien", "Mila", "Mathis"]
+    assert not Message.objects.filter(
+        turn=result.turn,
+        author_type=AuthorType.GM,
+    ).exists()
+    assert "# GM SILENCE" in recording_client.prompts["Lucien"]
+    assert "yielding the floor to the players" in recording_client.prompts["Lucien"]
+
+    scene.refresh_from_db()
+    assert scene.active_player_index == 1
+
+
+@pytest.mark.django_db
+def test_manual_silence_calls_only_selected_player_without_gm_message(recording_client):
+    camp = make_campaign()
+    lucien, mila, mathis = make_three_players(camp)
+    scene = make_scene(
+        camp,
+        mode=TurnMode.MANUAL,
+        participants=[lucien, mila, mathis],
+    )
+
+    result = turn_engine.start_silent_turn(
+        scene=scene,
+        selected_players=[mila],
+    )
+
+    assert recording_client.calls == ["Mila"]
+    assert result.turn.participants == [mila.pk]
+    assert result.turn.trigger_message_id is None
+    assert not Message.objects.filter(
+        turn=result.turn,
+        author_type=AuthorType.GM,
+    ).exists()
+    assert "# GM SILENCE" in recording_client.prompts["Mila"]
+
+
+@pytest.mark.django_db
+def test_silence_rejects_unsupported_mode(recording_client):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(
+        camp,
+        mode=TurnMode.SIMULTANEOUS,
+        participants=[lucien],
+    )
+
+    with pytest.raises(ValidationError, match="ROUND or MANUAL"):
+        turn_engine.start_silent_turn(
+            scene=scene,
+            selected_players=[lucien],
+        )
+
+    assert recording_client.calls == []
+    assert Turn.objects.filter(scene=scene).count() == 0
