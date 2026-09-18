@@ -314,6 +314,8 @@ function togglePrivatePanel(forceOpen = null) {
   if (button) button.textContent = shouldCollapse ? "▶" : "◀";
 }
 
+let knownUnreadPlayers = new Set();
+
 function privateAutoOpenEnabled() {
   return localStorage.getItem("mraz.private.autoopen") !== "0";
 }
@@ -322,10 +324,22 @@ function setPrivateAutoOpen(checkbox) {
   localStorage.setItem("mraz.private.autoopen", checkbox.checked ? "1" : "0");
 }
 
-function maybeAutoOpenPrivate() {
-  const unread = document.querySelector("#players [data-unread-player]");
-  if (!unread || !privateAutoOpenEnabled()) return;
-  const playerId = Number(unread.dataset.unreadPlayer);
+function maybeAutoOpenPrivate({ initial = false } = {}) {
+  const current = new Set(
+    Array.from(document.querySelectorAll("#players [data-unread-player]"))
+      .map((node) => Number(node.dataset.unreadPlayer))
+      .filter((value) => Number.isFinite(value))
+  );
+
+  let playerId = null;
+  if (initial && current.size) {
+    playerId = Array.from(current)[0];
+  } else {
+    playerId = Array.from(current).find((id) => !knownUnreadPlayers.has(id)) ?? null;
+  }
+  knownUnreadPlayers = current;
+
+  if (playerId === null || !privateAutoOpenEnabled()) return;
   togglePrivatePanel(true);
   window.dispatchEvent(new CustomEvent("open-private", { detail: { playerId } }));
 }
