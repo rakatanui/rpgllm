@@ -25,7 +25,7 @@
                         onsubmit="return prepareOocRevision(this)">
                     {% csrf_token %}
                     <input type="hidden" name="comment" value="">
-                    <button type="submit">OOC correction</button>
+                    <button type="submit">OOC</button>
                   </form>
                   <form method="post"
                         action="{% url 'regenerate_execution' scene.pk m.execution_id %}"
