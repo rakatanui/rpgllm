@@ -17,6 +17,49 @@ from rpg.models import (
 from rpg.services import turn_engine
 
 
+def _campaign_players(scene):
+    return list(
+        Player.objects.filter(campaign=scene.campaign)
+        .select_related("model_config")
+        .order_by("created_at", "pk")
+    )
+
+
+def _validate_round_order(scene, order):
+    """Validate a confirmed ROUND order against all players in the campaign."""
+    player_ids = list(
+        Player.objects.filter(campaign=scene.campaign)
+        .order_by("created_at", "pk")
+        .values_list("pk", flat=True)
+    )
+    if not player_ids:
+        raise ValidationError("ROUND mode requires at least one player.")
+    if not order:
+        raise ValidationError("Choose and confirm the ROUND player order first.")
+    if len(order) != len(set(order)):
+        raise ValidationError("ROUND player order contains duplicate players.")
+    if len(order) != len(player_ids) or set(order) != set(player_ids):
+        raise ValidationError("ROUND player order must include every campaign player exactly once.")
+    return order
+
+
+def _round_order_from_request(request, scene):
+    raw_ids = request.POST.getlist("round_order")
+    try:
+        order = [int(value) for value in raw_ids]
+    except ValueError as exc:
+        raise ValidationError("Invalid player id in ROUND order.") from exc
+    return _validate_round_order(scene, order)
+
+
+def _round_order_is_ready(scene):
+    try:
+        _validate_round_order(scene, list(scene.round_order or []))
+    except ValidationError:
+        return False
+    return 0 <= scene.active_player_index < len(scene.round_order)
+
+
 def campaigns(request):
     campaigns = Campaign.objects.prefetch_related("scenes").all()
     scenes = Scene.objects.all()
@@ -25,10 +68,22 @@ def campaigns(request):
 
 def scene_view(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    players = list(
-        Player.objects.filter(campaign=scene.campaign)
-        .select_related("model_config")
-        .order_by("created_at", "pk")
+    players = _campaign_players(scene)
+    players_by_id = {player.pk: player for player in players}
+    stored_round_order = list(scene.round_order or [])
+    round_players = [
+        players_by_id[player_id]
+        for player_id in stored_round_order
+        if player_id in players_by_id
+    ]
+    round_setup_players = round_players + [
+        player for player in players if player.pk not in stored_round_order
+    ]
+    round_ready = _round_order_is_ready(scene)
+    active_round_player = (
+        round_players[scene.active_player_index]
+        if round_ready and scene.active_player_index < len(round_players)
+        else None
     )
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
@@ -88,6 +143,10 @@ def scene_view(request, scene_id):
             "gm_only_messages": gm_only_messages,
             "player_private": player_private,
             "modes": TurnMode.choices,
+            "round_players": round_players,
+            "round_setup_players": round_setup_players,
+            "round_ready": round_ready,
+            "active_round_player": active_round_player,
         },
     )
 
@@ -162,6 +221,11 @@ def send_gm_message(request, scene_id):
             return HttpResponseBadRequest(str(exc))
         scene.save(update_fields=["mode", "updated_at"])
 
+    if scene.mode == TurnMode.ROUND and not _round_order_is_ready(scene):
+        return HttpResponseBadRequest(
+            "ROUND mode requires a confirmed player order before sending messages."
+        )
+
     try:
         selected_players = _selected_players_from_request(request, scene)
         if run_turn_flag:
@@ -220,15 +284,24 @@ def send_private_message(request, scene_id, player_id):
 
 @require_http_methods(["POST"])
 def set_mode(request, scene_id):
-    scene = get_object_or_404(Scene, pk=scene_id)
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     mode = request.POST.get("mode")
-    if mode in dict(TurnMode.choices):
+    if mode not in dict(TurnMode.choices):
+        return HttpResponseBadRequest("invalid mode")
+
+    try:
+        if mode == TurnMode.ROUND:
+            scene.round_order = _round_order_from_request(request, scene)
+            scene.active_player_index = 0
         scene.mode = mode
-        try:
-            scene.full_clean()
-        except ValidationError as exc:
-            return HttpResponseBadRequest(str(exc))
-        scene.save(update_fields=["mode", "updated_at"])
+        scene.full_clean()
+    except ValidationError as exc:
+        return HttpResponseBadRequest(str(exc))
+
+    update_fields = ["mode", "updated_at"]
+    if mode == TurnMode.ROUND:
+        update_fields.extend(["round_order", "active_player_index"])
+    scene.save(update_fields=update_fields)
     return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
 
 
