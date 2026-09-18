@@ -11,8 +11,30 @@
           {% if m.author_type == "PLAYER" and m.action_type %}
             <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
           {% endif %}
-          <button type="button" class="copy-message-btn" onclick="copyMessage(this)"
-                  title="Копировать сообщение" aria-label="Копировать сообщение">Copy</button>
+          <span class="msg-actions">
+            {% if not scene.is_closed and m.author_type == "PLAYER" and m.execution_id and m.execution.state == "COMPLETED" %}
+              <form method="post"
+                    action="{% url 'ooc_revision' scene.pk m.pk %}"
+                    class="message-action-form"
+                    onsubmit="return prepareOocRevision(this)">
+                {% csrf_token %}
+                <input type="hidden" name="comment" value="">
+                <button type="submit" class="msg-action-btn"
+                        title="Приватно прокомментировать заявку и дать игроку возможность её пересмотреть">OOC</button>
+              </form>
+              <form method="post"
+                    action="{% url 'regenerate_execution' scene.pk m.execution_id %}"
+                    class="message-action-form"
+                    onsubmit="return confirm('Перегенерировать только ответ {{ m.author_player.display_name|escapejs }}? Текущая заявка будет заменена при успешной генерации.')">
+                {% csrf_token %}
+                <input type="hidden" name="message_id" value="{{ m.pk }}">
+                <button type="submit" class="msg-action-btn"
+                        title="Перегенерировать только этот ответ">Regen</button>
+              </form>
+            {% endif %}
+            <button type="button" class="copy-message-btn" onclick="copyMessage(this)"
+                    title="Копировать сообщение" aria-label="Копировать сообщение">Copy</button>
+          </span>
         </div>
         {% if m.action_type != "PASS" %}
           <div class="msg-content">{{ m.content|message_format }}</div>
