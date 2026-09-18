@@ -24,13 +24,23 @@ cp .env.example .env
 docker compose up --build
 ```
 
+Before opening the app from a Windows browser, add this line to
+`C:\\Windows\\System32\\drivers\\etc\\hosts` as Administrator:
+
+```text
+127.0.0.100 mraz.local
+```
+
+WSL's `/etc/hosts` affects WSL tools only; it does not configure name
+resolution for Windows Chrome/Edge.
+
 Open <http://mraz.local>.
 
-Checks:
+Checks from WSL:
 
 ```bash
-getent hosts mraz.local        # -> 127.0.0.100
-curl -I http://mraz.local      # -> 200 OK
+curl -I http://127.0.0.100
+curl -I http://mraz.local      # only if WSL also resolves mraz.local
 ```
 
 Create an admin user:
@@ -109,8 +119,12 @@ views / templates           # thin; no business logic in views
 Message visibility: `PUBLIC`, `PRIVATE_GM_PLAYER`, `GM_ONLY`. A single message
 table with visibility rules — not separate chats.
 
-Turn states: `PENDING / RUNNING / COMPLETED / FAILED`. Double-launch is
-blocked; failed turns are retried explicitly by the Master.
+Turn states: `PENDING / RUNNING / COMPLETED / FAILED`. Each player call has
+its own `TurnExecution` state (`PENDING / RUNNING / COMPLETED / FAILED /
+INVALID`). Public ROUND/SIMULTANEOUS calls use frozen context snapshots;
+private GM↔player turns never advance the public round. Browser submissions use
+a per-form UUID so duplicate submits are idempotent. Failed executions can be
+retried without replaying successful players.
 
 ## Stop
 
