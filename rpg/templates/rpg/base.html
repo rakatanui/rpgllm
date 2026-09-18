@@ -10,6 +10,8 @@
   :root {
     --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
     --muted: #8b949e; --accent: #58a6ff; --gm: #d2a8ff; --player: #79c0ff;
+    --player-0: #79c0ff; --player-1: #7ee787; --player-2: #ffa657;
+    --player-3: #ff7b72; --player-4: #56d4dd; --player-5: #e3b341;
     --private: #f0883e; --ok: #3fb950; --err: #f85149;
   }
   * { box-sizing: border-box; }
@@ -65,6 +67,38 @@
   .msg.gm .author { color:var(--gm); }
   .msg.player .author { color:var(--player); }
   .msg.private .author { color:var(--private); }
+
+  .msg.speaker-player-0 { border-left-color:var(--player-0); }
+  .msg.speaker-player-1 { border-left-color:var(--player-1); }
+  .msg.speaker-player-2 { border-left-color:var(--player-2); }
+  .msg.speaker-player-3 { border-left-color:var(--player-3); }
+  .msg.speaker-player-4 { border-left-color:var(--player-4); }
+  .msg.speaker-player-5 { border-left-color:var(--player-5); }
+  .msg.speaker-player-0 .author { color:var(--player-0); }
+  .msg.speaker-player-1 .author { color:var(--player-1); }
+  .msg.speaker-player-2 .author { color:var(--player-2); }
+  .msg.speaker-player-3 .author { color:var(--player-3); }
+  .msg.speaker-player-4 .author { color:var(--player-4); }
+  .msg.speaker-player-5 .author { color:var(--player-5); }
+
+  .round-block { padding:8px; margin-bottom:10px; border-radius:8px;
+                 border:1px solid rgba(255,255,255,0.045); }
+  .round-block-base { background:rgba(88,166,255,0.035); }
+  .round-block-alt { background:rgba(210,168,255,0.035); }
+  .round-block .msg:last-child { margin-bottom:0; }
+
+  .action-tag { display:inline-block; margin:0 6px 0 4px; padding:0 5px;
+                border-radius:4px; font-size:11px; font-weight:bold;
+                border:1px solid var(--border); }
+  .action-act { color:var(--ok); border-color:rgba(63,185,80,0.45); }
+  .action-pass { color:var(--muted); border-color:rgba(139,148,158,0.35); }
+  .action-act_out_of_turn { color:var(--private); border-color:rgba(240,136,62,0.45); }
+
+  .execution-error { color:var(--err); font-size:11px; line-height:1.35; margin-top:5px; }
+  .retry-execution-form { margin-top:6px; }
+  .btn-retry { border-color:rgba(248,81,73,0.65); color:#ffb3ad; }
+  .btn-retry:hover { border-color:var(--err); }
+
   .msg:target { outline:1px solid var(--accent); background:#1b2530; }
   .private-ref { margin-top:6px; padding-top:5px; border-top:1px dashed var(--border);
                  color:var(--muted); font-size:11px; line-height:1.35; }
