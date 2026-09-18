@@ -36,6 +36,7 @@ from rpg.models import (
     Player,
     Scene,
     SceneParticipant,
+    TurnMode,
     Visibility,
 )
 
@@ -156,6 +157,24 @@ def build_player_context(
             "Older chat messages were omitted to keep the context bounded. "
             "Use the supplied lore and compact memories as authoritative summaries "
             "of older important information."
+        )
+
+    if scene.mode == TurnMode.ROUND:
+        parts.append(
+            "# ROUND / ACT_OUT_OF_TURN\n"
+            "ROUND has one active player. An inactive player may use ACT_OUT_OF_TURN "
+            "to declare an immediate out-of-turn action. This is a real action declaration, "
+            "not merely commentary or a request for permission.\n"
+            "The GM can explicitly adjudicate such a declaration in a later GM message "
+            "using a marker of the form "
+            "[[SAOOT:<player-id>|<player-name>]]resolution text[[/SAOOT]]. "
+            "That marked text is authoritative for that named player's most recent "
+            "ACT_OUT_OF_TURN declaration.\n"
+            "If play proceeds to the next GM input and there is NO SAOOT marker targeted "
+            "at a given ACT_OUT_OF_TURN declaration, treat that declaration as successful "
+            "as stated. If several players declared ACT_OUT_OF_TURN, resolve them "
+            "independently: a SAOOT marker for one player does not resolve the others.\n"
+            "Only the GM creates SAOOT markers. Never emit or invent one yourself."
         )
 
     parts.append(
@@ -405,10 +424,13 @@ def _message_to_chat(msg: Message, viewer: Player) -> dict | None:
     if msg.author_type == AuthorType.PLAYER:
         if msg.author_player_id is None:
             return None
-        if msg.action_type == "PASS":
-            content = f"[PASS] {msg.author_player.display_name}"
+        action = (msg.action_type or "ACT").upper()
+        if action == "PASS":
+            content = f"{msg.author_player.display_name} [PASS]"
         else:
-            content = f"{msg.author_player.display_name}: {msg.content}"
+            content = (
+                f"{msg.author_player.display_name} [{action}]: {msg.content}"
+            )
         role = "assistant" if msg.author_player_id == viewer.pk else "user"
         return {"role": role, "content": content}
     if msg.author_type == AuthorType.SYSTEM:
