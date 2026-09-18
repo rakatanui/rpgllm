@@ -18,7 +18,7 @@
   {% else %}
     <form id="mode-form" method="post" action="{% url 'set_mode' scene.pk %}" class="inline">
       {% csrf_token %}
-      <select name="mode" onchange="handleModeChange(this)">
+      <select name="mode" data-round-ready="{% if round_ready %}1{% else %}0{% endif %}" onchange="handleModeChange(this)">
       {% for value, label in modes %}
         <option value="{{ value }}" {% if scene.mode == value %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
@@ -222,6 +222,10 @@ function handleModeChange(select) {
   const sendButton = document.getElementById("gm-send-button");
 
   if (select.value === "ROUND") {
+    if (select.dataset.roundReady === "1") {
+      select.form.submit();
+      return;
+    }
     roundSetup.hidden = false;
     sendButton.disabled = true;
     sendButton.title = "Confirm ROUND player order first";
