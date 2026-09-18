@@ -60,12 +60,13 @@ class SceneForm(forms.ModelForm):
 
     def clean_previous_scenes(self):
         predecessors = self.cleaned_data.get("previous_scenes")
-        campaign = self.cleaned_data.get("campaign") or getattr(self.instance, "campaign", None)
+        campaign = self.cleaned_data.get("campaign")
+        campaign_id = campaign.pk if campaign else self.instance.campaign_id
         if predecessors is None:
             return predecessors
 
         for predecessor in predecessors:
-            if campaign and predecessor.campaign_id != campaign.pk:
+            if campaign_id and predecessor.campaign_id != campaign_id:
                 raise ValidationError("A predecessor scene must belong to the same campaign.")
             if not predecessor.is_closed:
                 raise ValidationError("Only closed scenes can be used as predecessor history.")
