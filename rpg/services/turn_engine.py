@@ -740,7 +740,7 @@ def _validate_response_discipline(
         return
 
     max_chars = 650 if out_of_turn else 1200
-    max_paragraphs = 2 if out_of_turn else 5
+    max_paragraphs = 2 if out_of_turn else 6
     max_questions = 1 if out_of_turn else 2
 
     if len(visible) > max_chars:
