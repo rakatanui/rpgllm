@@ -1,14 +1,17 @@
 {% load rpg_extras %}
 {% for p in players %}
-  {% with idx=scene.active_player_index %}
-  <div class="player-row {% if scene.mode == "ROUND" and forloop.counter0 == idx %}active{% endif %}">
-    <div><strong>{{ p.display_name }}</strong></div>
+  <div class="player-row {% if scene.mode == "ROUND" and p.pk == active_round_player_id %}active{% endif %}">
+    <div>
+      <strong>{{ p.display_name }}</strong>
+      {% if p.pk in unread_private_player_ids %}
+        <span class="private-unread-dot" data-unread-player="{{ p.pk }}" title="Unread private message from {{ p.display_name }}">●</span>
+      {% endif %}
+    </div>
     <div class="meta">
       model: {% if p.model_config %}{{ p.model_config.name }}{% else %}—{% endif %}
     </div>
     <div>status: <span class="chip {{ p.status }}">{{ p.status }}</span></div>
   </div>
-  {% endwith %}
 {% empty %}
   <p class="meta">No players. Add some in Admin.</p>
 {% endfor %}
