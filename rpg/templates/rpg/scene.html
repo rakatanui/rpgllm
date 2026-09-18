@@ -286,14 +286,33 @@
       <p class="meta" x-show="tab === 0">Select a player to open the private channel.</p>
       {% for p in players %}
         <div x-show="tab === {{ p.pk }}" style="display:none">
+          <h3>{{ p.display_name }} — status: <span class="chip {{ p.status }}">{{ p.status }}</span></h3>
           <div id="private-channel-{{ p.pk }}"
                hx-get="{% url 'private_channel' scene.pk p.pk %}"
                hx-trigger="load, every 3s"
                hx-swap="innerHTML">
             {% with entries=player_private|get:p.pk player=p player_color=player_color_by_id|get:p.pk %}
-              {% include "rpg/_private_channel.html" %}
+              {% include "rpg/_private_messages.html" %}
             {% endwith %}
           </div>
+          {% if not scene.is_closed %}
+            <form method="post" action="{% url 'send_private_message' scene.pk p.pk %}"
+                  onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
+              {% csrf_token %}
+              <input type="hidden" name="client_turn_id" value="">
+              <div class="private-composer">
+                <textarea name="content" rows="5" placeholder="Private to {{ p.display_name }}..."></textarea>
+                <div class="toolbar">
+                  <label title="Unchecked: store the message as private context only, without calling the model.">
+                    <input type="checkbox" name="run_turn" value="1"> Ask for response
+                  </label>
+                  <button class="btn btn-primary" type="submit">Send</button>
+                </div>
+              </div>
+            </form>
+          {% else %}
+            <p class="meta">Scene closed: private history is read-only.</p>
+          {% endif %}
         </div>
       {% endfor %}
     </div>
