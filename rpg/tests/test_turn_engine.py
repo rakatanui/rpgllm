@@ -1,4 +1,5 @@
 """Turn Engine regression tests for orchestration semantics."""
+import threading
 import uuid
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ from rpg.models import (
 )
 from rpg.services import turn_engine
 from rpg.services.llm import LLMResponse, MockLLMClient
-from rpg.tests.factories import make_campaign, make_player, make_scene, make_three_players
+from rpg.tests.factories import make_campaign, make_model, make_player, make_scene, make_three_players
 
 
 def _resp(name, action="ACT", public=None, private=""):
@@ -82,7 +83,7 @@ def test_round_uses_frozen_snapshot_and_advances_once(recording_client):
 
     turn_engine.start_turn(scene=scene, gm_message_text="round")
 
-    assert recording_client.calls == ["Lucien", "Mila", "Mathis"]
+    assert sorted(recording_client.calls) == ["Lucien", "Mathis", "Mila"]
     for name in ("Lucien", "Mila", "Mathis"):
         contents = " ".join(item["content"] for item in recording_client.histories[name][0])
         for other in ("Lucien", "Mila", "Mathis"):
@@ -955,3 +956,186 @@ def test_silence_rejects_unsupported_mode(recording_client):
 
     assert recording_client.calls == []
     assert Turn.objects.filter(scene=scene).count() == 0
+
+
+
+@pytest.mark.django_db
+def test_round_provider_calls_are_parallel(mock_backend):
+    camp = make_campaign()
+    lucien, mila, mathis = make_three_players(camp)
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        participants=[lucien, mila, mathis],
+        round_order=[lucien.pk, mila.pk, mathis.pk],
+        active_player_index=0,
+    )
+    barrier = threading.Barrier(3, timeout=3)
+
+    class BarrierClient(MockLLMClient):
+        def generate(self, *, system_prompt, **kwargs):
+            name = next(
+                line[len("[PLAYER:"):].rstrip("]").strip()
+                for line in system_prompt.splitlines()
+                if line.startswith("[PLAYER:")
+            )
+            barrier.wait()
+            if "NOT the active" in system_prompt:
+                return _resp(name, action="PASS", public="")
+            return _resp(name, action="ACT", public=f"{name} acts.")
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=BarrierClient()):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+
+    assert result.turn.state == TurnState.COMPLETED
+    assert result.turn.executions.filter(state=ExecutionState.COMPLETED).count() == 3
+
+
+@pytest.mark.django_db
+def test_one_shot_nudge_is_snapshotted_and_consumed(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien", pending_nudge="Do not reveal the secret.")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class NudgeClient(MockLLMClient):
+        def generate(self, *, system_prompt, **kwargs):
+            assert "# ONE-SHOT GM NUDGE" in system_prompt
+            assert "Do not reveal the secret." in system_prompt
+            return _resp("Lucien", public="Lucien stays vague.")
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=NudgeClient()):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="Speak.",
+            selected_players=[lucien],
+        )
+
+    execution = result.turn.executions.get(player=lucien)
+    lucien.refresh_from_db()
+    assert execution.nudge_text == "Do not reveal the secret."
+    assert lucien.pending_nudge == ""
+
+
+@pytest.mark.django_db
+def test_execution_debug_snapshots_model_prompt_messages_and_raw(mock_backend):
+    camp = make_campaign()
+    model = make_model("Primary", gateway_model="primary-model")
+    lucien = make_player(camp, "Lucien", model_config=model)
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=MockLLMClient()):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+
+    execution = result.turn.executions.get(player=lucien)
+    assert execution.model_used == "primary-model"
+    assert "[PLAYER: Lucien]" in execution.system_prompt_snapshot
+    assert isinstance(execution.request_messages, list)
+    assert execution.raw_response
+    assert execution.latency_ms is not None
+
+
+@pytest.mark.django_db
+def test_retry_can_use_fallback_model(mock_backend):
+    camp = make_campaign()
+    primary = make_model("Primary", gateway_model="primary-model")
+    fallback = make_model("Fallback", gateway_model="fallback-model")
+    lucien = make_player(
+        camp,
+        "Lucien",
+        model_config=primary,
+        fallback_model_config=fallback,
+    )
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class FailThenClient(MockLLMClient):
+        def __init__(self):
+            self.models = []
+        def generate(self, *, model, **kwargs):
+            self.models.append(model)
+            if model == "primary-model":
+                raise RuntimeError("provider down")
+            return _resp("Lucien", public="Fallback answer.")
+
+    client = FailThenClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+        execution = result.turn.executions.get(player=lucien)
+        assert execution.state == ExecutionState.FAILED
+        turn_engine.retry_execution(execution, model_config=fallback)
+
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+    assert execution.model_used == "fallback-model"
+    assert client.models == ["primary-model", "fallback-model"]
+
+
+@pytest.mark.django_db
+def test_regen_and_restore_keep_message_version_history(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class VersionsClient(MockLLMClient):
+        def __init__(self):
+            self.calls = 0
+        def generate(self, **kwargs):
+            self.calls += 1
+            return _resp("Lucien", public="Version one." if self.calls == 1 else "Version two.")
+
+    client = VersionsClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+        execution = result.turn.executions.get(player=lucien)
+        message = Message.objects.get(execution=execution, visibility=Visibility.PUBLIC)
+        assert [r.content for r in message.revisions.all()] == ["Version one."]
+
+        turn_engine.regenerate_execution(execution)
+
+    message.refresh_from_db()
+    revisions = list(message.revisions.order_by("revision_index"))
+    assert [r.content for r in revisions] == ["Version one.", "Version two."]
+
+    turn_engine.restore_message_revision(message=message, revision=revisions[0])
+    message.refresh_from_db()
+    assert message.content == "Version one."
+    assert message.revisions.count() == 3
+    assert message.revisions.order_by("-revision_index").first().reason == "RESTORE"
+
+
+@pytest.mark.django_db
+def test_undo_latest_round_turn_restores_active_player(mock_backend):
+    camp = make_campaign()
+    lucien, mila, _ = make_three_players(camp)
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        participants=[lucien, mila],
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=RecordingClient()):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+
+    scene.refresh_from_db()
+    assert scene.active_player_index == 1
+    turn_id = result.turn.pk
+
+    turn_engine.undo_latest_public_turn(scene)
+
+    scene.refresh_from_db()
+    assert scene.active_player_index == 0
+    assert not Turn.objects.filter(pk=turn_id).exists()
+    assert not Message.objects.filter(turn_id=turn_id).exists()
