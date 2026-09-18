@@ -66,6 +66,19 @@
   .msg .author { font-weight:bold; }
   .msg-header { display:flex; align-items:center; gap:4px; margin-bottom:5px;
                 min-height:18px; }
+  .msg-actions { margin-left:auto; display:inline-flex; align-items:center; gap:4px; }
+  .message-action-form { display:inline-flex; margin:0; }
+  .msg-action-btn {
+    padding:1px 6px;
+    border:1px solid var(--border);
+    border-radius:5px;
+    background:transparent;
+    color:var(--muted);
+    font:inherit;
+    font-size:10px;
+    cursor:pointer;
+  }
+  .msg-action-btn:hover { color:var(--text); border-color:var(--accent); }
   .copy-message-btn {
     margin-left:auto;
     padding:1px 6px;
@@ -200,6 +213,19 @@
 {% block content %}{% endblock %}
 </div>
 <script>
+function prepareOocRevision(form) {
+  const comment = window.prompt(
+    "OOC-комментарий к заявке. Игрок получит его приватно и сможет изменить заявку:"
+  );
+  if (comment === null) return false;
+  if (!comment.trim()) {
+    window.alert("OOC-комментарий не может быть пустым.");
+    return false;
+  }
+  form.querySelector('input[name="comment"]').value = comment.trim();
+  return true;
+}
+
 async function copyMessage(button) {
   const message = button.closest(".msg");
   if (!message) return;
