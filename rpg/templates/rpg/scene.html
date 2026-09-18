@@ -26,8 +26,9 @@
   <a class="btn" href="/admin/rpg/scene/{{ scene.pk }}/change/">Edit</a>
 </div>
 
-<form id="composer" method="post" action="{% url 'send_gm_message' scene.pk %}">
+<form id="composer" method="post" action="{% url 'send_gm_message' scene.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
 {% csrf_token %}
+<input type="hidden" name="client_turn_id" value="">
 <div class="toolbar">
   <input type="text" name="content" placeholder="GM public message..." style="flex:1" autofocus>
   <label><input type="checkbox" name="run_turn" value="1" checked> Run turn</label>
@@ -85,8 +86,9 @@
           <p class="meta">No private messages.</p>
         {% endfor %}
         </div>
-        <form method="post" action="{% url 'send_private_message' scene.pk p.pk %}">
+        <form method="post" action="{% url 'send_private_message' scene.pk p.pk %}" onsubmit="if(!this.client_turn_id.value){this.client_turn_id.value=crypto.randomUUID()}">
         {% csrf_token %}
+        <input type="hidden" name="client_turn_id" value="">
         <div class="toolbar">
           <input type="text" name="content" placeholder="Private to {{ p.display_name }}..." style="flex:1">
           <label><input type="checkbox" name="run_turn" value="1" checked> Ask</label>

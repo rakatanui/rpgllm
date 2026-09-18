@@ -35,3 +35,31 @@ def test_player_author_requires_player():
                 content="x", visibility=Visibility.PUBLIC)
     with pytest.raises(ValidationError):
         m.full_clean()
+
+@pytest.mark.django_db
+def test_round_order_rejects_duplicates():
+    camp = make_campaign()
+    player = make_player(camp, "P")
+    scene = make_scene(camp, round_order=[player.pk, player.pk])
+    with pytest.raises(ValidationError):
+        scene.full_clean()
+
+
+@pytest.mark.django_db
+def test_round_order_rejects_foreign_player():
+    camp_a = make_campaign("A")
+    camp_b = make_campaign("B")
+    local = make_player(camp_a, "Local")
+    foreign = make_player(camp_b, "Foreign")
+    scene = make_scene(camp_a, round_order=[local.pk, foreign.pk])
+    with pytest.raises(ValidationError):
+        scene.full_clean()
+
+
+@pytest.mark.django_db
+def test_round_order_rejects_missing_player():
+    camp = make_campaign()
+    local = make_player(camp, "Local")
+    scene = make_scene(camp, round_order=[local.pk, 999999])
+    with pytest.raises(ValidationError):
+        scene.full_clean()

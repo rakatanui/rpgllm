@@ -1,40 +1,32 @@
-"""Turn Engine.
+"""Turn orchestration for MRAZ Master.
 
-The central orchestrator. Four modes:
-  - MANUAL        : Master selects players; only they respond.
-  - ROUND         : ordered round; active player ACTs, others PASS/ACT_OUT_OF_TURN.
-  - SIMULTANEOUS  : all selected players see the same public snapshot (no later
-                    answers visible).
-  - TABLE         : sequential; each player sees previous players' public
-                    answers from this turn.
-
-CRITICAL INVARIANT:
-  Saving an AI Message NEVER initiates a new LLM call / Turn.
-  Only an explicit Master action (a view call into the Turn Engine) starts a turn.
+Only explicit GM actions enter this service. Persisting an AI Message never
+starts another model call.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
+import uuid
 from dataclasses import dataclass
-from typing import Iterable
 
-from django.db import transaction
-from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 
 from rpg.models import (
     AuthorType,
+    ExecutionState,
     Message,
     Player,
     PlayerStatus,
     Scene,
     Turn,
+    TurnExecution,
     TurnMode,
     TurnState,
     Visibility,
 )
 from rpg.services.context_builder import build_player_context
-from rpg.services.llm import get_llm_client, LLMResponse
+from rpg.services.llm import LLMResponse, get_llm_client
 
 logger = logging.getLogger("rpg.turn_engine")
 
@@ -45,341 +37,470 @@ class TurnResult:
     messages: list[Message]
 
 
-# ---------------------------------------------------------------------------
-# Public entrypoints (called only from views / management commands)
-# ---------------------------------------------------------------------------
 def start_turn(
     *,
     scene: Scene,
     gm_message_text: str,
     selected_players: list[Player] | None = None,
     private_to_player: Player | None = None,
+    client_turn_id: str | uuid.UUID | None = None,
 ) -> TurnResult:
-    """Start a new turn triggered by a GM message.
+    """Create and execute one immutable GM-triggered turn.
 
-    `private_to_player` (optional) makes the GM message PRIVATE_GM_PLAYER to
-    that player instead of PUBLIC. Used for the private GM-player channel.
-
-    IMPORTANT: this is the ONLY function that initiates LLM calls.
+    Private turns are independent from the public scene mode and never advance
+    ROUND state. A repeated client_turn_id is idempotent and returns the
+    existing turn without re-running model calls.
     """
-    client = get_llm_client()
+    if not gm_message_text.strip():
+        raise ValidationError("GM message cannot be empty.")
+
+    normalized_id = _normalize_client_turn_id(client_turn_id)
+    selected_players = selected_players or []
 
     with transaction.atomic():
-        scene = (
+        locked_scene = (
             Scene.objects.select_for_update()
             .select_related("campaign")
             .get(pk=scene.pk)
         )
+
+        if normalized_id is not None:
+            existing = (
+                Turn.objects.filter(scene=locked_scene, client_turn_id=normalized_id)
+                .first()
+            )
+            if existing is not None:
+                return TurnResult(
+                    existing,
+                    list(existing.messages.order_by("created_at")),
+                )
+
+        if private_to_player is not None:
+            _ensure_player_in_scene_campaign(locked_scene, private_to_player)
+            mode = TurnMode.MANUAL
+            targets = [private_to_player]
+            active_player_id = None
+            is_private = True
+        else:
+            mode = locked_scene.mode
+            is_private = False
+            if mode == TurnMode.ROUND:
+                targets = _validated_round_players(locked_scene)
+                active_player_id = (
+                    targets[locked_scene.active_player_index].pk if targets else None
+                )
+            elif mode == TurnMode.MANUAL:
+                targets = _validate_selected_players(locked_scene, selected_players)
+                active_player_id = None
+            elif mode == TurnMode.SIMULTANEOUS:
+                targets = (
+                    _validate_selected_players(locked_scene, selected_players)
+                    if selected_players
+                    else _scene_players(locked_scene)
+                )
+                active_player_id = None
+            elif mode == TurnMode.TABLE:
+                targets = (
+                    _validate_selected_players(locked_scene, selected_players)
+                    if selected_players
+                    else _validated_round_players(locked_scene)
+                )
+                active_player_id = None
+            else:
+                raise ValidationError(f"Unsupported turn mode: {mode}")
+
         turn = Turn.objects.create(
-            scene=scene,
-            mode=scene.mode,
+            scene=locked_scene,
+            mode=mode,
             state=TurnState.RUNNING,
+            participants=[player.pk for player in targets],
+            client_turn_id=normalized_id,
+            is_private=is_private,
+            active_player_id_snapshot=active_player_id,
         )
 
-        # Persist the GM trigger message (PUBLIC by default, or PRIVATE).
-        if private_to_player is not None:
-            gm_msg = Message.objects.create(
-                campaign=scene.campaign,
-                scene=scene,
-                turn=turn,
-                author_type=AuthorType.GM,
-                content=gm_message_text,
-                visibility=Visibility.PRIVATE_GM_PLAYER,
-                private_player=private_to_player,
-            )
-        else:
-            gm_msg = Message.objects.create(
-                campaign=scene.campaign,
-                scene=scene,
-                turn=turn,
-                author_type=AuthorType.GM,
-                content=gm_message_text,
-                visibility=Visibility.PUBLIC,
-            )
-        turn.trigger_message = gm_msg
+        visibility = (
+            Visibility.PRIVATE_GM_PLAYER if is_private else Visibility.PUBLIC
+        )
+        gm_message = Message.objects.create(
+            campaign=locked_scene.campaign,
+            scene=locked_scene,
+            turn=turn,
+            author_type=AuthorType.GM,
+            content=gm_message_text.strip(),
+            visibility=visibility,
+            private_player=private_to_player if is_private else None,
+        )
+        turn.trigger_message = gm_message
         turn.save(update_fields=["trigger_message"])
 
-    # Dispatch by mode. Each returns list[Message].
-    mode = scene.mode
-    if mode == TurnMode.MANUAL:
-        msgs = _run_manual(scene, turn, gm_msg, selected_players or [], client)
-    elif mode == TurnMode.ROUND:
-        msgs = _run_round(scene, turn, gm_msg, client)
-    elif mode == TurnMode.SIMULTANEOUS:
-        targets = selected_players or _scene_players(scene)
-        msgs = _run_simultaneous(scene, turn, gm_msg, targets, client)
-    elif mode == TurnMode.TABLE:
-        order = selected_players or _ordered_players(scene)
-        msgs = _run_table(scene, turn, gm_msg, order, client)
-    else:
-        turn.state = TurnState.FAILED
-        turn.error = f"Unknown mode {mode}"
-        turn.save()
-        return TurnResult(turn, [])
+        executions = [
+            TurnExecution.objects.create(
+                turn=turn,
+                player=player,
+                order_index=index,
+            )
+            for index, player in enumerate(targets)
+        ]
 
-    _finalize_turn(turn, msgs)
-    return TurnResult(turn, msgs)
+        # MANUAL/SIMULTANEOUS/ROUND/private use one frozen input snapshot so
+        # players cannot react to current-turn responses from peers.
+        if mode in (TurnMode.MANUAL, TurnMode.SIMULTANEOUS, TurnMode.ROUND) or is_private:
+            snapshot_ids = list(
+                Message.objects.filter(scene=locked_scene)
+                .order_by("created_at", "pk")
+                .values_list("pk", flat=True)
+            )
+            TurnExecution.objects.filter(pk__in=[e.pk for e in executions]).update(
+                history_message_ids=snapshot_ids
+            )
+            for execution in executions:
+                execution.history_message_ids = snapshot_ids
+
+    client = get_llm_client()
+    generated: list[Message] = []
+
+    for execution in executions:
+        if mode == TurnMode.TABLE and not is_private:
+            history_ids = list(
+                Message.objects.filter(scene=scene)
+                .order_by("created_at", "pk")
+                .values_list("pk", flat=True)
+            )
+            TurnExecution.objects.filter(pk=execution.pk).update(
+                history_message_ids=history_ids
+            )
+            execution.history_message_ids = history_ids
+
+        out_of_turn = (
+            mode == TurnMode.ROUND
+            and execution.player_id != turn.active_player_id_snapshot
+        )
+        message = _run_execution(
+            execution=execution,
+            client=client,
+            out_of_turn=out_of_turn,
+        )
+        if message is not None:
+            generated.append(message)
+
+    if mode == TurnMode.ROUND and not is_private:
+        _advance_round_once(turn)
+
+    _refresh_turn_state(turn)
+    turn.refresh_from_db()
+    return TurnResult(turn, generated)
+
+
+def retry_execution(execution: TurnExecution) -> TurnResult:
+    """Retry one FAILED/INVALID execution using its original frozen context."""
+    with transaction.atomic():
+        execution = (
+            TurnExecution.objects.select_for_update()
+            .select_related("turn__scene__campaign", "player")
+            .get(pk=execution.pk)
+        )
+        if execution.state not in (ExecutionState.FAILED, ExecutionState.INVALID):
+            raise RuntimeError("Can only retry a FAILED or INVALID execution")
+        execution.state = ExecutionState.PENDING
+        execution.error = ""
+        execution.action_type = ""
+        execution.save(update_fields=["state", "error", "action_type", "updated_at"])
+
+    turn = execution.turn
+    out_of_turn = (
+        turn.mode == TurnMode.ROUND
+        and execution.player_id != turn.active_player_id_snapshot
+    )
+    message = _run_execution(
+        execution=execution,
+        client=get_llm_client(),
+        out_of_turn=out_of_turn,
+    )
+    _refresh_turn_state(turn)
+    turn.refresh_from_db()
+    return TurnResult(turn, [message] if message is not None else [])
 
 
 def retry_turn(turn: Turn) -> TurnResult:
-    """Re-run a FAILED turn from scratch (explicit Master action)."""
-    if turn.state not in (TurnState.FAILED,):
-        raise RuntimeError("Can only retry a FAILED turn")
-    client = get_llm_client()
-    with transaction.atomic():
-        turn = Turn.objects.select_for_update().get(pk=turn.pk)
-        turn.state = TurnState.RUNNING
-        turn.error = ""
-        turn.save(update_fields=["state", "error"])
-    gm_msg = turn.trigger_message
-    scene = turn.scene
-    # Rebuild based on mode
-    mode = turn.mode
-    if mode == TurnMode.MANUAL:
-        # use original participants
-        targets = _participants_as_players(scene, turn.participants)
-        msgs = _run_manual(scene, turn, gm_msg, targets, client)
-    elif mode == TurnMode.ROUND:
-        msgs = _run_round(scene, turn, gm_msg, client)
-    elif mode == TurnMode.SIMULTANEOUS:
-        targets = _participants_as_players(scene, turn.participants)
-        msgs = _run_simultaneous(scene, turn, gm_msg, targets, client)
-    elif mode == TurnMode.TABLE:
-        order = _participants_as_players(scene, turn.participants)
-        msgs = _run_table(scene, turn, gm_msg, order, client)
-    else:
-        msgs = []
-    _finalize_turn(turn, msgs)
-    return TurnResult(turn, msgs)
-
-
-# ---------------------------------------------------------------------------
-# Mode runners
-# ---------------------------------------------------------------------------
-def _run_manual(scene, turn, gm_msg, players: list[Player], client) -> list[Message]:
-    """Only selected players respond. No automatic continuation."""
-    if not players:
-        return []
-    targets = _ordered_targets(players)
-    return _generate_for_players(scene, turn, gm_msg, targets, client, snapshot_history=None)
-
-
-def _run_round(scene, turn, gm_msg, client) -> list[Message]:
-    """Active player gets a normal ACT; others may PASS/ACT_OUT_OF_TURN.
-
-    After the turn, advance active_player_index by exactly one position.
-    """
-    order_ids: list[int] = list(scene.round_order or [])
-    if not order_ids:
-        return []
-    idx = scene.active_player_index % len(order_ids)
-    active_id = order_ids[idx]
-    players_by_id = {p.pk: p for p in Player.objects.filter(pk__in=order_ids)}
-    # ordered
-    ordered_players = [players_by_id[pid] for pid in order_ids if pid in players_by_id]
-
-    results: list[Message] = []
-    for p in ordered_players:
-        is_active = (p.pk == active_id)
-        # For non-active, we still call the model but instruct it may PASS.
-        msgs = _generate_for_players(scene, turn, gm_msg, [p], client,
-                                      snapshot_history=None,
-                                      out_of_turn=(not is_active))
-        results.extend(msgs)
-
-    # Advance active player exactly one position (cyclic).
-    with transaction.atomic():
-        scene = Scene.objects.select_for_update().get(pk=scene.pk)
-        scene.active_player_index = (idx + 1) % len(order_ids)
-        scene.save(update_fields=["active_player_index", "updated_at"])
-
-    return results
-
-
-def _run_simultaneous(scene, turn, gm_msg, players: list[Player], client) -> list[Message]:
-    """All targets see the SAME public snapshot (before any of their answers)."""
-    snapshot = list(
-        Message.objects.filter(scene=scene)
-        .select_related("author_player")
-        .order_by("created_at")
+    """Compatibility helper: retry only failed executions, never successes."""
+    failed = list(
+        turn.executions.filter(
+            state__in=[ExecutionState.FAILED, ExecutionState.INVALID]
+        ).order_by("order_index", "pk")
     )
-    targets = _ordered_targets(players)
-    turn.participants = [p.pk for p in targets]
-    turn.save(update_fields=["participants"])
-    return _generate_for_players(scene, turn, gm_msg, targets, client,
-                                  snapshot_history=snapshot)
+    if not failed:
+        raise RuntimeError("Turn has no failed executions to retry")
+
+    messages: list[Message] = []
+    for execution in failed:
+        result = retry_execution(execution)
+        messages.extend(result.messages)
+    turn.refresh_from_db()
+    return TurnResult(turn, messages)
 
 
-def _run_table(scene, turn, gm_msg, order: list[Player], client) -> list[Message]:
-    """Sequential: each player sees previous players' public answers this turn."""
-    targets = _ordered_targets(order)
-    turn.participants = [p.pk for p in targets]
-    turn.save(update_fields=["participants"])
-
-    results: list[Message] = []
-    # Each new player message is committed before the next, so the next call's
-    # history query includes it. snapshot_history=None -> uses live DB.
-    for p in targets:
-        msgs = _generate_for_players(scene, turn, gm_msg, [p], client, snapshot_history=None)
-        results.extend(msgs)
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Core generation helper
-# ---------------------------------------------------------------------------
-def _generate_for_players(
-    scene: Scene,
-    turn: Turn,
-    trigger_msg: Message,
-    players: list[Player],
-    client,
+def _run_execution(
     *,
-    snapshot_history: list[Message] | None,
-    out_of_turn: bool = False,
-) -> list[Message]:
-    """Call LLM for each player in `players` and persist responses.
+    execution: TurnExecution,
+    client,
+    out_of_turn: bool,
+) -> Message | None:
+    execution.refresh_from_db()
+    turn = execution.turn
+    scene = turn.scene
+    player = execution.player
 
-    snapshot_history != None: use that frozen list for all players (SIMULTANEOUS).
-    snapshot_history == None: re-query DB per player (TABLE / MANUAL / ROUND),
-      so each sees the latest committed public history.
+    TurnExecution.objects.filter(pk=execution.pk).update(
+        state=ExecutionState.RUNNING,
+        error="",
+    )
+    _set_player_status(player, PlayerStatus.GENERATING)
 
-    IMPORTANT: this function ONLY saves messages. It NEVER starts a new turn.
-    """
-    results: list[Message] = []
-    for p in players:
-        _set_player_status(p, PlayerStatus.GENERATING)
-        try:
-            history = snapshot_history  # may be None
-            ctx = build_player_context(
-                player=p, scene=scene, trigger_message=trigger_msg, history=history
+    try:
+        history = list(
+            Message.objects.filter(pk__in=execution.history_message_ids)
+            .select_related("author_player")
+            .order_by("created_at", "pk")
+        )
+        context = build_player_context(
+            player=player,
+            scene=scene,
+            trigger_message=turn.trigger_message,
+            history=history,
+        )
+
+        if out_of_turn:
+            context.system_prompt += (
+                "\n\n# ROUND ROLE\n"
+                "You are NOT the active player this round. "
+                "You may only PASS or ACT_OUT_OF_TURN."
             )
-            model = _player_model(p)
-            temp = _player_temp(p)
-            if out_of_turn:
-                # nudge prompt: you may only PASS or ACT_OUT_OF_TURN
-                extra = (
-                    "\n\n# NOTE\nYou are NOT the active player this round. "
-                    "You may only PASS or ACT_OUT_OF_TURN."
-                )
-                ctx.system_prompt += extra
-
-            resp: LLMResponse = _run_async(
-                client.generate(
-                    system_prompt=ctx.system_prompt,
-                    messages=ctx.messages,
-                    model=model,
-                    temperature=temp,
-                )
+        elif turn.mode == TurnMode.ROUND and not turn.is_private:
+            context.system_prompt += (
+                "\n\n# ROUND ROLE\n"
+                "You are the active player this round. You may only ACT or PASS."
             )
-            msg = _persist_player_response(scene, turn, p, resp)
-            results.append(msg)
-            _set_player_status(p, PlayerStatus.IDLE)
-        except Exception as e:
-            logger.warning("LLM call failed for player %s: %s", p.display_name, e)
-            _set_player_status(p, PlayerStatus.ERROR)
-            turn.error = f"{p.display_name}: {e}"
-            turn.save(update_fields=["error"])
-    return results
+
+        response = client.generate(
+            system_prompt=context.system_prompt,
+            messages=context.messages,
+            model=_player_model(player),
+            temperature=_player_temp(player),
+        )
+        _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
+
+        message = _persist_player_response(
+            execution=execution,
+            response=response,
+        )
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.COMPLETED,
+            action_type=response.action_type,
+            error="",
+        )
+        _set_player_status(player, PlayerStatus.IDLE)
+        return message
+    except InvalidActionError as exc:
+        logger.info("Invalid action from %s: %s", player.display_name, exc)
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.INVALID,
+            error=str(exc),
+        )
+        _set_player_status(player, PlayerStatus.ERROR)
+    except Exception as exc:
+        logger.warning("LLM call failed for player %s: %s", player.display_name, exc)
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            state=ExecutionState.FAILED,
+            error=str(exc),
+        )
+        _set_player_status(player, PlayerStatus.ERROR)
+    return None
+
+
+class InvalidActionError(ValueError):
+    pass
+
+
+def _validate_action(*, turn: Turn, out_of_turn: bool, response: LLMResponse) -> None:
+    if turn.is_private or turn.mode != TurnMode.ROUND:
+        return
+    action = response.action_type or "ACT"
+    allowed = (
+        {"PASS", "ACT_OUT_OF_TURN"}
+        if out_of_turn
+        else {"ACT", "PASS"}
+    )
+    if action not in allowed:
+        role = "inactive" if out_of_turn else "active"
+        raise InvalidActionError(
+            f"{role} ROUND player returned forbidden action {action}; "
+            f"allowed: {sorted(allowed)}"
+        )
 
 
 def _persist_player_response(
-    scene: Scene, turn: Turn, player: Player, resp: LLMResponse
+    *,
+    execution: TurnExecution,
+    response: LLMResponse,
 ) -> Message:
-    """Persist a player response as messages.
+    turn = execution.turn
+    scene = turn.scene
+    player = execution.player
+    action = response.action_type or "ACT"
 
-    - A PUBLIC message with the `public` content.
-    - A separate PRIVATE_GM_PLAYER message with `private_to_gm` (only if non-empty)
-      visible to GM + this player only.
-
-    SAVING THIS MESSAGE DOES NOT TRIGGER ANY LLM CALL.
-    (Regression-tested in tests/test_no_auto_trigger.py.)
-    """
-    action = resp.action_type or "ACT"
     with transaction.atomic():
-        public_msg = Message.objects.create(
-            campaign=scene.campaign,
-            scene=scene,
-            turn=turn,
-            author_type=AuthorType.PLAYER,
-            author_player=player,
-            content=resp.public or f"[{action}] {player.display_name}",
-            visibility=Visibility.PUBLIC,
-            action_type=action,
-            private_to_gm=resp.private_to_gm,
-        )
-        if resp.private_to_gm and resp.private_to_gm.strip():
-            Message.objects.create(
+        if turn.is_private:
+            main_message = Message.objects.create(
                 campaign=scene.campaign,
                 scene=scene,
                 turn=turn,
+                execution=execution,
                 author_type=AuthorType.PLAYER,
                 author_player=player,
-                content=resp.private_to_gm,
+                content=response.public or f"[{action}] {player.display_name}",
                 visibility=Visibility.PRIVATE_GM_PLAYER,
                 private_player=player,
                 action_type=action,
             )
-    return public_msg
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _finalize_turn(turn: Turn, msgs: list[Message]) -> None:
-    with transaction.atomic():
-        turn.refresh_from_db()
-        if turn.error and not msgs:
-            turn.state = TurnState.FAILED
-        elif turn.error:
-            # partial failure
-            turn.state = TurnState.FAILED
         else:
-            turn.state = TurnState.COMPLETED
-        turn.save(update_fields=["state"])
+            main_message = Message.objects.create(
+                campaign=scene.campaign,
+                scene=scene,
+                turn=turn,
+                execution=execution,
+                author_type=AuthorType.PLAYER,
+                author_player=player,
+                content=response.public or f"[{action}] {player.display_name}",
+                visibility=Visibility.PUBLIC,
+                action_type=action,
+            )
+
+        if response.private_to_gm and response.private_to_gm.strip():
+            Message.objects.create(
+                campaign=scene.campaign,
+                scene=scene,
+                turn=turn,
+                execution=execution,
+                author_type=AuthorType.PLAYER,
+                author_player=player,
+                content=response.private_to_gm.strip(),
+                visibility=Visibility.PRIVATE_GM_PLAYER,
+                private_player=player,
+                action_type=action,
+            )
+
+    return main_message
 
 
-def _ordered_targets(players: list[Player]) -> list[Player]:
-    # preserve given order (or created order)
-    return list(players)
+def _refresh_turn_state(turn: Turn) -> None:
+    executions = list(turn.executions.all())
+    if not executions:
+        state = TurnState.COMPLETED
+        error = ""
+    elif any(
+        execution.state in (ExecutionState.FAILED, ExecutionState.INVALID)
+        for execution in executions
+    ):
+        state = TurnState.FAILED
+        error = "; ".join(
+            f"{execution.player.display_name}: {execution.error}"
+            for execution in executions
+            if execution.state in (ExecutionState.FAILED, ExecutionState.INVALID)
+            and execution.error
+        )
+    elif all(execution.state == ExecutionState.COMPLETED for execution in executions):
+        state = TurnState.COMPLETED
+        error = ""
+    else:
+        state = TurnState.RUNNING
+        error = ""
+
+    Turn.objects.filter(pk=turn.pk).update(state=state, error=error)
+
+
+def _advance_round_once(turn: Turn) -> None:
+    with transaction.atomic():
+        locked_turn = Turn.objects.select_for_update().get(pk=turn.pk)
+        if locked_turn.round_advanced:
+            return
+        scene = Scene.objects.select_for_update().get(pk=locked_turn.scene_id)
+        order = list(scene.round_order or [])
+        if order:
+            scene.active_player_index = (scene.active_player_index + 1) % len(order)
+            scene.save(update_fields=["active_player_index", "updated_at"])
+        locked_turn.round_advanced = True
+        locked_turn.save(update_fields=["round_advanced", "updated_at"])
+
+
+def _validated_round_players(scene: Scene) -> list[Player]:
+    scene.full_clean()
+    order_ids = list(scene.round_order or [])
+    if not order_ids:
+        return []
+    players_by_id = {
+        player.pk: player
+        for player in Player.objects.filter(
+            campaign=scene.campaign,
+            pk__in=order_ids,
+        )
+    }
+    if len(players_by_id) != len(order_ids):
+        raise ValidationError("round_order contains missing or foreign players")
+    return [players_by_id[player_id] for player_id in order_ids]
+
+
+def _validate_selected_players(scene: Scene, players: list[Player]) -> list[Player]:
+    if not players:
+        return []
+    ids = [player.pk for player in players]
+    if len(ids) != len(set(ids)):
+        raise ValidationError("Duplicate selected players are not allowed")
+    valid = {
+        player.pk: player
+        for player in Player.objects.filter(
+            campaign=scene.campaign,
+            pk__in=ids,
+        )
+    }
+    if len(valid) != len(ids):
+        raise ValidationError("Selected player does not belong to the scene campaign")
+    return [valid[player_id] for player_id in ids]
+
+
+def _ensure_player_in_scene_campaign(scene: Scene, player: Player) -> None:
+    if player.campaign_id != scene.campaign_id:
+        raise ValidationError("Player does not belong to the scene campaign")
 
 
 def _scene_players(scene: Scene) -> list[Player]:
-    return list(Player.objects.filter(campaign=scene.campaign).order_by("created_at"))
-
-
-def _ordered_players(scene: Scene) -> list[Player]:
-    order_ids: list[int] = list(scene.round_order or [])
-    players_by_id = {p.pk: p for p in Player.objects.filter(pk__in=order_ids)}
-    return [players_by_id[pid] for pid in order_ids if pid in players_by_id]
-
-
-def _participants_as_players(scene: Scene, ids: list[int]) -> list[Player]:
-    players_by_id = {p.pk: p for p in Player.objects.filter(pk__in=ids)}
-    return [players_by_id[i] for i in ids if i in players_by_id]
+    return list(
+        Player.objects.filter(campaign=scene.campaign).order_by("created_at", "pk")
+    )
 
 
 def _player_model(player: Player) -> str:
     if player.model_config and player.model_config.enabled:
         return player.model_config.gateway_model
-    # fallback
     return "mock-echo"
 
 
 def _player_temp(player: Player) -> float:
-    if player.model_config:
-        return player.model_config.temperature
-    return 0.7
+    return player.model_config.temperature if player.model_config else 0.7
 
 
 def _set_player_status(player: Player, status: str) -> None:
     Player.objects.filter(pk=player.pk).update(status=status)
 
 
-def _run_async(coro):
-    """Run a coroutine synchronously with a fresh event loop (Py 3.13 safe)."""
-    loop = asyncio.new_event_loop()
+def _normalize_client_turn_id(
+    value: str | uuid.UUID | None,
+) -> uuid.UUID | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
     try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValidationError("Invalid client_turn_id") from exc

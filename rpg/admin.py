@@ -2,7 +2,7 @@
 from django.contrib import admin
 from django import forms
 
-from rpg.models import Campaign, Message, ModelConfig, Player, Scene, Turn
+from rpg.models import Campaign, Message, ModelConfig, Player, Scene, Turn, TurnExecution
 
 
 @admin.register(ModelConfig)
@@ -68,3 +68,10 @@ class MessageAdmin(admin.ModelAdmin):
     list_filter = ("visibility", "author_type", "action_type")
     search_fields = ("content",)
     readonly_fields = ("created_at",)
+
+@admin.register(TurnExecution)
+class TurnExecutionAdmin(admin.ModelAdmin):
+    list_display = ("pk", "turn", "player", "order_index", "state", "action_type", "updated_at")
+    list_filter = ("state", "action_type")
+    search_fields = ("player__display_name", "error")
+    readonly_fields = ("created_at", "updated_at")
