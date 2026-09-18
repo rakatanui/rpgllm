@@ -500,7 +500,7 @@ def test_mock_mode_makes_no_http_call(mock_backend):
 
 
 @pytest.mark.django_db
-def test_public_act_allows_five_paragraphs_and_two_questions(mock_backend):
+def test_public_act_allows_six_paragraphs_and_two_questions(mock_backend):
     camp = make_campaign()
     lucien = make_player(camp, "Lucien")
     scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
@@ -514,7 +514,8 @@ def test_public_act_allows_five_paragraphs_and_two_questions(mock_backend):
                     "Второй абзац.\n\n"
                     "Третий абзац.\n\n"
                     "Четвёртый абзац. Где он?\n\n"
-                    "Пятый абзац. Кто его видел?"
+                    "Пятый абзац. Кто его видел?\n\n"
+                    "Шестой абзац."
                 ),
             )
 
@@ -530,7 +531,7 @@ def test_public_act_allows_five_paragraphs_and_two_questions(mock_backend):
 
 
 @pytest.mark.django_db
-def test_public_act_rejects_six_paragraphs(mock_backend):
+def test_public_act_rejects_seven_paragraphs(mock_backend):
     camp = make_campaign()
     lucien = make_player(camp, "Lucien")
     scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
@@ -541,7 +542,7 @@ def test_public_act_rejects_six_paragraphs(mock_backend):
                 "Lucien",
                 public=(
                     "Первый.\n\nВторой.\n\nТретий.\n\n"
-                    "Четвёртый.\n\nПятый.\n\nШестой."
+                    "Четвёртый.\n\nПятый.\n\nШестой.\n\nСедьмой."
                 ),
             )
 
@@ -554,7 +555,7 @@ def test_public_act_rejects_six_paragraphs(mock_backend):
 
     execution = result.turn.executions.get(player=lucien)
     assert execution.state == ExecutionState.INVALID
-    assert "ACT response has 6 paragraphs; maximum is 5" in execution.error
+    assert "ACT response has 7 paragraphs; maximum is 6" in execution.error
 
 
 @pytest.mark.django_db
