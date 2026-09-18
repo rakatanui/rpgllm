@@ -227,6 +227,18 @@ given declaration, that declaration is treated as successful as stated.
 The Public and Private panes are display-only newest-first feeds; model context
 continues to use canonical chronological order.
 
+Each scene may define a `dialogue_language` such as `French` or `Portuguese`.
+The model is instructed to keep narration in Russian while emitting every
+spoken sentence in the actual in-world language using:
+
+```text
+[[SPEECH]]Je vais vérifier la voiture.[[RU]]Я проверю машину.[[/SPEECH]]
+```
+
+The normal scene view shows only the original-language sentence. Hovering or
+keyboard-focusing it displays the Russian translation in a tooltip. The Russian
+GM interface language is not treated as the in-world spoken language.
+
 ## Stop
 
 ```bash
