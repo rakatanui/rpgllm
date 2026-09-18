@@ -233,9 +233,10 @@ command when the secure Clipboard API is unavailable.
 ROUND treats `ACT_OUT_OF_TURN` as an exceptional interrupt rather than a
 normal alternate action. Inactive players are explicitly instructed to prefer
 `PASS` unless waiting would make the intervention impossible or materially
-change it. Public model responses are also guarded server-side: normal public
-turns are limited to 1200 visible characters, out-of-turn interruptions to 650,
-with at most two short paragraphs and one direct question. Hidden Russian hover
+change it. Public model responses are also guarded server-side. A normal public
+`ACT` is limited to 1200 visible characters, 5 paragraphs, and 2 direct
+questions. `ACT_OUT_OF_TURN` remains deliberately stricter at 650 visible
+characters, 2 paragraphs, and 1 direct question. Hidden Russian hover
 translations do not count toward the visible-character limit. Violations make
 that execution `INVALID`, so it can be retried without replaying successful
 players.
