@@ -3,7 +3,7 @@ import pytest
 
 from rpg.models import AuthorType, Message, TurnMode, Visibility
 from rpg.services.context_builder import build_player_context
-from rpg.templatetags.rpg_extras import saoot_format
+from rpg.templatetags.rpg_extras import message_format, saoot_format
 from rpg.tests.factories import make_campaign, make_player, make_scene
 
 
@@ -64,3 +64,60 @@ def test_saoot_format_escapes_untrusted_text_and_renders_marker():
     assert 'class="saoot-resolution"' in rendered
     assert "SAOOT · Мила" in rendered
     assert "[[SAOOT:" not in rendered
+
+
+@pytest.mark.django_db
+def test_context_requires_original_language_speech_with_russian_hover_translation():
+    campaign = make_campaign()
+    lucien = make_player(campaign, "Люсьен")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[lucien],
+        round_order=[lucien.pk],
+        active_player_index=0,
+        dialogue_language="French",
+    )
+
+    ctx = build_player_context(player=lucien, scene=scene)
+
+    assert "Default spoken language: French" in ctx.system_prompt
+    assert "# DIALOGUE LANGUAGE AND FORMAT" in ctx.system_prompt
+    assert "Narration and non-spoken action text" in ctx.system_prompt
+    assert "not automatically in Russian" in ctx.system_prompt
+    assert "[[SPEECH]]original-language sentence[[RU]]Russian translation[[/SPEECH]]" in ctx.system_prompt
+    assert "[[SPEECH]]Je vais vérifier la voiture." in ctx.system_prompt
+    assert "Do not print a second visible Russian translation" in ctx.system_prompt
+
+
+def test_message_format_renders_original_and_hides_russian_in_tooltip():
+    rendered = str(
+        message_format(
+            "Люсьен кивает. "
+            "[[SPEECH]]Je vais vérifier la voiture."
+            "[[RU]]Я проверю машину.[[/SPEECH]]"
+        )
+    )
+
+    assert "Люсьен кивает." in rendered
+    assert "Je vais vérifier la voiture." in rendered
+    assert 'class="translated-speech"' in rendered
+    assert 'data-translation="Я проверю машину."' in rendered
+    assert "[[SPEECH]]" not in rendered
+    assert "[[RU]]" not in rendered
+
+
+def test_message_format_combines_saoot_and_speech_safely():
+    rendered = str(
+        message_format(
+            "[[SAOOT:7|Мила]]"
+            "[[SPEECH]]Arrêtez.<script>x</script>"
+            "[[RU]]Стойте.<script>y</script>[[/SPEECH]]"
+            "[[/SAOOT]]"
+        )
+    )
+
+    assert 'class="saoot-resolution"' in rendered
+    assert 'class="translated-speech"' in rendered
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;" in rendered
