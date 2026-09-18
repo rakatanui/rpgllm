@@ -419,6 +419,38 @@ def send_gm_message(request, scene_id):
 
 
 @require_http_methods(["POST"])
+def silent_turn(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
+    if scene.mode not in (TurnMode.ROUND, TurnMode.MANUAL):
+        return HttpResponseBadRequest("Silence is available only in ROUND or MANUAL mode.")
+
+    try:
+        selected_players = _selected_players_from_request(request, scene)
+        if scene.mode == TurnMode.ROUND:
+            if not _round_order_is_ready(scene):
+                return HttpResponseBadRequest(
+                    "ROUND mode requires a confirmed player order before Silence."
+                )
+            selected_players = []
+        elif not selected_players:
+            return HttpResponseBadRequest(
+                "MANUAL Silence requires selecting at least one player."
+            )
+
+        turn_engine.start_silent_turn(
+            scene=scene,
+            selected_players=selected_players or None,
+            client_turn_id=request.POST.get("client_turn_id") or None,
+        )
+    except ValidationError as exc:
+        return HttpResponseBadRequest(str(exc))
+
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
 def send_private_message(request, scene_id, player_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     player = get_object_or_404(
