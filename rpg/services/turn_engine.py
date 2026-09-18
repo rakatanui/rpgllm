@@ -298,8 +298,11 @@ def _run_execution(
         if out_of_turn:
             context.system_prompt += (
                 "\n\n# ROUND ROLE\n"
-                "You are NOT the active player this round. "
-                "You may only PASS or ACT_OUT_OF_TURN."
+                "You are NOT the active player this round. Your default and expected "
+                "response is PASS. Use ACT_OUT_OF_TURN only for a genuinely urgent, "
+                "immediate intervention that cannot reasonably wait for your own turn. "
+                "Ordinary conversation, commentary, exposition, volunteering information, "
+                "and non-urgent questions must wait. You may only PASS or ACT_OUT_OF_TURN."
             )
         elif turn.mode == TurnMode.ROUND and not turn.is_private:
             context.system_prompt += (
