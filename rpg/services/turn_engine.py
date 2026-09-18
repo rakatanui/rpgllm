@@ -242,6 +242,269 @@ def retry_execution(execution: TurnExecution) -> TurnResult:
     return TurnResult(turn, [message] if message is not None else [])
 
 
+def regenerate_execution(execution: TurnExecution) -> TurnResult:
+    """Regenerate one successful public execution and replace its visible reply in place.
+
+    The original frozen history and GM trigger are reused. Other players are never
+    called, and ROUND advancement is never repeated.
+    """
+    execution = (
+        TurnExecution.objects.select_related("turn__scene__campaign", "player")
+        .get(pk=execution.pk)
+    )
+    turn = execution.turn
+    scene = turn.scene
+    player = execution.player
+
+    if scene.is_closed:
+        raise RuntimeError("Cannot regenerate an execution in a closed scene")
+    if turn.is_private:
+        raise RuntimeError("Only public executions can be regenerated here")
+    if execution.state != ExecutionState.COMPLETED:
+        raise RuntimeError("Only a COMPLETED execution can be regenerated")
+
+    public_message = (
+        Message.objects.filter(
+            execution=execution,
+            author_type=AuthorType.PLAYER,
+            visibility=Visibility.PUBLIC,
+        )
+        .order_by("pk")
+        .first()
+    )
+    if public_message is None:
+        raise RuntimeError("Execution has no public player message to regenerate")
+
+    out_of_turn = (
+        turn.mode == TurnMode.ROUND
+        and execution.player_id != turn.active_player_id_snapshot
+    )
+
+    _set_player_status(player, PlayerStatus.GENERATING)
+    try:
+        response = _generate_execution_response(
+            execution=execution,
+            client=get_llm_client(),
+            out_of_turn=out_of_turn,
+        )
+        _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
+        _validate_response_discipline(
+            turn=turn,
+            out_of_turn=out_of_turn,
+            response=response,
+        )
+        _require_public_body(response)
+
+        action = response.action_type or "ACT"
+        public_text = (response.public or "").strip()
+        private_text = (response.private_to_gm or "").strip()
+
+        with transaction.atomic():
+            locked_execution = (
+                TurnExecution.objects.select_for_update()
+                .select_related("turn__scene", "player")
+                .get(pk=execution.pk)
+            )
+            if locked_execution.state != ExecutionState.COMPLETED:
+                raise RuntimeError("Execution changed state during regeneration")
+
+            locked_message = Message.objects.select_for_update().get(pk=public_message.pk)
+            locked_message.content = public_text or f"[{action}] {player.display_name}"
+            locked_message.action_type = action
+            locked_message.save(update_fields=["content", "action_type"])
+
+            Message.objects.filter(
+                execution=locked_execution,
+                author_type=AuthorType.PLAYER,
+                visibility=Visibility.PRIVATE_GM_PLAYER,
+            ).delete()
+
+            if private_text and private_text != public_text:
+                Message.objects.create(
+                    campaign=scene.campaign,
+                    scene=scene,
+                    turn=turn,
+                    execution=locked_execution,
+                    author_type=AuthorType.PLAYER,
+                    author_player=player,
+                    content=private_text,
+                    visibility=Visibility.PRIVATE_GM_PLAYER,
+                    private_player=player,
+                    action_type=action,
+                    gm_unread=True,
+                )
+
+            locked_execution.action_type = action
+            locked_execution.error = ""
+            locked_execution.save(
+                update_fields=["action_type", "error", "updated_at"]
+            )
+
+        public_message.refresh_from_db()
+        return TurnResult(turn, [public_message])
+    except Exception as exc:
+        logger.warning(
+            "Regeneration failed for player %s: %s",
+            player.display_name,
+            exc,
+        )
+        raise RuntimeError(f"Regeneration failed: {exc}") from exc
+    finally:
+        _set_player_status(player, PlayerStatus.IDLE)
+
+
+def revise_execution_ooc(
+    *,
+    public_message: Message,
+    gm_comment: str,
+) -> tuple[Message, bool]:
+    """Send private OOC feedback and let the same model revise its public declaration.
+
+    The public Message row is updated in place when the model chooses a new
+    declaration, so links and round grouping stay stable.
+    """
+    comment = (gm_comment or "").strip()
+    if not comment:
+        raise ValidationError("OOC comment cannot be empty.")
+
+    public_message = (
+        Message.objects.select_related(
+            "scene__campaign",
+            "author_player__model_config",
+            "execution__turn",
+        )
+        .get(pk=public_message.pk)
+    )
+    scene = public_message.scene
+    player = public_message.author_player
+    execution = public_message.execution
+
+    if scene is None or scene.is_closed:
+        raise RuntimeError("Cannot send OOC feedback in a closed or missing scene")
+    if (
+        public_message.author_type != AuthorType.PLAYER
+        or public_message.visibility != Visibility.PUBLIC
+        or player is None
+        or execution is None
+    ):
+        raise RuntimeError("OOC feedback requires a public player execution message")
+    if execution.state != ExecutionState.COMPLETED:
+        raise RuntimeError("OOC feedback requires a completed player execution")
+
+    turn = execution.turn
+    if turn.is_private:
+        raise RuntimeError("OOC revision applies only to public declarations")
+
+    ooc_message = Message.objects.create(
+        campaign=scene.campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content=(
+            f"[OOC к публичной заявке #{public_message.pk}]\n"
+            f"{comment}"
+        ),
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=player,
+    )
+
+    out_of_turn = (
+        turn.mode == TurnMode.ROUND
+        and execution.player_id != turn.active_player_id_snapshot
+    )
+    extra_prompt = (
+        "\n\n# OOC REVISION\n"
+        "The GM has sent private out-of-character feedback about your existing "
+        "public declaration. This is meta-level guidance, not in-fiction dialogue "
+        "and not a new turn. Reconsider ONLY that declaration.\n"
+        "Return the usual JSON object. In action_type and public, provide the FULL "
+        "replacement declaration that should now stand in the public scene. You may "
+        "change the declaration if the GM feedback warrants it. If you prefer to keep "
+        "your original declaration, repeat its action_type and public text exactly. "
+        "Do not add a second action or advance the scene beyond this declaration. "
+        "The replacement must obey the same ROUND role and response limits as the "
+        "original. private_to_gm may contain a brief OOC note to the GM."
+    )
+
+    _set_player_status(player, PlayerStatus.GENERATING)
+    try:
+        response = _generate_execution_response(
+            execution=execution,
+            client=get_llm_client(),
+            out_of_turn=out_of_turn,
+            trigger_message=ooc_message,
+            extra_history=[public_message, ooc_message],
+            extra_system_prompt=extra_prompt,
+        )
+        _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
+        _validate_response_discipline(
+            turn=turn,
+            out_of_turn=out_of_turn,
+            response=response,
+        )
+        _require_public_body(response)
+
+        action = response.action_type or "ACT"
+        public_text = (response.public or "").strip()
+        old_text = public_message.content
+        old_action = public_message.action_type or "ACT"
+        changed = public_text != old_text or action != old_action
+
+        with transaction.atomic():
+            locked_execution = TurnExecution.objects.select_for_update().get(
+                pk=execution.pk
+            )
+            if locked_execution.state != ExecutionState.COMPLETED:
+                raise RuntimeError("Execution changed state during OOC revision")
+
+            locked_message = Message.objects.select_for_update().get(
+                pk=public_message.pk
+            )
+            if changed:
+                locked_message.content = (
+                    public_text or f"[{action}] {player.display_name}"
+                )
+                locked_message.action_type = action
+                locked_message.save(update_fields=["content", "action_type"])
+                locked_execution.action_type = action
+                locked_execution.save(
+                    update_fields=["action_type", "updated_at"]
+                )
+
+            private_note = (response.private_to_gm or "").strip()
+            status_text = (
+                f"[OOC к заявке #{public_message.pk}] Заявка изменена."
+                if changed
+                else f"[OOC к заявке #{public_message.pk}] Оставляю заявку без изменений."
+            )
+            if private_note:
+                status_text += "\n\n" + private_note
+
+            player_reply = Message.objects.create(
+                campaign=scene.campaign,
+                scene=scene,
+                author_type=AuthorType.PLAYER,
+                author_player=player,
+                content=status_text,
+                visibility=Visibility.PRIVATE_GM_PLAYER,
+                private_player=player,
+                action_type=action,
+                gm_unread=True,
+            )
+
+        return player_reply, changed
+    except Exception as exc:
+        logger.warning(
+            "OOC revision failed for player %s: %s",
+            player.display_name,
+            exc,
+        )
+        if isinstance(exc, ValidationError):
+            raise
+        raise RuntimeError(f"OOC revision failed: {exc}") from exc
+    finally:
+        _set_player_status(player, PlayerStatus.IDLE)
+
+
 def retry_turn(turn: Turn) -> TurnResult:
     """Compatibility helper: retry only failed executions, never successes."""
     failed = list(
@@ -258,6 +521,91 @@ def retry_turn(turn: Turn) -> TurnResult:
         messages.extend(result.messages)
     turn.refresh_from_db()
     return TurnResult(turn, messages)
+
+
+def _execution_history(
+    execution: TurnExecution,
+    *,
+    extra_history: list[Message] | None = None,
+) -> list[Message]:
+    frozen_messages = {
+        message.pk: message
+        for message in Message.objects.filter(pk__in=execution.history_message_ids)
+        .select_related("author_player")
+    }
+    history = [
+        frozen_messages[message_id]
+        for message_id in execution.history_message_ids
+        if message_id in frozen_messages
+    ]
+    if extra_history:
+        known_ids = {message.pk for message in history if message.pk}
+        for message in extra_history:
+            if message.pk and message.pk in known_ids:
+                continue
+            history.append(message)
+            if message.pk:
+                known_ids.add(message.pk)
+    return history
+
+
+def _append_round_role_prompt(context, *, turn: Turn, out_of_turn: bool) -> None:
+    if out_of_turn:
+        context.system_prompt += (
+            "\n\n# ROUND ROLE\n"
+            "You are NOT the active player this round. Your default and expected "
+            "response is PASS. Use ACT_OUT_OF_TURN only for a genuinely urgent, "
+            "immediate intervention that cannot reasonably wait for your own turn. "
+            "Ordinary conversation, commentary, exposition, volunteering information, "
+            "and non-urgent questions must wait. You may only PASS or ACT_OUT_OF_TURN. "
+            "If you use ACT_OUT_OF_TURN, the HARD LIMIT is 650 visible characters, "
+            "2 paragraphs, and 1 direct question."
+        )
+    elif turn.mode == TurnMode.ROUND and not turn.is_private:
+        context.system_prompt += (
+            "\n\n# ROUND ROLE\n"
+            "You are the active player this round. You may only ACT or PASS. "
+            "For ACT, the HARD LIMIT is 1200 visible characters, 5 paragraphs, "
+            "and 2 direct questions."
+        )
+
+
+def _generate_execution_response(
+    *,
+    execution: TurnExecution,
+    client,
+    out_of_turn: bool,
+    trigger_message: Message | None = None,
+    extra_history: list[Message] | None = None,
+    extra_system_prompt: str = "",
+) -> LLMResponse:
+    execution.refresh_from_db()
+    turn = execution.turn
+    scene = turn.scene
+    player = execution.player
+
+    context = build_player_context(
+        player=player,
+        scene=scene,
+        trigger_message=trigger_message or turn.trigger_message,
+        history=_execution_history(execution, extra_history=extra_history),
+    )
+    _append_round_role_prompt(context, turn=turn, out_of_turn=out_of_turn)
+    if extra_system_prompt:
+        context.system_prompt += extra_system_prompt
+
+    return client.generate(
+        system_prompt=context.system_prompt,
+        messages=context.messages,
+        model=_player_model(player),
+        temperature=_player_temp(player),
+    )
+
+
+def _require_public_body(response: LLMResponse) -> None:
+    action = (response.action_type or "ACT").upper()
+    if action != "PASS" and not (response.public or "").strip():
+        raise InvalidActionError("Non-PASS response must contain a public declaration")
 
 
 def _run_execution(
@@ -278,47 +626,10 @@ def _run_execution(
     _set_player_status(player, PlayerStatus.GENERATING)
 
     try:
-        frozen_messages = {
-            message.pk: message
-            for message in Message.objects.filter(pk__in=execution.history_message_ids)
-            .select_related("author_player")
-        }
-        history = [
-            frozen_messages[message_id]
-            for message_id in execution.history_message_ids
-            if message_id in frozen_messages
-        ]
-        context = build_player_context(
-            player=player,
-            scene=scene,
-            trigger_message=turn.trigger_message,
-            history=history,
-        )
-
-        if out_of_turn:
-            context.system_prompt += (
-                "\n\n# ROUND ROLE\n"
-                "You are NOT the active player this round. Your default and expected "
-                "response is PASS. Use ACT_OUT_OF_TURN only for a genuinely urgent, "
-                "immediate intervention that cannot reasonably wait for your own turn. "
-                "Ordinary conversation, commentary, exposition, volunteering information, "
-                "and non-urgent questions must wait. You may only PASS or ACT_OUT_OF_TURN. "
-                "If you use ACT_OUT_OF_TURN, the HARD LIMIT is 650 visible characters, "
-                "2 paragraphs, and 1 direct question."
-            )
-        elif turn.mode == TurnMode.ROUND and not turn.is_private:
-            context.system_prompt += (
-                "\n\n# ROUND ROLE\n"
-                "You are the active player this round. You may only ACT or PASS. "
-                "For ACT, the HARD LIMIT is 1200 visible characters, 5 paragraphs, "
-                "and 2 direct questions."
-            )
-
-        response = client.generate(
-            system_prompt=context.system_prompt,
-            messages=context.messages,
-            model=_player_model(player),
-            temperature=_player_temp(player),
+        response = _generate_execution_response(
+            execution=execution,
+            client=client,
+            out_of_turn=out_of_turn,
         )
         _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
         _validate_response_discipline(
