@@ -657,3 +657,225 @@ def test_response_budget_ignores_hidden_russian_translation():
         out_of_turn=False,
         response=response,
     )
+
+
+
+@pytest.mark.django_db
+def test_regenerate_completed_execution_replaces_same_public_message_only(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class RegenClient(MockLLMClient):
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **kwargs):
+            self.calls += 1
+            return _resp(
+                "Lucien",
+                public="Плохой вариант." if self.calls == 1 else "Новый вариант.",
+            )
+
+    client = RegenClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+        execution = result.turn.executions.get(player=lucien)
+        original = Message.objects.get(
+            execution=execution,
+            author_type=AuthorType.PLAYER,
+            visibility=Visibility.PUBLIC,
+        )
+        original_pk = original.pk
+
+        regenerated = turn_engine.regenerate_execution(execution)
+
+    original.refresh_from_db()
+    execution.refresh_from_db()
+    assert client.calls == 2
+    assert regenerated.messages[0].pk == original_pk
+    assert original.content == "Новый вариант."
+    assert execution.state == ExecutionState.COMPLETED
+    assert Message.objects.filter(
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+        visibility=Visibility.PUBLIC,
+    ).count() == 1
+
+
+@pytest.mark.django_db
+def test_regenerate_round_execution_does_not_advance_or_recall_peers(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    mila = make_player(camp, "Mila")
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        participants=[lucien, mila],
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+
+    class CountingClient(MockLLMClient):
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, *, system_prompt, **kwargs):
+            name = next(
+                line[len("[PLAYER:"):].rstrip("]").strip()
+                for line in system_prompt.splitlines()
+                if line.startswith("[PLAYER:")
+            )
+            self.calls.append(name)
+            if "NOT the active" in system_prompt:
+                return _resp(name, action="PASS", public="")
+            return _resp(name, action="ACT", public=f"{name} acts.")
+
+    client = CountingClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+        scene.refresh_from_db()
+        assert scene.active_player_index == 1
+
+        turn_engine.regenerate_execution(result.turn.executions.get(player=lucien))
+
+    scene.refresh_from_db()
+    assert scene.active_player_index == 1
+    assert client.calls.count("Lucien") == 2
+    assert client.calls.count("Mila") == 1
+
+
+@pytest.mark.django_db
+def test_failed_regeneration_keeps_original_successful_reply(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class InvalidRegenClient(MockLLMClient):
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return _resp("Lucien", public="Исходная заявка.")
+            return _resp("Lucien", public="x" * 1201)
+
+    client = InvalidRegenClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+        execution = result.turn.executions.get(player=lucien)
+        original = Message.objects.get(
+            execution=execution,
+            author_type=AuthorType.PLAYER,
+            visibility=Visibility.PUBLIC,
+        )
+
+        with pytest.raises(RuntimeError, match="Regeneration failed"):
+            turn_engine.regenerate_execution(execution)
+
+    original.refresh_from_db()
+    execution.refresh_from_db()
+    assert original.content == "Исходная заявка."
+    assert execution.state == ExecutionState.COMPLETED
+
+
+@pytest.mark.django_db
+def test_ooc_feedback_can_replace_existing_public_declaration(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+
+    class OocClient(MockLLMClient):
+        def generate(self, *, system_prompt, **kwargs):
+            if "# OOC REVISION" in system_prompt:
+                return LLMResponse(
+                    raw_text="{}",
+                    action_type="ACT",
+                    public="Люсьен коротко кивает.",
+                    private_to_gm="Сократил заявку.",
+                )
+            return _resp(
+                "Lucien",
+                action="ACT",
+                public="Люсьен произносит длинную и неуместную речь.",
+            )
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=OocClient()):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+        execution = result.turn.executions.get(player=lucien)
+        public = Message.objects.get(
+            execution=execution,
+            author_type=AuthorType.PLAYER,
+            visibility=Visibility.PUBLIC,
+        )
+        public_pk = public.pk
+
+        private_reply, changed = turn_engine.revise_execution_ooc(
+            public_message=public,
+            gm_comment="Без речи. Только короткая реакция.",
+        )
+
+    public.refresh_from_db()
+    execution.refresh_from_db()
+    assert changed is True
+    assert public.pk == public_pk
+    assert public.content == "Люсьен коротко кивает."
+    assert execution.state == ExecutionState.COMPLETED
+    assert Message.objects.filter(
+        scene=scene,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=lucien,
+        author_type=AuthorType.GM,
+        content__contains="Без речи. Только короткая реакция.",
+    ).exists()
+    assert private_reply.visibility == Visibility.PRIVATE_GM_PLAYER
+    assert "Заявка изменена" in private_reply.content
+    assert "Сократил заявку." in private_reply.content
+    assert Turn.objects.filter(scene=scene).count() == 1
+
+
+@pytest.mark.django_db
+def test_ooc_feedback_may_leave_declaration_unchanged(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[lucien])
+    original_text = "Люсьен остаётся у двери."
+
+    class KeepClient(MockLLMClient):
+        def generate(self, *, system_prompt, **kwargs):
+            return _resp("Lucien", public=original_text)
+
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=KeepClient()):
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="go",
+            selected_players=[lucien],
+        )
+        public = Message.objects.get(
+            execution__turn=result.turn,
+            author_type=AuthorType.PLAYER,
+            visibility=Visibility.PUBLIC,
+        )
+
+        private_reply, changed = turn_engine.revise_execution_ooc(
+            public_message=public,
+            gm_comment="Ты точно хочешь остаться?",
+        )
+
+    public.refresh_from_db()
+    assert changed is False
+    assert public.content == original_text
+    assert "без изменений" in private_reply.content
