@@ -159,3 +159,102 @@ def test_scene_renders_large_gm_textarea_and_round_setup():
     assert "Confirm order" in html
     assert "Люсьен" in html
     assert "Мила" in html
+
+
+
+@pytest.mark.django_db
+def test_private_gm_message_is_informational_by_default(mock_backend):
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    with patch("rpg.views.turn_engine.start_turn") as start_turn:
+        response = Client().post(
+            reverse(
+                "send_private_message",
+                kwargs={"scene_id": scene.pk, "player_id": mila.pk},
+            ),
+            {"content": "Ты узнаёшь символ на двери."},
+        )
+
+    assert response.status_code == 302
+    start_turn.assert_not_called()
+    message = Message.objects.get(
+        scene=scene,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        author_type=AuthorType.GM,
+        private_player=mila,
+    )
+    assert message.content == "Ты узнаёшь символ на двери."
+
+
+@pytest.mark.django_db
+def test_private_gm_message_calls_model_only_when_explicitly_asked(mock_backend):
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    with patch("rpg.views.turn_engine.start_turn") as start_turn:
+        response = Client().post(
+            reverse(
+                "send_private_message",
+                kwargs={"scene_id": scene.pk, "player_id": mila.pk},
+            ),
+            {
+                "content": "Что ты делаешь с этой информацией?",
+                "run_turn": "1",
+            },
+        )
+
+    assert response.status_code == 302
+    start_turn.assert_called_once()
+    assert start_turn.call_args.kwargs["private_to_player"] == mila
+
+
+@pytest.mark.django_db
+def test_unread_private_marker_clears_when_gm_opens_channel():
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+    private = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=mila,
+        content="Секрет для мастера.",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=mila,
+        gm_unread=True,
+    )
+
+    page = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    assert page.status_code == 200
+    assert f'data-unread-player="{mila.pk}"' in page.content.decode()
+
+    response = Client().post(
+        reverse(
+            "mark_private_read",
+            kwargs={"scene_id": scene.pk, "player_id": mila.pk},
+        )
+    )
+
+    assert response.status_code == 204
+    private.refresh_from_db()
+    assert private.gm_unread is False
+
+
+@pytest.mark.django_db
+def test_scene_uses_fixed_viewport_layout_and_private_ask_is_opt_in():
+    campaign = make_campaign()
+    mila = make_player(campaign, "Мила")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL)
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert 'class="scene-page"' in html
+    assert 'class="scene-shell"' in html
+    assert 'class="gm-composer-sticky"' in html
+    assert "Ask for response" in html
+    assert 'name="run_turn" value="1"> Ask for response' in html
