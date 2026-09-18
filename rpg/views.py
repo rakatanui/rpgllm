@@ -1,4 +1,6 @@
 """Views for MRAZ Master. Business rules live in services."""
+import re
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.http import HttpResponse, HttpResponseBadRequest
@@ -109,6 +111,64 @@ def _public_message_blocks(public_messages):
     return blocks
 
 
+_SAOOT_MARKER_RE = re.compile(
+    r"\[\[SAOOT:(\d+)\|([^\]]+)\]\](.*?)\[\[/SAOOT\]\]",
+    flags=re.DOTALL,
+)
+
+
+def _saoot_candidates(scene):
+    latest_round = (
+        scene.turns.filter(mode=TurnMode.ROUND, is_private=False)
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    if latest_round is None:
+        return []
+    return list(
+        Message.objects.filter(
+            turn=latest_round,
+            visibility=Visibility.PUBLIC,
+            author_type=AuthorType.PLAYER,
+            action_type="ACT_OUT_OF_TURN",
+            author_player__isnull=False,
+        )
+        .select_related("author_player")
+        .order_by("created_at", "pk")
+    )
+
+
+def _validate_saoot_markup(content, candidates):
+    marker_count = content.count("[[SAOOT:")
+    close_count = content.count("[[/SAOOT]]")
+    matches = list(_SAOOT_MARKER_RE.finditer(content))
+
+    if marker_count != len(matches) or close_count != len(matches):
+        raise ValidationError("Malformed SAOOT marker in GM message.")
+
+    if not matches:
+        return
+
+    by_player_id = {
+        message.author_player_id: message.author_player
+        for message in candidates
+        if message.author_player_id
+    }
+    for match in matches:
+        player_id = int(match.group(1))
+        player_name = match.group(2).strip()
+        resolution_text = match.group(3).strip()
+        player = by_player_id.get(player_id)
+        if player is None:
+            raise ValidationError(
+                "SAOOT target must have declared ACT_OUT_OF_TURN in the latest ROUND."
+            )
+        if player.display_name != player_name:
+            raise ValidationError("SAOOT target name does not match player id.")
+        if not resolution_text:
+            raise ValidationError("SAOOT resolution text cannot be empty.")
+
+
 def _failed_execution_by_player(scene):
     latest_turn = scene.turns.order_by("-created_at", "-pk").first()
     if latest_turn is None:
@@ -166,11 +226,12 @@ def scene_view(request, scene_id):
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
         .select_related("author_player")
-        .order_by("created_at", "pk")
+        .order_by("-created_at", "-pk")
     )
     player_color_by_id = _player_color_classes(players)
     public_blocks = _public_message_blocks(public_messages)
     failed_execution_by_player = _failed_execution_by_player(scene)
+    saoot_candidates = _saoot_candidates(scene)
     gm_only_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.GM_ONLY)
         .order_by("created_at", "pk")
@@ -195,7 +256,7 @@ def scene_view(request, scene_id):
                 "turn__trigger_message",
                 "execution",
             )
-            .order_by("created_at", "pk")
+            .order_by("-created_at", "-pk")
         )
         player_private[player.pk] = [
             {
@@ -224,6 +285,7 @@ def scene_view(request, scene_id):
             "public_blocks": public_blocks,
             "player_color_by_id": player_color_by_id,
             "failed_execution_by_player": failed_execution_by_player,
+            "saoot_candidates": saoot_candidates,
             "gm_only_messages": gm_only_messages,
             "player_private": player_private,
             "modes": TurnMode.choices,
@@ -255,7 +317,7 @@ def scene_view_fragment(request, scene):
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
         .select_related("author_player")
-        .order_by("created_at", "pk")
+        .order_by("-created_at", "-pk")
     )
     return render(
         request,
@@ -324,6 +386,8 @@ def send_gm_message(request, scene_id):
         )
 
     try:
+        saoot_candidates = _saoot_candidates(scene)
+        _validate_saoot_markup(content, saoot_candidates)
         selected_players = _selected_players_from_request(request, scene)
         if (
             run_turn_flag
@@ -539,7 +603,7 @@ def player_messages(request, player_id, visibility):
         )
     elif visibility == "public":
         query = query.filter(visibility=Visibility.PUBLIC)
-    messages = list(query.order_by("created_at", "pk"))
+    messages = list(query.order_by("-created_at", "-pk"))
     return render(
         request,
         "rpg/_player_messages.html",
