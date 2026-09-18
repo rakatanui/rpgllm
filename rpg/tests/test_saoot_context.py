@@ -145,5 +145,11 @@ def test_round_prompt_makes_interruptions_rare_and_turns_compact():
     assert "Most inactive ROUND responses should therefore be PASS" in ctx.system_prompt
     assert "ONE concise immediate intervention" in ctx.system_prompt
     assert "# RESPONSE DISCIPLINE" in ctx.system_prompt
-    assert "at most two short paragraphs" in ctx.system_prompt
-    assert "Ask at most ONE direct question" in ctx.system_prompt
+    assert "HARD LIMITS FOR A NORMAL PUBLIC ACT" in ctx.system_prompt
+    assert "no more than 1200 visible characters" in ctx.system_prompt
+    assert "no more than 5 paragraphs" in ctx.system_prompt
+    assert "no more than 2 direct questions" in ctx.system_prompt
+    assert "HARD LIMITS FOR ACT_OUT_OF_TURN" in ctx.system_prompt
+    assert "no more than 650 visible characters" in ctx.system_prompt
+    assert "no more than 2 paragraphs" in ctx.system_prompt
+    assert "no more than 1 direct question" in ctx.system_prompt
