@@ -981,7 +981,7 @@ def private_channel(request, scene_id, player_id):
     player_color_by_id = _player_color_classes(players)
     return render(
         request,
-        "rpg/_private_channel.html",
+        "rpg/_private_messages.html",
         {
             "scene": scene,
             "player": player,
