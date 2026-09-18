@@ -10,6 +10,7 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.7",
     "python-dotenv>=1.0",
+    "whitenoise>=6.9,<7",
 ]
 
 [project.optional-dependencies]
