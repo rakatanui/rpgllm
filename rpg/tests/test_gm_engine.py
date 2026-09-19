@@ -350,6 +350,24 @@ def test_discarding_manual_chat_draft_forces_future_bootstrap():
 
 
 @pytest.mark.django_db
+def test_discard_gm_execution_without_config_does_not_join_nullable_relation():
+    campaign = make_campaign()
+    player = make_player(campaign, "P")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
+    execution = scene.gm_executions.create(
+        config=None,
+        state=GameMasterExecutionState.DRAFT,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        external_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+
+    gm_engine.discard_gm_execution(execution=execution)
+    execution.refresh_from_db()
+
+    assert execution.state == GameMasterExecutionState.DISCARDED
+
+
+@pytest.mark.django_db
 def test_api_gm_can_auto_publish_when_review_is_disabled():
     campaign = make_campaign()
     model = make_model("Auto GM", gateway_model="auto-gm")
@@ -499,6 +517,8 @@ def test_manual_gm_chat_uses_delta_inside_scene_lineage():
             ensure_ascii=False,
         ),
     )
+    first_execution.refresh_from_db()
+    assert first_execution.external_synced_message_ids == []
     gm_engine.publish_gm_execution(execution=first_execution)
 
     followup = make_scene(
