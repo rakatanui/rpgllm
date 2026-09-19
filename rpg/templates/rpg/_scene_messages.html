@@ -20,7 +20,7 @@
               <summary title="Действия">⋯</summary>
               <div class="msg-menu-popover">
                 {% if not scene.is_closed and m.author_type == "PLAYER" and m.execution_id and m.execution.state == "COMPLETED" %}
-                  {% if m.execution.transport != "MANUAL_CHAT" %}
+                  {% if m.execution.transport == "LITELLM" %}
                     <form method="post"
                           action="{% url 'ooc_revision' scene.pk m.pk %}"
                           onsubmit="return prepareOocRevision(this)">
