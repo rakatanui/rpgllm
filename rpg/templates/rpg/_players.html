@@ -7,7 +7,7 @@
       {% if p.pk in unread_private_player_ids %}
         <span class="private-unread-dot" data-unread-player="{{ p.pk }}" title="Unread private message from {{ p.display_name }}">●</span>
       {% endif %}
-      {% if p.pending_nudge %}
+      {% if p.pending_nudge and p.transport != "HUMAN" %}
         <span class="chip" title="{{ p.pending_nudge }}">NUDGE</span>
       {% endif %}
     </div>
