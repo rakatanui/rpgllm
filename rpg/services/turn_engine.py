@@ -20,10 +20,12 @@ from rpg.models import (
     AuthorType,
     ExecutionState,
     Message,
+    ManualChatContextMode,
     MessageRevision,
     ModelConfig,
     Player,
     PlayerStatus,
+    PlayerTransport,
     Scene,
     Turn,
     TurnExecution,
@@ -32,7 +34,7 @@ from rpg.models import (
     Visibility,
 )
 from rpg.services.context_builder import build_player_context, get_player_history_messages
-from rpg.services.llm import LLMResponse, get_llm_client
+from rpg.services.llm import LLMResponse, get_llm_client, parse_structured_response
 
 logger = logging.getLogger("rpg.turn_engine")
 
@@ -159,6 +161,22 @@ def start_turn(
                 player=player,
                 order_index=index,
                 nudge_text=nudge,
+                transport=player.transport,
+                external_context_mode=(
+                    player.manual_chat_context_mode
+                    if player.transport == PlayerTransport.MANUAL_CHAT
+                    else ""
+                ),
+                external_chat_label=(
+                    player.manual_chat_label
+                    if player.transport == PlayerTransport.MANUAL_CHAT
+                    else ""
+                ),
+                external_chat_url=(
+                    player.manual_chat_url
+                    if player.transport == PlayerTransport.MANUAL_CHAT
+                    else ""
+                ),
             )
             executions.append(execution)
             if nudge:
@@ -182,7 +200,6 @@ def start_turn(
                 )
                 execution.history_message_ids = snapshot_ids
 
-    client = get_llm_client()
     generated: list[Message] = []
 
     if mode == TurnMode.TABLE and not is_private:
@@ -199,29 +216,55 @@ def start_turn(
             )
             execution.history_message_ids = history_ids
 
-    # ROUND contexts are frozen before any model call, so provider calls can run
-    # concurrently without leaking another player's response into the same round.
-    if mode == TurnMode.ROUND and not is_private and len(executions) > 1:
-        generated.extend(
-            _run_round_parallel(
-                executions=executions,
-                turn=turn,
-                client=client,
-            )
+    manual_executions = [
+        execution
+        for execution in executions
+        if execution.transport == PlayerTransport.MANUAL_CHAT
+    ]
+    provider_executions = [
+        execution
+        for execution in executions
+        if execution.transport != PlayerTransport.MANUAL_CHAT
+    ]
+
+    for execution in manual_executions:
+        out_of_turn = (
+            mode == TurnMode.ROUND
+            and execution.player_id != turn.active_player_id_snapshot
         )
-    else:
-        for execution in executions:
-            out_of_turn = (
-                mode == TurnMode.ROUND
-                and execution.player_id != turn.active_player_id_snapshot
-            )
-            message = _run_execution(
+        try:
+            _prepare_external_execution(
                 execution=execution,
-                client=client,
                 out_of_turn=out_of_turn,
             )
-            if message is not None:
-                generated.append(message)
+        except Exception as exc:
+            _mark_execution_error(execution, exc)
+
+    if provider_executions:
+        client = get_llm_client()
+        # ROUND contexts are frozen before any model call, so provider calls can run
+        # concurrently without leaking another player's response into the same round.
+        if mode == TurnMode.ROUND and not is_private and len(provider_executions) > 1:
+            generated.extend(
+                _run_round_parallel(
+                    executions=provider_executions,
+                    turn=turn,
+                    client=client,
+                )
+            )
+        else:
+            for execution in provider_executions:
+                out_of_turn = (
+                    mode == TurnMode.ROUND
+                    and execution.player_id != turn.active_player_id_snapshot
+                )
+                message = _run_execution(
+                    execution=execution,
+                    client=client,
+                    out_of_turn=out_of_turn,
+                )
+                if message is not None:
+                    generated.append(message)
 
     _refresh_turn_state(turn)
     turn.refresh_from_db()
@@ -281,12 +324,19 @@ def retry_execution(
         turn.mode == TurnMode.ROUND
         and execution.player_id != turn.active_player_id_snapshot
     )
-    message = _run_execution(
-        execution=execution,
-        client=get_llm_client(),
-        out_of_turn=out_of_turn,
-        model_config_override=model_config,
-    )
+    if execution.transport == PlayerTransport.MANUAL_CHAT:
+        _prepare_external_execution(
+            execution=execution,
+            out_of_turn=out_of_turn,
+        )
+        message = None
+    else:
+        message = _run_execution(
+            execution=execution,
+            client=get_llm_client(),
+            out_of_turn=out_of_turn,
+            model_config_override=model_config,
+        )
     _refresh_turn_state(turn)
     turn.refresh_from_db()
     if (
@@ -323,6 +373,10 @@ def regenerate_execution(
         raise RuntimeError("Only public executions can be regenerated here")
     if execution.state != ExecutionState.COMPLETED:
         raise RuntimeError("Only a COMPLETED execution can be regenerated")
+    if execution.transport == PlayerTransport.MANUAL_CHAT:
+        raise RuntimeError(
+            "Manual-chat executions are regenerated in the external chat, not through LiteLLM."
+        )
 
     public_message = (
         Message.objects.filter(
@@ -455,6 +509,10 @@ def revise_execution_ooc(
         raise RuntimeError("OOC feedback requires a public player execution message")
     if execution.state != ExecutionState.COMPLETED:
         raise RuntimeError("OOC feedback requires a completed player execution")
+    if execution.transport == PlayerTransport.MANUAL_CHAT:
+        raise RuntimeError(
+            "Manual-chat declarations must be revised in the external chat."
+        )
 
     turn = execution.turn
     if turn.is_private:
