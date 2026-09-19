@@ -2,10 +2,10 @@
   <div class="human-character-portrait-column">
     <div class="human-character-portrait">
       {% if display_appearance and display_appearance.portrait_image %}
-        <img src="{% url 'human_appearance_image' scene.pk player.pk display_appearance.pk 'portrait' %}?v={{ display_appearance.updated_at|date:'U' }}"
+        <img src="{% url 'human_appearance_image' access_token display_appearance.pk 'portrait' %}?v={{ display_appearance.updated_at|date:'U' }}"
              alt="{{ player.display_name }} · {{ display_appearance.name }}">
       {% elif player.character_image %}
-        <img src="{% url 'human_character_image' scene.pk player.pk %}?v={{ player.updated_at|date:'U' }}"
+        <img src="{% url 'human_character_image' access_token %}?v={{ player.updated_at|date:'U' }}"
              alt="{{ player.display_name }} portrait">
       {% else %}
         <div class="human-character-portrait-placeholder" aria-hidden="true">
@@ -29,7 +29,7 @@
     {% else %}
       <form method="post"
             enctype="multipart/form-data"
-            action="{% url 'upload_human_character_image' scene.pk player.pk %}"
+            action="{% url 'upload_human_character_image' access_token %}"
             class="human-character-image-form">
         {% csrf_token %}
         <input type="file"
@@ -41,7 +41,7 @@
 
       {% if player.character_image %}
         <form method="post"
-              action="{% url 'remove_human_character_image' scene.pk player.pk %}"
+              action="{% url 'remove_human_character_image' access_token %}"
               class="human-character-image-remove"
               onsubmit="return confirm('Remove the current character portrait?')">
           {% csrf_token %}
@@ -67,7 +67,7 @@
         {% endif %}
       </div>
       <a class="btn btn-small"
-         href="{% url 'human_episode_search' scene.pk player.pk %}">Search episodes</a>
+         href="{% url 'human_episode_search' access_token %}">Search episodes</a>
     </div>
 
     {% if display_appearance and display_appearance.description %}
@@ -77,7 +77,7 @@
     {% if display_appearance and not scene.is_closed %}
       {% if not current_appearance or display_appearance.pk != current_appearance.pk %}
         <form method="post"
-              action="{% url 'set_human_current_appearance' scene.pk player.pk display_appearance.pk %}"
+              action="{% url 'set_human_current_appearance' access_token display_appearance.pk %}"
               class="human-set-current-appearance">
           {% csrf_token %}
           <button class="btn btn-small" type="submit">Set as current form</button>
@@ -88,10 +88,10 @@
     {% if display_appearance and display_appearance.fullbody_image %}
       <details class="human-fullbody-reference">
         <summary>Full-body reference</summary>
-        <a href="{% url 'human_appearance_image' scene.pk player.pk display_appearance.pk 'fullbody' %}"
+        <a href="{% url 'human_appearance_image' access_token display_appearance.pk 'fullbody' %}"
            target="_blank"
            rel="noopener">
-          <img src="{% url 'human_appearance_image' scene.pk player.pk display_appearance.pk 'fullbody' %}?v={{ display_appearance.updated_at|date:'U' }}"
+          <img src="{% url 'human_appearance_image' access_token display_appearance.pk 'fullbody' %}?v={{ display_appearance.updated_at|date:'U' }}"
                alt="{{ player.display_name }} · {{ display_appearance.name }} full-body reference">
         </a>
       </details>
@@ -137,7 +137,7 @@
     </div>
 
     <form method="get"
-          action="{% url 'human_episode_search' scene.pk player.pk %}"
+          action="{% url 'human_episode_search' access_token %}"
           class="human-episode-quick-search">
       <input type="text"
              name="q"

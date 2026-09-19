@@ -10,7 +10,7 @@
 <div class="human-player-shell">
   {% include "rpg/_human_character_card.html" %}
   <div id="human-player-panel"
-       hx-get="{% url 'human_player_fragment' scene.pk player.pk %}"
+       hx-get="{% url 'human_player_fragment' access_token %}"
        hx-trigger="every 2s"
        hx-swap="innerHTML">
     {% include "rpg/_human_player_panel.html" %}

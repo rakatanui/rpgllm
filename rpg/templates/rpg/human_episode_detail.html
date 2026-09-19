@@ -18,8 +18,8 @@
       {% endif %}
     </div>
     <div class="toolbar">
-      <a class="btn" href="{% url 'human_episode_search' scene.pk player.pk %}">Episode search</a>
-      <a class="btn" href="{% url 'human_player_client' scene.pk player.pk %}">Current scene</a>
+      <a class="btn" href="{% url 'human_episode_search' access_token %}">Episode search</a>
+      <a class="btn" href="{% url 'human_player_client' access_token %}">Current scene</a>
     </div>
   </div>
 

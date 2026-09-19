@@ -1,6 +1,7 @@
 """Views for MRAZ Master. Business rules live in services."""
 import mimetypes
 import re
+import uuid
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -314,6 +315,9 @@ def scene_view(request, scene_id):
         else None
     )
     unread_private_player_ids = _unread_private_player_ids(scene)
+    human_access_by_player, human_client_url_by_player = _human_access_ui_context(
+        scene,
+    )
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
         .select_related("author_player", "execution")
@@ -420,6 +424,8 @@ def scene_view(request, scene_id):
             "round_ready": round_ready,
             "active_round_player": active_round_player,
             "unread_private_player_ids": unread_private_player_ids,
+            "human_access_by_player": human_access_by_player,
+            "human_client_url_by_player": human_client_url_by_player,
             "active_round_player_id": _active_round_player_id(scene),
             "previous_scenes": list(
                 scene.previous_scenes.order_by("created_at", "pk")
@@ -469,6 +475,9 @@ def scene_view_fragment(request, scene):
 def players_status(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     players = _scene_players(scene)
+    human_access_by_player, human_client_url_by_player = _human_access_ui_context(
+        scene,
+    )
     return render(
         request,
         "rpg/_players.html",
@@ -476,12 +485,50 @@ def players_status(request, scene_id):
             "scene": scene,
             "players": players,
             "unread_private_player_ids": _unread_private_player_ids(scene),
+            "human_access_by_player": human_access_by_player,
+            "human_client_url_by_player": human_client_url_by_player,
             "active_round_player_id": _active_round_player_id(scene),
             "failed_execution_by_player": _failed_execution_by_player(scene),
             "waiting_external_by_player": _waiting_external_by_player(scene),
             "waiting_human_by_player": _waiting_human_by_player(scene),
         },
     )
+
+
+def _human_access_ui_context(scene: Scene) -> tuple[dict, dict]:
+    participations = {
+        participation.player_id: participation
+        for participation in SceneParticipant.objects.filter(
+            scene=scene,
+            player__transport=PlayerTransport.HUMAN,
+        ).select_related("player")
+    }
+    urls = {
+        player_id: reverse(
+            "human_player_client",
+            kwargs={"access_token": participation.human_access_token},
+        )
+        for player_id, participation in participations.items()
+    }
+    return participations, urls
+
+
+def _human_access_for_token(access_token):
+    participation = get_object_or_404(
+        SceneParticipant.objects.select_related("scene__campaign", "player"),
+        human_access_token=access_token,
+        human_access_enabled=True,
+        player__transport=PlayerTransport.HUMAN,
+    )
+    return participation.scene, participation.player, participation
+
+
+def _secure_human_response(response):
+    response["Cache-Control"] = "private, no-store"
+    response["Pragma"] = "no-cache"
+    response["Referrer-Policy"] = "no-referrer"
+    response["X-Robots-Tag"] = "noindex, nofollow"
+    return response
 
 
 def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
@@ -555,16 +602,8 @@ def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
         "waiting_execution": waiting,
         "allowed_actions": allowed_actions,
         "is_active_round": is_active_round,
+        "access_token": participation.human_access_token if participation else None,
     }
-
-
-def _human_player_for_scene(scene: Scene, player_id: int) -> Player:
-    return get_object_or_404(
-        Player,
-        pk=player_id,
-        transport=PlayerTransport.HUMAN,
-        scene_participations__scene=scene,
-    )
 
 
 def _human_visible_messages(scene: Scene, player: Player):
@@ -582,30 +621,29 @@ def _human_visible_messages(scene: Scene, player: Player):
     )
 
 
-def human_player_client(request, scene_id, player_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
-    return render(
+def human_player_client(request, access_token):
+    scene, player, _ = _human_access_for_token(access_token)
+    response = render(
         request,
         "rpg/human_player.html",
         _human_client_context(scene, player, request),
     )
+    return _secure_human_response(response)
 
 
-def human_player_fragment(request, scene_id, player_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
-    return render(
+def human_player_fragment(request, access_token):
+    scene, player, _ = _human_access_for_token(access_token)
+    response = render(
         request,
         "rpg/_human_player_panel.html",
         _human_client_context(scene, player, request),
     )
+    return _secure_human_response(response)
 
 
 @require_http_methods(["POST"])
-def submit_human_response(request, scene_id, player_id, execution_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
+def submit_human_response(request, access_token, execution_id):
+    scene, player, _ = _human_access_for_token(access_token)
     execution = get_object_or_404(
         TurnExecution.objects.select_related("turn__scene", "player"),
         pk=execution_id,
@@ -626,22 +664,21 @@ def submit_human_response(request, scene_id, player_id, execution_id):
         return redirect(
             reverse(
                 "human_player_client",
-                kwargs={"scene_id": scene.pk, "player_id": player.pk},
+                kwargs={"access_token": access_token},
             )
         )
 
     return redirect(
         reverse(
             "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+            kwargs={"access_token": access_token},
         )
     )
 
 
 @require_http_methods(["POST"])
-def human_send_ooc(request, scene_id, player_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
+def human_send_ooc(request, access_token):
+    scene, player, _ = _human_access_for_token(access_token)
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
     content = (request.POST.get("content") or "").strip()
@@ -661,14 +698,13 @@ def human_send_ooc(request, scene_id, player_id):
     return redirect(
         reverse(
             "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+            kwargs={"access_token": access_token},
         )
     )
 
 
-def human_appearance_image(request, scene_id, player_id, appearance_id, image_kind):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
+def human_appearance_image(request, access_token, appearance_id, image_kind):
+    _, player, _ = _human_access_for_token(access_token)
     appearance = get_object_or_404(
         CharacterAppearance,
         pk=appearance_id,
@@ -685,46 +721,44 @@ def human_appearance_image(request, scene_id, player_id, appearance_id, image_ki
 
     content_type = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
     response = FileResponse(image.open("rb"), content_type=content_type)
-    response["Cache-Control"] = "private, max-age=300"
+    response["Cache-Control"] = "private, no-store"
+    response["Referrer-Policy"] = "no-referrer"
     return response
 
 
 @require_http_methods(["POST"])
-def set_human_current_appearance(request, scene_id, player_id, appearance_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
+def set_human_current_appearance(request, access_token, appearance_id):
+    scene, player, participation = _human_access_for_token(access_token)
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
     appearance = get_object_or_404(CharacterAppearance, pk=appearance_id, player=player)
-    participation = get_object_or_404(SceneParticipant, scene=scene, player=player)
     participation.current_appearance = appearance
     participation.full_clean()
     participation.save(update_fields=["current_appearance"])
     return redirect(
         reverse(
             "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+            kwargs={"access_token": access_token},
         )
         + f"?appearance={appearance.pk}"
     )
 
 
-def human_character_image(request, scene_id, player_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
+def human_character_image(request, access_token):
+    _, player, _ = _human_access_for_token(access_token)
     if not player.character_image:
         return HttpResponse(status=404)
 
     content_type = mimetypes.guess_type(player.character_image.name)[0] or "application/octet-stream"
     response = FileResponse(player.character_image.open("rb"), content_type=content_type)
-    response["Cache-Control"] = "private, max-age=300"
+    response["Cache-Control"] = "private, no-store"
+    response["Referrer-Policy"] = "no-referrer"
     return response
 
 
 @require_http_methods(["POST"])
-def upload_human_character_image(request, scene_id, player_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
+def upload_human_character_image(request, access_token):
+    _, player, _ = _human_access_for_token(access_token)
     form = CharacterImageUploadForm(request.POST, request.FILES)
     if not form.is_valid():
         return HttpResponseBadRequest(form.errors.as_text())
@@ -738,15 +772,14 @@ def upload_human_character_image(request, scene_id, player_id):
     return redirect(
         reverse(
             "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+            kwargs={"access_token": access_token},
         )
     )
 
 
 @require_http_methods(["POST"])
-def remove_human_character_image(request, scene_id, player_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = _human_player_for_scene(scene, player_id)
+def remove_human_character_image(request, access_token):
+    _, player, _ = _human_access_for_token(access_token)
     if player.character_image:
         storage = player.character_image.storage
         old_name = player.character_image.name
@@ -757,23 +790,20 @@ def remove_human_character_image(request, scene_id, player_id):
     return redirect(
         reverse(
             "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+            kwargs={"access_token": access_token},
         )
     )
 
 
-def human_episode_search(request, scene_id, player_id):
-    current_scene = get_object_or_404(
-        Scene.objects.select_related("campaign"),
-        pk=scene_id,
-    )
-    player = _human_player_for_scene(current_scene, player_id)
+def human_episode_search(request, access_token):
+    current_scene, player, _ = _human_access_for_token(access_token)
     q = (request.GET.get("q") or "").strip()
 
     episodes = (
         Scene.objects.filter(
             campaign=player.campaign,
             scene_participants__player=player,
+            created_at__lte=current_scene.created_at,
         )
         .distinct()
         .order_by("-created_at", "-pk")
@@ -794,7 +824,7 @@ def human_episode_search(request, scene_id, player_id):
             | visible_message_match
         ).distinct()
 
-    return render(
+    response = render(
         request,
         "rpg/human_episode_search.html",
         {
@@ -803,21 +833,20 @@ def human_episode_search(request, scene_id, player_id):
             "player": player,
             "episodes": list(episodes[:200]),
             "q": q,
+            "access_token": access_token,
         },
     )
+    return _secure_human_response(response)
 
 
-def human_episode_detail(request, scene_id, player_id, episode_id):
-    current_scene = get_object_or_404(
-        Scene.objects.select_related("campaign"),
-        pk=scene_id,
-    )
-    player = _human_player_for_scene(current_scene, player_id)
+def human_episode_detail(request, access_token, episode_id):
+    current_scene, player, _ = _human_access_for_token(access_token)
     episode = get_object_or_404(
         Scene.objects.select_related("campaign"),
         pk=episode_id,
         campaign=player.campaign,
         scene_participants__player=player,
+        created_at__lte=current_scene.created_at,
     )
 
     visible_messages = list(_human_visible_messages(episode, player))
@@ -832,7 +861,7 @@ def human_episode_detail(request, scene_id, player_id, episode_id):
         if message.visibility == Visibility.PRIVATE_GM_PLAYER
     ]
 
-    return render(
+    response = render(
         request,
         "rpg/human_episode_detail.html",
         {
@@ -842,8 +871,10 @@ def human_episode_detail(request, scene_id, player_id, episode_id):
             "episode": episode,
             "public_blocks": _public_message_blocks(public_messages),
             "private_messages": private_messages,
+            "access_token": access_token,
         },
     )
+    return _secure_human_response(response)
 
 
 def _selected_players_from_request(request, scene):
@@ -866,6 +897,37 @@ def _selected_players_from_request(request, scene):
     if len(players_by_id) != len(requested_ids):
         raise ValidationError("Selected player is not a participant in this scene")
     return [players_by_id[player_id] for player_id in requested_ids]
+
+
+@require_http_methods(["POST"])
+def regenerate_human_access(request, scene_id, player_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    participation = get_object_or_404(
+        SceneParticipant.objects.select_related("player"),
+        scene=scene,
+        player_id=player_id,
+        player__transport=PlayerTransport.HUMAN,
+    )
+    participation.human_access_token = uuid.uuid4()
+    participation.human_access_enabled = True
+    participation.save(
+        update_fields=["human_access_token", "human_access_enabled"]
+    )
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def toggle_human_access(request, scene_id, player_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    participation = get_object_or_404(
+        SceneParticipant.objects.select_related("player"),
+        scene=scene,
+        player_id=player_id,
+        player__transport=PlayerTransport.HUMAN,
+    )
+    participation.human_access_enabled = not participation.human_access_enabled
+    participation.save(update_fields=["human_access_enabled"])
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
 
 
 @require_http_methods(["POST"])

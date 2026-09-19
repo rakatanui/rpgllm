@@ -81,3 +81,22 @@ def test_scene_participant_rejects_foreign_current_appearance():
 
     with pytest.raises(ValidationError):
         participation.full_clean()
+
+
+
+@pytest.mark.django_db
+def test_scene_participant_access_tokens_are_unique():
+    camp = make_campaign()
+    first = make_player(camp, "First")
+    second = make_player(camp, "Second")
+    scene = make_scene(camp, participants=[first, second])
+
+    tokens = list(
+        SceneParticipant.objects.filter(scene=scene)
+        .order_by("pk")
+        .values_list("human_access_token", flat=True)
+    )
+
+    assert len(tokens) == 2
+    assert all(tokens)
+    assert len(set(tokens)) == 2

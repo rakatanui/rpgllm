@@ -138,7 +138,14 @@ def _scene_reaches(scene: Scene, target_scene_id: int) -> bool:
 class SceneParticipantInline(admin.TabularInline):
     model = SceneParticipant
     extra = 1
-    fields = ("player", "order", "current_appearance")
+    fields = (
+        "player",
+        "order",
+        "current_appearance",
+        "human_access_enabled",
+        "human_access_token",
+    )
+    readonly_fields = ("human_access_token",)
     ordering = ("order", "pk")
 
 
