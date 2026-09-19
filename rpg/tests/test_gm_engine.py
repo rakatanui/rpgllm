@@ -124,6 +124,20 @@ def test_existing_source_lookup_marks_missing_exact_fact_as_unknown():
     assert "UNKNOWN/UNAVAILABLE" in request
     assert "never invent missing pre-existing content" in request
 
+    with pytest.raises(ValidationError, match="unsupported exact datum"):
+        gm_engine.parse_gm_response(
+            json.dumps(
+                {
+                    "action": "NARRATE",
+                    "public": "В старом брифинге указан адрес ul. Szeroka 99.",
+                    "private": [],
+                    "turn_targets": [],
+                },
+                ensure_ascii=False,
+            ),
+            scene=scene,
+        )
+
 
 @pytest.mark.django_db
 def test_existing_source_lookup_retrieves_matching_lore_exact_fact():
@@ -163,6 +177,20 @@ def test_existing_source_lookup_retrieves_matching_lore_exact_fact():
     assert "Lore: Астар / Павел Круль" in request
     assert "ul. Długa 17, Gdańsk" in request
     assert "If the requested exact datum is not explicitly supported" in request
+
+    parsed = gm_engine.parse_gm_response(
+        json.dumps(
+            {
+                "action": "NARRATE",
+                "public": "В брифинге действительно указан адрес: ul. Długa 17.",
+                "private": [],
+                "turn_targets": [],
+            },
+            ensure_ascii=False,
+        ),
+        scene=scene,
+    )
+    assert parsed.public.endswith("ul. Długa 17.")
 
 
 @pytest.mark.django_db
