@@ -13,7 +13,7 @@
       <div class="meta">{{ campaign.name }} · {{ player.display_name }}</div>
       <h2>Episode search</h2>
     </div>
-    <a class="btn" href="{% url 'human_player_client' scene.pk player.pk %}">Back to current scene</a>
+    <a class="btn" href="{% url 'human_player_client' access_token %}">Back to current scene</a>
   </div>
 
   <form method="get" class="human-history-search-form">
@@ -24,7 +24,7 @@
            autofocus>
     <button class="btn btn-primary" type="submit">Search</button>
     {% if q %}
-      <a class="btn" href="{% url 'human_episode_search' scene.pk player.pk %}">Clear</a>
+      <a class="btn" href="{% url 'human_episode_search' access_token %}">Clear</a>
     {% endif %}
   </form>
 
@@ -32,7 +32,7 @@
     {% for episode in episodes %}
       <article class="human-episode-result">
         <div class="human-episode-result-title">
-          <a href="{% url 'human_episode_detail' scene.pk player.pk episode.pk %}">
+          <a href="{% url 'human_episode_detail' access_token episode.pk %}">
             {{ episode.name }}
           </a>
           {% if episode.pk == scene.pk %}
