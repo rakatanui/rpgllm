@@ -15,6 +15,7 @@ from rpg.forms import CharacterImageUploadForm
 from rpg.models import (
     AuthorType,
     Campaign,
+    CharacterAppearance,
     LoreEntry,
     LoreScope,
     Message,
@@ -449,7 +450,29 @@ def players_status(request, scene_id):
     )
 
 
-def _human_client_context(scene: Scene, player: Player) -> dict:
+def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
+    appearances = list(player.appearances.all().order_by("order", "pk"))
+    participation = (
+        SceneParticipant.objects.filter(scene=scene, player=player)
+        .select_related("current_appearance")
+        .first()
+    )
+    current_appearance = participation.current_appearance if participation else None
+    if current_appearance is None:
+        current_appearance = next((item for item in appearances if item.is_primary), None)
+    if current_appearance is None and appearances:
+        current_appearance = appearances[0]
+
+    display_appearance = current_appearance
+    if request is not None:
+        raw_appearance_id = (request.GET.get("appearance") or "").strip()
+        if raw_appearance_id.isdigit():
+            requested_id = int(raw_appearance_id)
+            display_appearance = next(
+                (item for item in appearances if item.pk == requested_id),
+                display_appearance,
+            )
+
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
         .select_related("author_player", "execution")
@@ -488,6 +511,9 @@ def _human_client_context(scene: Scene, player: Player) -> dict:
         "scene": scene,
         "campaign": scene.campaign,
         "player": player,
+        "appearances": appearances,
+        "current_appearance": current_appearance,
+        "display_appearance": display_appearance,
         "public_messages": public_messages,
         "public_blocks": _public_message_blocks(public_messages),
         "private_messages": private_messages,
@@ -528,7 +554,7 @@ def human_player_client(request, scene_id, player_id):
     return render(
         request,
         "rpg/human_player.html",
-        _human_client_context(scene, player),
+        _human_client_context(scene, player, request),
     )
 
 
@@ -538,7 +564,7 @@ def human_player_fragment(request, scene_id, player_id):
     return render(
         request,
         "rpg/_human_player_panel.html",
-        _human_client_context(scene, player),
+        _human_client_context(scene, player, request),
     )
 
 
@@ -603,6 +629,49 @@ def human_send_ooc(request, scene_id, player_id):
             "human_player_client",
             kwargs={"scene_id": scene.pk, "player_id": player.pk},
         )
+    )
+
+
+def human_appearance_image(request, scene_id, player_id, appearance_id, image_kind):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = _human_player_for_scene(scene, player_id)
+    appearance = get_object_or_404(
+        CharacterAppearance,
+        pk=appearance_id,
+        player=player,
+    )
+    if image_kind == "portrait":
+        image = appearance.portrait_image
+    elif image_kind == "fullbody":
+        image = appearance.fullbody_image
+    else:
+        return HttpResponse(status=404)
+    if not image:
+        return HttpResponse(status=404)
+
+    content_type = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
+    response = FileResponse(image.open("rb"), content_type=content_type)
+    response["Cache-Control"] = "private, max-age=300"
+    return response
+
+
+@require_http_methods(["POST"])
+def set_human_current_appearance(request, scene_id, player_id, appearance_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = _human_player_for_scene(scene, player_id)
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
+    appearance = get_object_or_404(CharacterAppearance, pk=appearance_id, player=player)
+    participation = get_object_or_404(SceneParticipant, scene=scene, player=player)
+    participation.current_appearance = appearance
+    participation.full_clean()
+    participation.save(update_fields=["current_appearance"])
+    return redirect(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+        )
+        + f"?appearance={appearance.pk}"
     )
 
 
