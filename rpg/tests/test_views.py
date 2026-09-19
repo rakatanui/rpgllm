@@ -1964,6 +1964,48 @@ def test_human_submit_view_completes_waiting_execution(mock_backend):
 
 
 @pytest.mark.django_db
+def test_human_bearer_token_post_does_not_require_csrf():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    csrf_client = Client(enforce_csrf_checks=True)
+
+    response = csrf_client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Я отвечаю без CSRF cookie."},
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+
+
+@pytest.mark.django_db
+def test_csrf_remains_enabled_for_master_write_routes():
+    campaign = make_campaign()
+    player = make_player(campaign, "P")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
+    csrf_client = Client(enforce_csrf_checks=True)
+
+    response = csrf_client.post(
+        reverse("start_model_gm", kwargs={"scene_id": scene.pk})
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
 def test_human_submit_auto_continues_to_manual_chat_gm():
     campaign = make_campaign()
     human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
@@ -2280,10 +2322,15 @@ def test_human_client_preserves_disclosures_scroll_and_focus_across_polling():
     assert 'data-human-preserve-scroll="public"' in html
     assert 'id="human-private-feed"' in html
     assert 'data-human-preserve-scroll="private"' in html
+    assert 'hx-trigger="human-poll"' in html
+    assert 'hx-trigger="every 2s"' not in html
     assert "htmx:beforeSwap" in html
     assert "htmx:afterSwap" in html
     assert "captureHumanPollingState" in html
     assert "restoreHumanPollingState" in html
+    assert "humanPlayerIsEditing" in html
+    assert "selectionInsideHumanPanel" in html
+    assert "window.setInterval(pollHumanPlayerPanel, 2000)" in html
     assert "bottomGap" in html
     assert "selectionStart" in html
 
