@@ -371,7 +371,15 @@ If the external conversation is replaced, cleared, or no longer remembers its
 bootstrap, use **Reset chat memory** on the player card. The next execution will
 send a fresh full bootstrap. Major out-of-band changes to character/world rules
 should be treated the same way when you want the external chat re-seeded from
-authoritative application context.
+authoritative application context. Retroactive application edits such as Undo,
+Restore, Regen, or an OOC revision that changes public canon automatically mark
+persistent manual-chat players in that scene as needing a fresh bootstrap.
+
+CHAT_MEMORY assumes one persistent external conversation per continuous story
+lineage. If the same character is deliberately played through incompatible
+parallel branches, use separate external chats/URLs for those branches; a later
+bootstrap is authoritative, but a web chat may still remember material from a
+different branch because, unlike our database, it has no shame and no rollback.
 
 General GM **OOC / META** messages and private GM messages naturally enter the
 next DELTA because they are part of that player's visible history. One-shot
