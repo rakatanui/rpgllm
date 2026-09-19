@@ -15,7 +15,6 @@ from rpg.models import (
     Campaign,
     LoreEntry,
     LoreScope,
-    ManualChatContextMode,
     Message,
     MessageRevision,
     ModelConfig,
