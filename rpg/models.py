@@ -460,6 +460,16 @@ class SceneParticipant(models.Model):
         related_name="scene_participations",
     )
     order = models.PositiveSmallIntegerField(default=0)
+    human_access_token = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+        help_text="Secret bearer token for the HUMAN player client in this scene.",
+    )
+    human_access_enabled = models.BooleanField(
+        default=True,
+        help_text="Disable to revoke this scene-specific HUMAN player link immediately.",
+    )
     current_appearance = models.ForeignKey(
         CharacterAppearance,
         on_delete=models.SET_NULL,
