@@ -9,8 +9,10 @@ from django.core.exceptions import ValidationError
 from rpg.models import (
     AuthorType,
     ExecutionState,
+    ManualChatContextMode,
     Message,
     PlayerStatus,
+    PlayerTransport,
     Turn,
     TurnMode,
     TurnState,
@@ -1191,3 +1193,233 @@ def test_first_regen_of_legacy_message_preserves_old_version(mock_backend):
         "Fresh answer.",
     ]
     assert [revision.reason for revision in revisions] == ["ORIGINAL", "REGEN"]
+
+
+
+@pytest.mark.django_db
+def test_manual_chat_turn_waits_without_calling_llm(mock_backend):
+    campaign = make_campaign(system_prompt="Campaign rules.")
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_label="ChatGPT",
+        manual_chat_url="https://chatgpt.com/c/example",
+        manual_chat_context_mode=ManualChatContextMode.FULL,
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[lucien],
+    )
+
+    with patch("rpg.services.turn_engine.get_llm_client") as get_client:
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="Что ты делаешь?",
+            selected_players=[lucien],
+        )
+
+    get_client.assert_not_called()
+    execution = result.turn.executions.get(player=lucien)
+    lucien.refresh_from_db()
+    result.turn.refresh_from_db()
+
+    assert execution.state == ExecutionState.WAITING_EXTERNAL
+    assert execution.transport == PlayerTransport.MANUAL_CHAT
+    assert execution.external_context_mode == ManualChatContextMode.FULL
+    assert execution.external_is_bootstrap is False
+    assert "# MRAZ MANUAL CHAT BRIDGE" in execution.external_prompt
+    assert "Campaign rules." in execution.external_prompt
+    assert "Что ты делаешь?" in execution.external_prompt
+    assert "RESPONSE CONTRACT" in execution.external_prompt
+    assert lucien.status == PlayerStatus.WAITING_EXTERNAL
+    assert result.turn.state == TurnState.RUNNING
+    assert not Message.objects.filter(
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_pasted_manual_chat_response_completes_execution(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.FULL,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+
+    imported = turn_engine.submit_external_response(
+        execution=execution,
+        raw_text=(
+            '{"action_type":"ACT","public":"Люсьен кивает.",'
+            '"private_to_gm":"секрет"}'
+        ),
+    )
+
+    execution.refresh_from_db()
+    imported.turn.refresh_from_db()
+    lucien.refresh_from_db()
+
+    assert execution.state == ExecutionState.COMPLETED
+    assert execution.action_type == "ACT"
+    assert imported.turn.state == TurnState.COMPLETED
+    assert lucien.status == PlayerStatus.IDLE
+    assert execution.raw_response.startswith('{"action_type":"ACT"')
+    assert execution.external_synced_message_ids
+    assert Message.objects.filter(
+        execution=execution,
+        visibility=Visibility.PUBLIC,
+        content="Люсьен кивает.",
+    ).exists()
+    assert Message.objects.filter(
+        execution=execution,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        content="секрет",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_rejected_manual_chat_response_stays_waiting_for_repaste(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+
+    with pytest.raises(ValidationError, match="External response rejected"):
+        turn_engine.submit_external_response(
+            execution=execution,
+            raw_text=(
+                '{"action_type":"ACT","public":"' + ("x" * 1201) + '",'
+                '"private_to_gm":""}'
+            ),
+        )
+
+    execution.refresh_from_db()
+    result.turn.refresh_from_db()
+    lucien.refresh_from_db()
+
+    assert execution.state == ExecutionState.WAITING_EXTERNAL
+    assert "too long" in execution.error
+    assert execution.raw_response
+    assert result.turn.state == TurnState.RUNNING
+    assert lucien.status == PlayerStatus.WAITING_EXTERNAL
+    assert not Message.objects.filter(
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_chat_memory_bootstrap_then_delta_only_sends_new_context(mock_backend):
+    campaign = make_campaign(system_prompt="BIG STATIC CAMPAIGN RULES")
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_label="Persistent Chat",
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    first = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Первый мастерский ввод.",
+        selected_players=[lucien],
+    )
+    first_execution = first.turn.executions.get(player=lucien)
+    assert first_execution.external_is_bootstrap is True
+    assert "BIG STATIC CAMPAIGN RULES" in first_execution.external_prompt
+    assert "## SYSTEM PROMPT" in first_execution.external_prompt
+
+    turn_engine.submit_external_response(
+        execution=first_execution,
+        raw_text='{"action_type":"ACT","public":"Первый ответ.","private_to_gm":""}',
+    )
+    lucien.refresh_from_db()
+    assert lucien.manual_chat_initialized is True
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="[OOC META]\nПомни про красный ключ.",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=lucien,
+    )
+
+    second = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Второй мастерский ввод.",
+        selected_players=[lucien],
+    )
+    second_execution = second.turn.executions.get(player=lucien)
+
+    assert second_execution.external_is_bootstrap is False
+    assert "MRAZ MANUAL CHAT BRIDGE · DELTA" in second_execution.external_prompt
+    assert "## SYSTEM PROMPT" not in second_execution.external_prompt
+    assert "BIG STATIC CAMPAIGN RULES" not in second_execution.external_prompt
+    assert "Помни про красный ключ." in second_execution.external_prompt
+    assert "Второй мастерский ввод." in second_execution.external_prompt
+    assert "Первый мастерский ввод." not in second_execution.external_prompt
+
+
+@pytest.mark.django_db
+def test_mixed_round_waits_for_manual_chat_then_advances_once(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    mila = make_player(campaign, "Mila")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[lucien, mila],
+        round_order=[lucien.pk, mila.pk],
+        active_player_index=0,
+    )
+
+    client = RecordingClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+
+    assert client.calls == ["Mila"]
+    lucien_execution = result.turn.executions.get(player=lucien)
+    mila_execution = result.turn.executions.get(player=mila)
+    result.turn.refresh_from_db()
+    scene.refresh_from_db()
+
+    assert lucien_execution.state == ExecutionState.WAITING_EXTERNAL
+    assert mila_execution.state == ExecutionState.COMPLETED
+    assert result.turn.state == TurnState.RUNNING
+    assert scene.active_player_index == 0
+
+    turn_engine.submit_external_response(
+        execution=lucien_execution,
+        raw_text='{"action_type":"ACT","public":"Lucien acts.","private_to_gm":""}',
+    )
+
+    result.turn.refresh_from_db()
+    scene.refresh_from_db()
+    assert result.turn.state == TurnState.COMPLETED
+    assert scene.active_player_index == 1
