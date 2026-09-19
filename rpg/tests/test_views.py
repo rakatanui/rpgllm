@@ -395,11 +395,13 @@ def test_latest_failed_execution_shows_single_model_retry_button():
 
     assert response.status_code == 200
     html = response.content.decode()
-    assert ">Retry</button>" in html
-    assert reverse(
+    retry_url = reverse(
         "retry_execution",
         kwargs={"scene_id": scene.pk, "execution_id": failed.pk},
-    ) in html
+    )
+    assert f'action="{retry_url}"' in html
+    assert html.count(f'action="{retry_url}"') == 1
+    assert "Retry" in html
     assert "timed out" in html
 
 
