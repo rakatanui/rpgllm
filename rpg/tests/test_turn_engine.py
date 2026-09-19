@@ -1552,3 +1552,88 @@ def test_undo_waiting_manual_turn_resets_player_status(mock_backend):
     lucien.refresh_from_db()
     assert lucien.status == PlayerStatus.IDLE
     assert not Turn.objects.filter(pk=result.turn.pk).exists()
+
+
+
+@pytest.mark.django_db
+def test_manual_chat_response_cannot_be_imported_twice(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+    raw = '{"action_type":"ACT","public":"Один ответ.","private_to_gm":""}'
+
+    turn_engine.submit_external_response(execution=execution, raw_text=raw)
+
+    with pytest.raises(ValidationError, match="not waiting"):
+        turn_engine.submit_external_response(execution=execution, raw_text=raw)
+
+    assert Message.objects.filter(
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+        visibility=Visibility.PUBLIC,
+    ).count() == 1
+
+
+@pytest.mark.django_db
+def test_retroactive_public_regen_invalidates_persistent_manual_chat_memory(mock_backend):
+    campaign = make_campaign()
+    manual = make_player(
+        campaign,
+        "Manual",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_initialized=True,
+    )
+    api = make_player(campaign, "API")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[manual, api],
+    )
+
+    class RegenClient(MockLLMClient):
+        def generate(self, **kwargs):
+            return _resp("API", public="Новая версия.")
+
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.COMPLETED,
+        participants=[api.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=api,
+        state=ExecutionState.COMPLETED,
+        action_type="ACT",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        turn=turn,
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+        author_player=api,
+        content="Старая версия.",
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+    )
+
+    with patch(
+        "rpg.services.turn_engine.get_llm_client",
+        return_value=RegenClient(),
+    ):
+        turn_engine.regenerate_execution(execution)
+
+    manual.refresh_from_db()
+    assert manual.manual_chat_initialized is False
