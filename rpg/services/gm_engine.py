@@ -264,8 +264,10 @@ def submit_external_gm_response(
 
         try:
             response = parse_gm_response(raw, scene=execution.scene)
-        response = _normalize_model_gm_response(response, scene=execution.scene)
-            response = _normalize_model_gm_response(response, scene=execution.scene)
+            response = _normalize_model_gm_response(
+                response,
+                scene=execution.scene,
+            )
         except Exception as exc:
             execution.error = str(exc)
             execution.raw_response = raw
@@ -635,6 +637,10 @@ def _run_provider_execution(
         elapsed = int((time.perf_counter() - started) * 1000)
         raw = provider_response.raw_text or ""
         response = parse_gm_response(raw, scene=execution.scene)
+        response = _normalize_model_gm_response(
+            response,
+            scene=execution.scene,
+        )
         execution.refresh_from_db()
         _apply_response_to_execution(execution, response)
         execution.latency_ms = elapsed
