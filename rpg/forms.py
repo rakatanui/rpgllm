@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from django import forms
 
 
@@ -14,6 +16,10 @@ class CharacterImageUploadForm(forms.Form):
             raise forms.ValidationError("Character image must be 5 MB or smaller.")
 
         image_format = getattr(getattr(image, "image", None), "format", None)
-        if image_format not in ALLOWED_CHARACTER_IMAGE_FORMATS:
+        extension = Path(image.name or "").suffix.lower()
+        if (
+            image_format not in ALLOWED_CHARACTER_IMAGE_FORMATS
+            or extension not in {".jpg", ".jpeg", ".png", ".webp"}
+        ):
             raise forms.ValidationError("Use a JPEG, PNG, or WebP image.")
         return image
