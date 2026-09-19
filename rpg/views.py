@@ -725,7 +725,7 @@ def human_appearance_image(request, access_token, appearance_id, image_kind):
 
     content_type = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
     response = FileResponse(image.open("rb"), content_type=content_type)
-    response["Cache-Control"] = "private, max-age=300"
+    response["Cache-Control"] = "private, no-store"
     response["Referrer-Policy"] = "no-referrer"
     return response
 
@@ -755,7 +755,7 @@ def human_character_image(request, access_token):
 
     content_type = mimetypes.guess_type(player.character_image.name)[0] or "application/octet-stream"
     response = FileResponse(player.character_image.open("rb"), content_type=content_type)
-    response["Cache-Control"] = "private, max-age=300"
+    response["Cache-Control"] = "private, no-store"
     response["Referrer-Policy"] = "no-referrer"
     return response
 
