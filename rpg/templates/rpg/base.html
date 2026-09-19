@@ -131,6 +131,36 @@
   .human-wait-card { margin-top:8px; padding:8px; border:1px solid rgba(63,185,80,.55);
                      border-radius:7px; background:rgba(63,185,80,.06); }
   .human-wait-card .toolbar { margin-top:6px; }
+
+  .gm-model-panel { margin-bottom:10px; overflow:visible; border-color:rgba(210,168,255,.35); }
+  .gm-model-header { display:flex; justify-content:space-between; align-items:flex-start;
+                     gap:12px; margin-bottom:8px; }
+  .gm-model-header h3 { margin:2px 0 0; color:var(--gm); }
+  .gm-model-header-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap;
+                             justify-content:flex-end; }
+  .gm-model-state-row { display:flex; align-items:center; gap:7px; flex-wrap:wrap;
+                        margin:7px 0; }
+  .gm-model-prompt { min-height:220px; margin:6px 0; font-size:11px; line-height:1.35; }
+  .gm-model-import-form textarea { min-height:150px; margin:5px 0 7px; }
+  .gm-model-draft-form { margin-top:8px; }
+  .gm-model-draft-toolbar { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;
+                            margin-bottom:8px; }
+  .gm-model-draft-toolbar > label { min-width:260px; }
+  .gm-model-targets { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+  .gm-model-public-draft { min-height:170px; margin:5px 0 8px; font-size:14px; line-height:1.45; }
+  .gm-model-private-drafts { border:1px solid var(--border); border-radius:7px; padding:8px;
+                             margin:8px 0; background:rgba(210,168,255,.03); }
+  .gm-model-private-drafts > summary { cursor:pointer; color:var(--gm); font-weight:bold;
+                                       margin-bottom:6px; }
+  .gm-model-private-drafts label { display:block; margin-top:7px; }
+  .gm-model-private-drafts textarea { min-height:72px; margin-top:4px; }
+  .gm-model-publish-toolbar { margin-top:8px; }
+  .gm-model-debug { margin:8px 0; color:var(--muted); }
+  .gm-model-debug pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:8px;
+                        border:1px solid var(--border); border-radius:6px;
+                        background:var(--bg); color:var(--text); font-size:11px; }
+  .gm-model-start-form { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
   body.human-player-page .container { max-width:1100px; padding:10px; }
   .human-player-shell { width:100%; }
   .human-character-card { display:grid; grid-template-columns:220px minmax(0,1fr); gap:16px;
