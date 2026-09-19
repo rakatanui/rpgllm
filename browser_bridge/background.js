@@ -20,8 +20,17 @@ async function deleteJob(jobId) {
 
 async function allJobs() {
   const data = await chrome.storage.session.get(null);
-  return Object.values(data).filter(
+  const jobs = Object.values(data).filter(
     (value) => value && value.jobId && value.sourceTabId
+  );
+  const staleBefore = Date.now() - 30 * 60 * 1000;
+  for (const job of jobs) {
+    if (job.createdAt && job.createdAt < staleBefore) {
+      await deleteJob(job.jobId);
+    }
+  }
+  return jobs.filter(
+    (job) => !job.createdAt || job.createdAt >= staleBefore
   );
 }
 
@@ -233,6 +242,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const jobs = await allJobs();
   for (const job of jobs) {
+    if (job.sourceTabId === tabId) {
+      await deleteJob(job.jobId);
+      continue;
+    }
     if (job.targetTabId === tabId) {
       await notifySource(job, {
         ok: false,
