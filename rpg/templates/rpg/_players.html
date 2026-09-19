@@ -1,6 +1,6 @@
 {% load rpg_extras %}
 {% for p in players %}
-  {% with failed=failed_execution_by_player|get:p.pk waiting=waiting_external_by_player|get:p.pk %}
+  {% with failed=failed_execution_by_player|get:p.pk waiting=waiting_external_by_player|get:p.pk human_waiting=waiting_human_by_player|get:p.pk %}
   <div class="player-row {% if scene.mode == "ROUND" and p.pk == active_round_player_id %}active{% endif %}">
     <div class="player-row-title">
       <strong>{{ p.display_name }}</strong>
@@ -20,6 +20,8 @@
         {% if p.manual_chat_context_mode == "CHAT_MEMORY" %}
           · memory {% if p.manual_chat_initialized %}synced{% else %}needs bootstrap{% endif %}
         {% endif %}
+      {% elif p.transport == "HUMAN" %}
+        transport: human player
       {% else %}
         model: {% if p.model_config %}{{ p.model_config.name }}{% else %}—{% endif %}
         {% if p.fallback_model_config %} · fallback: {{ p.fallback_model_config.name }}{% endif %}
@@ -29,15 +31,21 @@
     <div>status: <span class="chip {{ p.status }}">{{ p.status }}</span></div>
 
     {% if not scene.is_closed %}
-      <form method="post" action="{% url 'set_player_nudge' scene.pk p.pk %}"
-            class="nudge-form" onsubmit="return preparePlayerNudge(this, '{{ p.display_name|escapejs }}')">
-        {% csrf_token %}
-        <input type="hidden" name="content" value="">
-        <button class="btn btn-small" type="submit" title="Одноразовая мета-инструкция на следующий вызов модели">
-          Nudge
-        </button>
-      </form>
-      {% if p.transport == "MANUAL_CHAT" and p.manual_chat_context_mode == "CHAT_MEMORY" %}
+      {% if p.transport != "HUMAN" %}
+        <form method="post" action="{% url 'set_player_nudge' scene.pk p.pk %}"
+              class="nudge-form" onsubmit="return preparePlayerNudge(this, '{{ p.display_name|escapejs }}')">
+          {% csrf_token %}
+          <input type="hidden" name="content" value="">
+          <button class="btn btn-small" type="submit" title="Одноразовая мета-инструкция на следующий вызов модели">
+            Nudge
+          </button>
+        </form>
+      {% endif %}
+      {% if p.transport == "HUMAN" %}
+        <a class="btn btn-small human-client-link"
+           href="{% url 'human_player_client' scene.pk p.pk %}"
+           target="_blank" rel="noopener noreferrer">Open player client</a>
+      {% elif p.transport == "MANUAL_CHAT" and p.manual_chat_context_mode == "CHAT_MEMORY" %}
         <form method="post"
               action="{% url 'reset_manual_chat_memory' scene.pk p.pk %}"
               class="inline"
@@ -92,6 +100,29 @@
       </details>
     {% endif %}
 
+    {% if human_waiting %}
+      <div class="human-wait-card">
+        <strong>Waiting for human player</strong>
+        {% if human_waiting.turn.is_private %}
+          <span class="chip">PRIVATE</span>
+        {% elif human_waiting.turn.mode == "ROUND" and human_waiting.player_id == human_waiting.turn.active_player_id_snapshot %}
+          <span class="chip">ACTIVE</span>
+        {% elif human_waiting.turn.mode == "ROUND" %}
+          <span class="chip">INACTIVE</span>
+        {% endif %}
+        {% if human_waiting.error %}
+          <div class="execution-error">{{ human_waiting.error }}</div>
+        {% endif %}
+        <div class="toolbar">
+          <a class="btn btn-small"
+             href="{% url 'human_player_client' scene.pk p.pk %}"
+             target="_blank" rel="noopener noreferrer">Open player client</a>
+          <a class="btn btn-small"
+             href="{% url 'execution_debug' scene.pk human_waiting.pk %}">Debug</a>
+        </div>
+      </div>
+    {% endif %}
+
     {% if failed %}
       <div class="execution-error" title="{{ failed.error }}">
         {{ failed.state }}{% if failed.error %}: {{ failed.error|truncatechars:90 }}{% endif %}
@@ -105,7 +136,7 @@
             {% if failed.state == "INVALID" %}Retry + fix{% else %}Retry{% endif %}
           </button>
         </form>
-        {% if p.transport != "MANUAL_CHAT" and p.fallback_model_config and p.fallback_model_config.enabled %}
+        {% if p.transport == "LITELLM" and p.fallback_model_config and p.fallback_model_config.enabled %}
           <form method="post"
                 action="{% url 'retry_execution_fallback' scene.pk failed.pk %}"
                 class="retry-execution-form">
