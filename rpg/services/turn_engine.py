@@ -877,11 +877,17 @@ def _build_manual_chat_prompt(
         previous is not None
         and previous.turn.scene_id in current_lineage_ids
     )
+    previous_is_same_chat = (
+        previous is not None
+        and previous.external_chat_url == execution.external_chat_url
+        and previous.external_chat_label == execution.external_chat_label
+    )
     use_delta = (
         mode == ManualChatContextMode.CHAT_MEMORY
         and player.manual_chat_initialized
         and previous is not None
         and previous_is_in_lineage
+        and previous_is_same_chat
         and bool(previous.external_synced_message_ids)
     )
 
