@@ -463,3 +463,48 @@ def test_mock_backend_emits_model_gm_envelope():
     assert payload["action"] == "NARRATE"
     assert payload["private"] == []
     assert payload["turn_targets"] == []
+
+
+
+@pytest.mark.django_db
+def test_manual_gm_chat_uses_delta_inside_scene_lineage():
+    campaign = make_campaign()
+    player = make_player(campaign, "P")
+    first = make_scene(campaign, name="First", mode=TurnMode.MANUAL, participants=[player])
+    config = GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_label="Persistent GM",
+        manual_chat_url="https://example.test/gm",
+    )
+
+    first_execution = gm_engine.start_gm_execution(scene=first)
+    gm_engine.submit_external_gm_response(
+        execution=first_execution,
+        raw_text=json.dumps(
+            {
+                "action": "NARRATE",
+                "public": "Первый beat.",
+                "private": [],
+                "turn_targets": [],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    gm_engine.publish_gm_execution(execution=first_execution)
+
+    followup = make_scene(
+        campaign,
+        name="Follow-up",
+        mode=TurnMode.MANUAL,
+        participants=[player],
+        predecessors=[first],
+    )
+    next_execution = gm_engine.start_gm_execution(scene=followup)
+    next_execution.refresh_from_db()
+
+    assert next_execution.external_is_bootstrap is False
+    assert "MRAZ GAME MASTER CHAT BRIDGE · DELTA" in next_execution.external_prompt
+    assert "Первый beat." in next_execution.external_prompt
