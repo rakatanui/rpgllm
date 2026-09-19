@@ -128,6 +128,12 @@
   .external-wait-card > summary { cursor:pointer; color:#ffc38f; font-size:12px; font-weight:bold; }
   .external-prompt { min-height:150px; margin:7px 0; font-size:11px; line-height:1.35; }
   .external-response-form textarea { min-height:120px; margin:4px 0 7px; font-size:12px; }
+  .mraz-browser-bridge-button { display:none; }
+  html[data-mraz-browser-bridge="ready"] .mraz-browser-bridge-button { display:inline-flex; }
+  .mraz-browser-bridge-status { min-height:16px; margin-top:6px; }
+  .mraz-browser-bridge-status[data-state="running"] { color:#ffc38f; }
+  .mraz-browser-bridge-status[data-state="done"] { color:var(--ok); }
+  .mraz-browser-bridge-status[data-state="error"] { color:var(--err); }
   .human-wait-card { margin-top:8px; padding:8px; border:1px solid rgba(63,185,80,.55);
                      border-radius:7px; background:rgba(63,185,80,.06); }
   .human-wait-card .toolbar { margin-top:6px; }

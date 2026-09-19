@@ -98,7 +98,13 @@
     {% endif %}
 
     {% if waiting %}
-      <details class="external-wait-card" open>
+      <details class="external-wait-card"
+               data-mraz-bridge-card
+               data-mraz-bridge-kind="player"
+               data-mraz-bridge-execution="{{ waiting.pk }}"
+               data-mraz-bridge-chat-url="{{ waiting.external_chat_url }}"
+               data-mraz-bridge-label="{{ waiting.external_chat_label|default:'External chat' }}"
+               open>
         <summary>
           External response needed
           {% if waiting.external_context_mode == "FULL" %}
@@ -118,8 +124,15 @@
         </div>
         <textarea id="external-prompt-{{ waiting.pk }}"
                   class="external-prompt"
+                  data-mraz-bridge-prompt
                   readonly>{{ waiting.external_prompt }}</textarea>
         <div class="toolbar">
+          {% if waiting.external_chat_url %}
+            <button type="button"
+                    class="btn btn-primary btn-small mraz-browser-bridge-button">
+              Send via browser bridge
+            </button>
+          {% endif %}
           <button type="button" class="btn btn-small"
                   onclick="copyElementText('external-prompt-{{ waiting.pk }}', this)">Copy prompt</button>
           {% if waiting.external_chat_url %}
@@ -129,7 +142,8 @@
         </div>
         <form method="post"
               action="{% url 'submit_external_response' scene.pk waiting.pk %}"
-              class="external-response-form">
+              class="external-response-form"
+              data-mraz-bridge-response-form>
           {% csrf_token %}
           <textarea id="external-response-{{ waiting.pk }}"
                     name="response"
@@ -138,6 +152,7 @@
                     placeholder="Paste the external chat response here...">{{ waiting.raw_response }}</textarea>
           <button class="btn btn-primary" type="submit">Accept pasted response</button>
         </form>
+        <div class="meta mraz-browser-bridge-status" aria-live="polite"></div>
       </details>
     {% endif %}
 

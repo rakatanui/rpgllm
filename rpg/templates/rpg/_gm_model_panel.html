@@ -1,5 +1,12 @@
 {% load rpg_extras %}
-<section class="panel gm-model-panel">
+<section class="panel gm-model-panel"
+         {% if gm_execution and gm_execution.state == "WAITING_EXTERNAL" %}
+           data-mraz-bridge-card
+           data-mraz-bridge-kind="gm"
+           data-mraz-bridge-execution="{{ gm_execution.pk }}"
+           data-mraz-bridge-chat-url="{{ gm_execution.external_chat_url }}"
+           data-mraz-bridge-label="{{ gm_execution.external_chat_label|default:'Model GM' }}"
+         {% endif %}>
   <div class="gm-model-header">
     <div>
       <div class="meta">Game Master actor</div>
@@ -53,9 +60,16 @@
       <label>Prompt for external GM chat</label>
       <textarea id="gm-external-prompt-{{ gm_execution.pk }}"
                 class="gm-model-prompt"
+                data-mraz-bridge-prompt
                 rows="12"
                 readonly>{{ gm_execution.external_prompt }}</textarea>
       <div class="toolbar">
+        {% if gm_execution.external_chat_url %}
+          <button class="btn btn-primary btn-small mraz-browser-bridge-button"
+                  type="button">
+            Send via browser bridge
+          </button>
+        {% endif %}
         <button class="btn btn-small"
                 type="button"
                 onclick="copyElementText('gm-external-prompt-{{ gm_execution.pk }}', this)">
@@ -77,7 +91,8 @@
 
       <form method="post"
             action="{% url 'submit_external_model_gm' scene.pk gm_execution.pk %}"
-            class="gm-model-import-form">
+            class="gm-model-import-form"
+            data-mraz-bridge-response-form>
         {% csrf_token %}
         <label>Paste model response</label>
         <textarea name="response"
@@ -87,6 +102,7 @@
           <button class="btn btn-primary" type="submit">Import GM response</button>
         </div>
       </form>
+      <div class="meta mraz-browser-bridge-status" aria-live="polite"></div>
 
       <form method="post"
             action="{% url 'discard_model_gm' scene.pk gm_execution.pk %}"

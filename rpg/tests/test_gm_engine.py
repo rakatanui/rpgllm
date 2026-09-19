@@ -293,6 +293,7 @@ def test_scene_ui_shows_model_gm_controls_and_manual_bridge():
         enabled=True,
         transport=GameMasterTransport.MANUAL_CHAT,
         manual_chat_label="External GM",
+        manual_chat_url="https://chatgpt.com/c/gm-example",
     )
     client = Client()
 
@@ -304,6 +305,11 @@ def test_scene_ui_shows_model_gm_controls_and_manual_bridge():
     html = client.get(reverse("scene", kwargs={"scene_id": scene.pk})).content.decode()
     assert "WAITING EXTERNAL GM" in html
     assert "Copy prompt" in html
+    assert "Send via browser bridge" in html
+    assert 'data-mraz-bridge-kind="gm"' in html
+    assert f'data-mraz-bridge-execution="{execution.pk}"' in html
+    assert "data-mraz-bridge-prompt" in html
+    assert "data-mraz-bridge-response-form" in html
     assert reverse(
         "submit_external_model_gm",
         kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
