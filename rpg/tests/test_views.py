@@ -1,10 +1,12 @@
 """View-level tests for scene message relationships."""
+import base64
 from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles import finders
-from django.test import Client
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import Client, override_settings
 from django.urls import reverse
 
 from rpg.models import (
@@ -2118,3 +2120,297 @@ def test_favicon_static_assets_are_discoverable():
     assert finders.find("rpg/favicon-gm.svg")
     assert finders.find("rpg/favicon-player.svg")
     assert finders.find("rpg/favicon-admin.svg")
+
+
+
+@pytest.mark.django_db
+def test_human_client_renders_character_card_and_episode_search():
+    campaign = make_campaign()
+    human = make_player(
+        campaign,
+        "Живой",
+        transport=PlayerTransport.HUMAN,
+        character_summary="Бывший архивист, теперь охотник на аномалии.",
+        characteristics="Сила 2\nЛовкость 4\nВоля 5",
+        abilities="Видит следы магии\nЗнает старые языки",
+        memory_summary="Помнит встречу у старого вокзала.",
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[human],
+        description="Текущая сцена.",
+    )
+
+    html = Client().get(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        )
+    ).content.decode()
+
+    assert "Character" in html
+    assert "Бывший архивист" in html
+    assert "Сила 2" in html
+    assert "Видит следы магии" in html
+    assert "Помнит встречу у старого вокзала" in html
+    assert reverse(
+        "human_episode_search",
+        kwargs={"scene_id": scene.pk, "player_id": human.pk},
+    ) in html
+    assert reverse(
+        "upload_human_character_image",
+        kwargs={"scene_id": scene.pk, "player_id": human.pk},
+    ) in html
+
+
+@pytest.mark.django_db
+def test_human_can_upload_replace_and_remove_character_portrait(tmp_path):
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    client = Client()
+
+    png_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    upload_url = reverse(
+        "upload_human_character_image",
+        kwargs={"scene_id": scene.pk, "player_id": human.pk},
+    )
+
+    with override_settings(MEDIA_ROOT=tmp_path):
+        response = client.post(
+            upload_url,
+            {
+                "image": SimpleUploadedFile(
+                    "portrait.png",
+                    png_bytes,
+                    content_type="image/png",
+                )
+            },
+        )
+
+        assert response.status_code == 302
+        human.refresh_from_db()
+        assert human.character_image.name.endswith(".png")
+
+        image_response = client.get(
+            reverse(
+                "human_character_image",
+                kwargs={"scene_id": scene.pk, "player_id": human.pk},
+            )
+        )
+        assert image_response.status_code == 200
+        assert image_response["Content-Type"] == "image/png"
+        image_response.close()
+
+        old_name = human.character_image.name
+        second = client.post(
+            upload_url,
+            {
+                "image": SimpleUploadedFile(
+                    "replacement.png",
+                    png_bytes,
+                    content_type="image/png",
+                )
+            },
+        )
+        assert second.status_code == 302
+        human.refresh_from_db()
+        assert human.character_image.name != old_name
+        assert not (tmp_path / old_name).exists()
+
+        removed = client.post(
+            reverse(
+                "remove_human_character_image",
+                kwargs={"scene_id": scene.pk, "player_id": human.pk},
+            )
+        )
+        assert removed.status_code == 302
+        human.refresh_from_db()
+        assert not human.character_image
+
+
+@pytest.mark.django_db
+def test_human_portrait_rejects_non_image_upload(tmp_path):
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    with override_settings(MEDIA_ROOT=tmp_path):
+        response = Client().post(
+            reverse(
+                "upload_human_character_image",
+                kwargs={"scene_id": scene.pk, "player_id": human.pk},
+            ),
+            {
+                "image": SimpleUploadedFile(
+                    "not-an-image.txt",
+                    b"<script>alert(1)</script>",
+                    content_type="text/plain",
+                )
+            },
+        )
+
+    assert response.status_code == 400
+    human.refresh_from_db()
+    assert not human.character_image
+
+
+@pytest.mark.django_db
+def test_human_episode_search_is_participant_and_visibility_scoped():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    other = make_player(campaign, "Другой")
+
+    current = make_scene(
+        campaign,
+        name="Current",
+        mode=TurnMode.MANUAL,
+        participants=[human, other],
+    )
+    public_episode = make_scene(
+        campaign,
+        name="Warehouse",
+        mode=TurnMode.MANUAL,
+        participants=[human, other],
+        description="Старый склад.",
+    )
+    private_episode = make_scene(
+        campaign,
+        name="Apartment",
+        mode=TurnMode.MANUAL,
+        participants=[human, other],
+    )
+    outsider_episode = make_scene(
+        campaign,
+        name="Forbidden Archive",
+        mode=TurnMode.MANUAL,
+        participants=[other],
+    )
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=public_episode,
+        author_type=AuthorType.GM,
+        content="VISIBLE_PUBLIC_NEEDLE",
+        visibility=Visibility.PUBLIC,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=private_episode,
+        author_type=AuthorType.GM,
+        content="OWN_PRIVATE_NEEDLE",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=human,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=private_episode,
+        author_type=AuthorType.GM,
+        content="OTHER_PRIVATE_NEEDLE",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=other,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=public_episode,
+        author_type=AuthorType.GM,
+        content="GM_ONLY_NEEDLE",
+        visibility=Visibility.GM_ONLY,
+    )
+
+    client = Client()
+    search_url = reverse(
+        "human_episode_search",
+        kwargs={"scene_id": current.pk, "player_id": human.pk},
+    )
+
+    public_html = client.get(search_url, {"q": "VISIBLE_PUBLIC_NEEDLE"}).content.decode()
+    assert "Warehouse" in public_html
+    assert "Apartment" not in public_html
+
+    own_private_html = client.get(search_url, {"q": "OWN_PRIVATE_NEEDLE"}).content.decode()
+    assert "Apartment" in own_private_html
+
+    other_private_html = client.get(search_url, {"q": "OTHER_PRIVATE_NEEDLE"}).content.decode()
+    assert "Apartment" not in other_private_html
+
+    gm_only_html = client.get(search_url, {"q": "GM_ONLY_NEEDLE"}).content.decode()
+    assert "Warehouse" not in gm_only_html
+
+    outsider_html = client.get(search_url, {"q": "Forbidden Archive"}).content.decode()
+    assert "Forbidden Archive" not in outsider_html
+
+    all_html = client.get(search_url).content.decode()
+    assert "Warehouse" in all_html
+    assert "Apartment" in all_html
+    assert "Current" in all_html
+    assert "Forbidden Archive" not in all_html
+
+
+@pytest.mark.django_db
+def test_human_episode_detail_shows_only_public_and_own_private_history():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    other = make_player(campaign, "Другой")
+    current = make_scene(
+        campaign,
+        name="Current",
+        mode=TurnMode.MANUAL,
+        participants=[human, other],
+    )
+    episode = make_scene(
+        campaign,
+        name="Past episode",
+        mode=TurnMode.MANUAL,
+        participants=[human, other],
+    )
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=episode,
+        author_type=AuthorType.GM,
+        content="VISIBLE_PUBLIC",
+        visibility=Visibility.PUBLIC,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=episode,
+        author_type=AuthorType.GM,
+        content="VISIBLE_OWN_PRIVATE",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=human,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=episode,
+        author_type=AuthorType.GM,
+        content="HIDDEN_OTHER_PRIVATE",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=other,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=episode,
+        author_type=AuthorType.GM,
+        content="HIDDEN_GM_ONLY",
+        visibility=Visibility.GM_ONLY,
+    )
+
+    html = Client().get(
+        reverse(
+            "human_episode_detail",
+            kwargs={
+                "scene_id": current.pk,
+                "player_id": human.pk,
+                "episode_id": episode.pk,
+            },
+        )
+    ).content.decode()
+
+    assert "VISIBLE_PUBLIC" in html
+    assert "VISIBLE_OWN_PRIVATE" in html
+    assert "HIDDEN_OTHER_PRIVATE" not in html
+    assert "HIDDEN_GM_ONLY" not in html
