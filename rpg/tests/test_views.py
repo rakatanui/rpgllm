@@ -1785,3 +1785,35 @@ def test_manual_chat_public_reply_hides_api_only_ooc_and_regen_controls():
         "regenerate_execution",
         kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
     ) not in html
+
+
+
+@pytest.mark.django_db
+def test_invalid_execution_labels_retry_as_corrective():
+    campaign = make_campaign()
+    fallback = make_model("Fallback Fix", gateway_model="fallback-fix")
+    mathis = make_player(
+        campaign,
+        "Матис",
+        fallback_model_config=fallback,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[mathis])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.FAILED,
+        participants=[mathis.pk],
+    )
+    TurnExecution.objects.create(
+        turn=turn,
+        player=mathis,
+        state=ExecutionState.INVALID,
+        error="forbidden action",
+    )
+
+    html = Client().get(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+    ).content.decode()
+
+    assert "Retry + fix" in html
+    assert "Retry + fix Fallback Fix" in html
