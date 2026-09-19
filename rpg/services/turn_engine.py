@@ -935,13 +935,31 @@ def _build_manual_chat_prompt(
         "\n\n".join(_manual_history_message(message) for message in new_messages)
         or "(no new visible messages since the last synchronized external response)"
     )
+    accepted_messages = list(
+        Message.objects.filter(
+            execution=previous,
+            author_type=AuthorType.PLAYER,
+        )
+        .select_related("author_player")
+        .order_by("created_at", "pk")
+    )
+    accepted = (
+        "\n\n".join(
+            _manual_history_message(message) for message in accepted_messages
+        )
+        or "(no accepted player message was stored)"
+    )
     prompt = (
         "# MRAZ MANUAL CHAT BRIDGE · DELTA\n"
         "Continue the SAME RPG character in this SAME persistent external conversation. "
         "Keep the full character/world/rules context already established earlier in this "
         "chat. The application is intentionally sending only changes since the last "
-        "successfully imported response. Do not invent missing changes.\n\n"
-        "## CURRENT EXECUTION CONSTRAINTS\n"
+        "successfully imported response. Do not invent missing changes. Drafts or rejected "
+        "answers that may exist in this web chat are NOT canon unless the application "
+        "accepted them.\n\n"
+        "## LAST RESPONSE ACCEPTED BY THE APPLICATION\n"
+        + accepted
+        + "\n\n## CURRENT EXECUTION CONSTRAINTS\n"
         + _manual_delta_constraints(execution, out_of_turn=out_of_turn)
         + "\n\n## NEW CONTEXT SINCE LAST SYNC\n"
         + updates
