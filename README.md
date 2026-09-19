@@ -325,6 +325,56 @@ The normal scene view shows only the original-language sentence. Hovering or
 keyboard-focusing it displays the Russian translation in a tooltip. The Russian
 GM interface language is not treated as the in-world spoken language.
 
+## Manual external-chat transport
+
+A player can use `transport = MANUAL_CHAT` instead of LiteLLM/API generation.
+This is intentionally a human-in-the-loop bridge for models that are available
+only through a normal web chat.
+
+Configure the Player in Admin with:
+
+- **transport** = `MANUAL_CHAT`
+- optional **manual_chat_label** such as `ChatGPT 5.6`
+- optional **manual_chat_url** pointing at the persistent external conversation
+- **manual_chat_context_mode** = `FULL` or `CHAT_MEMORY`
+
+When that player is invoked, the TurnExecution moves to
+`WAITING_EXTERNAL` instead of calling LiteLLM. The player card shows the exact
+packet plus **Copy prompt**, **Open chat**, and a multiline response paste box.
+The pasted result then goes through the same structured-response parser,
+ROUND-role validation, ACT/ACT_OUT_OF_TURN limits, bilingual speech rendering,
+private_to_gm handling, Turn completion, and ROUND advancement as an API reply.
+A rejected paste leaves the execution in `WAITING_EXTERNAL` with the error and
+raw pasted text still visible for correction.
+
+`FULL` sends the complete authoritative application prompt and visible history
+on every execution.
+
+`CHAT_MEMORY` performs one complete **BOOTSTRAP** first. After a successful
+bootstrap response is pasted back, the Player is marked synchronized. Later
+executions send **DELTA** packets containing only newly visible public/private
+messages since the last successfully imported external response plus current
+scene/ROUND constraints, GM Silence state, one-shot Nudge, and the response
+contract. Imported response messages are included in the sync watermark, so the
+model's own previous answer is not pointlessly echoed back on the next delta.
+
+If the external conversation is replaced, cleared, or no longer remembers its
+bootstrap, use **Reset chat memory** on the player card. The next execution will
+send a fresh full bootstrap. Major out-of-band changes to character/world rules
+should be treated the same way when you want the external chat re-seeded from
+authoritative application context.
+
+General GM **OOC / META** messages and private GM messages naturally enter the
+next DELTA because they are part of that player's visible history. One-shot
+**Nudge** is embedded directly in the pending manual packet and remains frozen
+for that execution.
+
+The API-only per-message **Regen** and immediate **OOC revision** controls are
+hidden for manual-chat declarations rather than silently calling the player's
+old LiteLLM model. Use the persistent external chat plus the normal OOC/meta
+channel for now; a later browser bridge can automate the same Copy/Open/Paste
+contract without changing the Turn Engine.
+
 ## Stop
 
 ```bash
