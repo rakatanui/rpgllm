@@ -1,0 +1,103 @@
+<section class="panel human-character-reference">
+  <div class="human-character-reference-header">
+    <div>
+      <div class="meta">Character reference</div>
+      <h3>Notes and abilities</h3>
+    </div>
+    <a class="btn btn-small"
+       href="{% url 'human_episode_search' access_token %}">Search episodes</a>
+  </div>
+
+  <form method="get"
+        action="{% url 'human_episode_search' access_token %}"
+        class="human-episode-quick-search human-episode-quick-search-top">
+    <input type="text"
+           name="q"
+           placeholder="Search scenes and your visible history..."
+           aria-label="Search character episodes">
+    <button class="btn" type="submit">Search history</button>
+  </form>
+
+  {% if display_appearance and display_appearance.description %}
+    <div class="human-appearance-description">{{ display_appearance.description }}</div>
+  {% endif %}
+
+  {% if display_appearance and display_appearance.fullbody_image %}
+    <details class="human-fullbody-reference">
+      <summary>Full-body reference</summary>
+      <a href="{% url 'human_appearance_image' access_token display_appearance.pk 'fullbody' %}"
+         target="_blank"
+         rel="noopener">
+        <img src="{% url 'human_appearance_image' access_token display_appearance.pk 'fullbody' %}?v={{ display_appearance.updated_at|date:'U' }}"
+             alt="{{ player.display_name }} · {{ display_appearance.name }} full-body reference">
+      </a>
+    </details>
+  {% endif %}
+
+  {% if player.character_summary %}
+    <div class="human-character-summary">{{ player.character_summary }}</div>
+  {% elif player.character_prompt %}
+    <div class="human-character-summary meta">
+      Character card summary has not been filled in yet.
+    </div>
+  {% else %}
+    <div class="human-character-summary meta">No character summary yet.</div>
+  {% endif %}
+
+  <div class="human-character-sections">
+    <details>
+      <summary>Characteristics</summary>
+      {% if player.characteristics %}
+        <div class="msg-content">{{ player.characteristics }}</div>
+      {% else %}
+        <div class="meta">No characteristics added yet.</div>
+      {% endif %}
+    </details>
+
+    <details>
+      <summary>Abilities</summary>
+      {% if player.abilities %}
+        <div class="msg-content">{{ player.abilities }}</div>
+      {% else %}
+        <div class="meta">No abilities added yet.</div>
+      {% endif %}
+    </details>
+
+    <details>
+      <summary>Memory summary</summary>
+      {% if player.memory_summary %}
+        <div class="msg-content">{{ player.memory_summary }}</div>
+      {% else %}
+        <div class="meta">No long-term memory summary yet.</div>
+      {% endif %}
+    </details>
+  </div>
+
+  {% if not appearances %}
+    <details class="human-legacy-portrait-tools">
+      <summary>Portrait settings</summary>
+      <form method="post"
+            enctype="multipart/form-data"
+            action="{% url 'upload_human_character_image' access_token %}"
+            class="human-character-image-form">
+        {% csrf_token %}
+        <input type="file"
+               name="image"
+               accept="image/jpeg,image/png,image/webp"
+               required>
+        <button class="btn btn-small" type="submit">Upload portrait</button>
+      </form>
+
+      {% if player.character_image %}
+        <form method="post"
+              action="{% url 'remove_human_character_image' access_token %}"
+              class="human-character-image-remove"
+              onsubmit="return confirm('Remove the current character portrait?')">
+          {% csrf_token %}
+          <button class="btn btn-small" type="submit">Remove portrait</button>
+        </form>
+      {% endif %}
+      <div class="meta">Legacy portrait · JPEG, PNG or WebP · max 5 MB</div>
+    </details>
+  {% endif %}
+</section>
