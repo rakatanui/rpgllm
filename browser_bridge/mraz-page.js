@@ -28,7 +28,7 @@ function makeJobId(card) {
 
 async function startBridge(button) {
   const card = bridgeCardFromButton(button);
-  if (!card) return;
+  if (!card) return false;
 
   const promptElement = card.querySelector("[data-mraz-bridge-prompt]");
   const responseForm = card.querySelector("[data-mraz-bridge-response-form]");
@@ -94,20 +94,21 @@ function submitBridgeResult(message) {
 
   if (!message.ok) {
     setStatus(card, message.error || "External chat bridge failed.", "error");
-    return;
+    return true;
   }
 
   const form = card.querySelector("[data-mraz-bridge-response-form]");
   const response = form && form.querySelector('textarea[name="response"]');
   if (!form || !response) {
     setStatus(card, "Response returned, but the import form is missing.", "error");
-    return;
+    return false;
   }
 
   response.value = message.response || "";
   response.dispatchEvent(new Event("input", { bubbles: true }));
   setStatus(card, "Response received. Importing…", "done");
   form.requestSubmit();
+  return true;
 }
 
 document.addEventListener("click", (event) => {
@@ -117,10 +118,13 @@ document.addEventListener("click", (event) => {
   startBridge(button);
 });
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message && message.type === "MRAZ_BRIDGE_RESULT") {
-    submitBridgeResult(message);
+    sendResponse({ accepted: submitBridgeResult(message) });
+    return false;
   }
+  return false;
 });
 
 setBridgeReady();
+chrome.runtime.sendMessage({ type: "MRAZ_SOURCE_READY" }).catch(() => {});
