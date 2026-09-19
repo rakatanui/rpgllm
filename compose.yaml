@@ -85,6 +85,36 @@ services:
         condition: service_healthy
     # No ports; used only for `docker compose run --rm web-test pytest`
 
+  player-edge:
+    image: nginx:alpine
+    profiles: ["public-player"]
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    volumes:
+      - ./deploy/player-edge.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Deliberately no host port. Only cloudflared can reach this service
+    # through the private Compose network.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["public-player"]
+    restart: unless-stopped
+    environment:
+      # Official cloudflared environment equivalent of --token.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: ["tunnel", "--no-autoupdate", "run"]
+    depends_on:
+      player-edge:
+        condition: service_healthy
+    # Deliberately no host port. Cloudflare Tunnel is outbound-only.
+
 volumes:
   pgdata:
   media_data:
