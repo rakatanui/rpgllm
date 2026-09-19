@@ -1,7 +1,7 @@
 """SAOOT context and rendering rules."""
 import pytest
 
-from rpg.models import AuthorType, Message, TurnMode, Visibility
+from rpg.models import AuthorType, CharacterAppearance, Message, TurnMode, Visibility
 from rpg.services.context_builder import build_player_context
 from rpg.templatetags.rpg_extras import message_format, saoot_format
 from rpg.tests.factories import make_campaign, make_player, make_scene
@@ -160,3 +160,31 @@ def test_round_prompt_makes_interruptions_rare_and_turns_compact():
     assert "meta-level discussion" in ctx.system_prompt
     assert "[OOC META]" in ctx.system_prompt
     assert "it does not create an additional action or a new turn" in ctx.system_prompt
+
+
+@pytest.mark.django_db
+def test_player_context_includes_current_character_appearance():
+    campaign = make_campaign()
+    player = make_player(campaign, "Иллатиэль")
+    scene = make_scene(campaign, participants=[player])
+    CharacterAppearance.objects.create(
+        player=player,
+        name="Человеческий",
+        description="Выглядит как человек.",
+        is_primary=True,
+        order=0,
+    )
+    true_form = CharacterAppearance.objects.create(
+        player=player,
+        name="Ангельский",
+        description="Белые крылья и светящиеся голубые глаза.",
+        order=1,
+    )
+    participation = scene.scene_participants.get(player=player)
+    participation.current_appearance = true_form
+    participation.save(update_fields=["current_appearance"])
+
+    ctx = build_player_context(player=player, scene=scene)
+
+    assert "Current appearance: Ангельский" in ctx.system_prompt
+    assert "Белые крылья и светящиеся голубые глаза." in ctx.system_prompt
