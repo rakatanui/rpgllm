@@ -2276,6 +2276,7 @@ def test_human_episode_search_is_participant_and_visibility_scoped():
         mode=TurnMode.MANUAL,
         participants=[human, other],
         description="Старый склад.",
+        memory_summary="SUMMARY_NEEDLE: группа нашла скрытый вход.",
     )
     private_episode = make_scene(
         campaign,
@@ -2331,6 +2332,10 @@ def test_human_episode_search_is_participant_and_visibility_scoped():
     assert "Warehouse" in public_html
     assert "Apartment" not in public_html
 
+    summary_html = client.get(search_url, {"q": "SUMMARY_NEEDLE"}).content.decode()
+    assert "Warehouse" in summary_html
+    assert "группа нашла скрытый вход" in summary_html
+
     own_private_html = client.get(search_url, {"q": "OWN_PRIVATE_NEEDLE"}).content.decode()
     assert "Apartment" in own_private_html
 
@@ -2366,6 +2371,7 @@ def test_human_episode_detail_shows_only_public_and_own_private_history():
         name="Past episode",
         mode=TurnMode.MANUAL,
         participants=[human, other],
+        memory_summary="EPISODE_SUMMARY_VISIBLE",
     )
 
     Message.objects.create(
@@ -2410,6 +2416,7 @@ def test_human_episode_detail_shows_only_public_and_own_private_history():
         )
     ).content.decode()
 
+    assert "EPISODE_SUMMARY_VISIBLE" in html
     assert "VISIBLE_PUBLIC" in html
     assert "VISIBLE_OWN_PRIVATE" in html
     assert "HIDDEN_OTHER_PRIVATE" not in html
