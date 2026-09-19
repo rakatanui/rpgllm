@@ -13,6 +13,9 @@ from rpg.models import (
     AuthorType,
     CharacterAppearance,
     ExecutionState,
+    GameMasterConfig,
+    GameMasterExecutionState,
+    GameMasterTransport,
     LoreEntry,
     ManualChatContextMode,
     Message,
@@ -1961,6 +1964,109 @@ def test_human_submit_view_completes_waiting_execution(mock_backend):
 
 
 @pytest.mark.django_db
+def test_human_bearer_token_post_does_not_require_csrf():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    csrf_client = Client(enforce_csrf_checks=True)
+
+    response = csrf_client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Я отвечаю без CSRF cookie."},
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+
+
+@pytest.mark.django_db
+def test_csrf_remains_enabled_for_master_write_routes():
+    campaign = make_campaign()
+    player = make_player(campaign, "P")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
+    csrf_client = Client(enforce_csrf_checks=True)
+
+    response = csrf_client.post(
+        reverse("start_model_gm", kwargs={"scene_id": scene.pk})
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_human_submit_auto_continues_to_manual_chat_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Твой ход.",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    client = Client()
+
+    response = client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Я осматриваю вошедшего мужчину."},
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+
+    gm_execution = scene.gm_executions.get()
+    assert gm_execution.state == GameMasterExecutionState.WAITING_EXTERNAL
+    assert gm_execution.external_chat_url == "https://chatgpt.com/c/test-gm"
+
+    human_html = client.get(
+        _human_url("human_player_client", scene, human)
+    ).content.decode()
+    assert "MASTER THINKING" in human_html
+
+    gm_html = client.get(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+    ).content.decode()
+    assert 'data-mraz-gm-autoplay="1"' in gm_html
+    assert 'data-mraz-bridge-autostart="1"' in gm_html
+
+    gm_execution.error = "Rejected response"
+    gm_execution.save(update_fields=["error", "updated_at"])
+    paused_html = client.get(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+    ).content.decode()
+    assert 'data-mraz-gm-autoplay="1"' in paused_html
+    assert 'data-mraz-bridge-autostart="1"' not in paused_html
+
+
+@pytest.mark.django_db
 def test_human_access_token_cannot_submit_another_players_execution():
     campaign = make_campaign()
     human_a = make_player(campaign, "A", transport=PlayerTransport.HUMAN)
@@ -2216,10 +2322,15 @@ def test_human_client_preserves_disclosures_scroll_and_focus_across_polling():
     assert 'data-human-preserve-scroll="public"' in html
     assert 'id="human-private-feed"' in html
     assert 'data-human-preserve-scroll="private"' in html
+    assert 'hx-trigger="human-poll"' in html
+    assert 'hx-trigger="every 2s"' not in html
     assert "htmx:beforeSwap" in html
     assert "htmx:afterSwap" in html
     assert "captureHumanPollingState" in html
     assert "restoreHumanPollingState" in html
+    assert "humanPlayerIsEditing" in html
+    assert "selectionInsideHumanPanel" in html
+    assert "window.setInterval(pollHumanPlayerPanel, 2000)" in html
     assert "bottomGap" in html
     assert "selectionStart" in html
 

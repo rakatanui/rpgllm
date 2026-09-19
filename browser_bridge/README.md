@@ -58,8 +58,24 @@ the bridge job is keyed by execution id and stored in
 A job times out after ten minutes while waiting for an assistant response.
 Stale jobs are discarded after thirty minutes.
 
-The bridge intentionally requires an explicit click per execution. It does not
-create an autonomous model-to-model loop.
+By default the bridge still requires an explicit click per execution.
+
+When a campaign's GameMasterConfig has **auto_continue** enabled, the GM scene
+page registers itself as an autoplay source. After a HUMAN player submits a
+public move, Django creates the next model-GM execution automatically. The
+bridge detects the waiting GM execution, reloads the local source tab, sends the
+prompt to the configured persistent web chat, imports the response, and repeats
+after the next HUMAN move.
+
+For unattended phone play, keep these open on the GM machine:
+
+- the local MRAZ scene tab (`http://mraz.local/scene/.../`);
+- the configured persistent ChatGPT / Claude / Gemini / DeepSeek conversation.
+
+The extension uses the active external-chat tab as a heartbeat so Chromium's
+background-tab throttling does not normally stall the loop. The machine and
+browser must stay awake. `review_before_publish` must be disabled when
+`auto_continue` is enabled, otherwise every GM response would stop at a draft.
 
 ## Permissions
 

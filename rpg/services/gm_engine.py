@@ -25,6 +25,7 @@ from rpg.models import (
     ManualChatContextMode,
     Message,
     Player,
+    PlayerTransport,
     Scene,
     TurnMode,
     TurnState,
@@ -64,8 +65,8 @@ def gm_response_contract() -> str:
     )
 
 
-def gm_execution_request() -> str:
-    return (
+def gm_execution_request(scene: Scene) -> str:
+    text = (
         "## EXECUTION REQUEST\n"
         "The Game Master has been explicitly invoked to produce the next immediate GM beat now. "
         "Advance the fiction by one immediate beat from the authoritative current state. "
@@ -74,6 +75,54 @@ def gm_execution_request() -> str:
         "the beat should enter canon without immediately opening a player turn, and WAIT only when "
         "the established fiction specifically requires the GM to take no action at this moment."
     )
+
+    participants = list(
+        scene.scene_participants.select_related("player").order_by("order", "pk")
+    )
+    if (
+        scene.mode == TurnMode.MANUAL
+        and len(participants) == 1
+        and participants[0].player.transport == PlayerTransport.HUMAN
+    ):
+        player_id = participants[0].player_id
+        text += (
+            f" This MANUAL scene has exactly one HUMAN participant, player_id={player_id}. "
+            "If your beat introduces any event, NPC action or dialogue, environmental change, "
+            "clue, sensory cue, or consequence that this player could immediately react to, "
+            f"you must use TURN with turn_targets=[{player_id}]. "
+            "Use NARRATE only when you intentionally want no immediate player response."
+        )
+    return text
+
+
+def _normalize_model_gm_response(
+    response: GameMasterResponse,
+    *,
+    scene: Scene,
+) -> GameMasterResponse:
+    if response.action != GameMasterAction.NARRATE or not response.public:
+        return response
+    if scene.mode != TurnMode.MANUAL:
+        return response
+
+    participants = list(
+        scene.scene_participants.select_related("player").order_by("order", "pk")
+    )
+    if (
+        len(participants) != 1
+        or participants[0].player.transport != PlayerTransport.HUMAN
+    ):
+        return response
+
+    normalized = GameMasterResponse(
+        raw_text=response.raw_text,
+        action=GameMasterAction.TURN,
+        public=response.public,
+        private=response.private,
+        turn_targets=[participants[0].player_id],
+    )
+    _validate_gm_response(normalized, scene=scene)
+    return normalized
 
 
 def get_active_gm_execution(scene: Scene) -> GameMasterExecution | None:
@@ -95,6 +144,43 @@ def get_latest_gm_execution(scene: Scene) -> GameMasterExecution | None:
         .order_by("-created_at", "-pk")
         .first()
     )
+
+
+def maybe_start_auto_gm(*, scene: Scene) -> GameMasterExecution | None:
+    """Start the next GM beat after a completed public HUMAN turn when enabled.
+
+    This helper is intentionally best-effort: a player's accepted move must stay
+    accepted even if the automatic GM continuation cannot start because another
+    turn/execution appeared concurrently or the scene/configuration changed.
+    """
+    scene = Scene.objects.select_related("campaign").get(pk=scene.pk)
+    config = (
+        GameMasterConfig.objects.filter(campaign=scene.campaign)
+        .select_related("model_config", "fallback_model_config")
+        .first()
+    )
+    if (
+        scene.is_closed
+        or config is None
+        or not config.enabled
+        or not config.auto_continue
+        or config.review_before_publish
+    ):
+        return None
+    if (
+        config.transport == GameMasterTransport.MANUAL_CHAT
+        and not (config.manual_chat_url or "").strip()
+    ):
+        return None
+    if scene.turns.filter(state=TurnState.RUNNING).exists():
+        return None
+    if get_active_gm_execution(scene) is not None:
+        return None
+
+    try:
+        return start_gm_execution(scene=scene)
+    except ValidationError:
+        return None
 
 
 def start_gm_execution(*, scene: Scene) -> GameMasterExecution:
@@ -215,6 +301,10 @@ def submit_external_gm_response(
 
         try:
             response = parse_gm_response(raw, scene=execution.scene)
+            response = _normalize_model_gm_response(
+                response,
+                scene=execution.scene,
+            )
         except Exception as exc:
             execution.error = str(exc)
             execution.raw_response = raw
@@ -576,7 +666,7 @@ def _run_provider_execution(
             system_prompt=system_prompt,
             messages=[
                 *messages,
-                {"role": "user", "content": gm_execution_request()},
+                {"role": "user", "content": gm_execution_request(execution.scene)},
             ],
             model=model_config.gateway_model,
             temperature=model_config.temperature,
@@ -584,6 +674,10 @@ def _run_provider_execution(
         elapsed = int((time.perf_counter() - started) * 1000)
         raw = provider_response.raw_text or ""
         response = parse_gm_response(raw, scene=execution.scene)
+        response = _normalize_model_gm_response(
+            response,
+            scene=execution.scene,
+        )
         execution.refresh_from_db()
         _apply_response_to_execution(execution, response)
         execution.latency_ms = elapsed
@@ -674,7 +768,7 @@ def _build_manual_chat_prompt(
             + "\n\n## CHAT CONTEXT\n"
             + rendered
             + "\n\n"
-            + gm_execution_request()
+            + gm_execution_request(execution.scene)
             + "\n\n## RESPONSE CONTRACT\n"
             + gm_response_contract()
         )
@@ -722,7 +816,7 @@ def _build_manual_chat_prompt(
         + "\n\n## NEW CANON SINCE LAST SYNC\n"
         + updates
         + "\n\n"
-        + gm_execution_request()
+        + gm_execution_request(execution.scene)
         + "\n\n## RESPONSE CONTRACT\n"
         + gm_response_contract()
     )

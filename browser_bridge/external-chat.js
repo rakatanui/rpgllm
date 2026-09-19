@@ -389,3 +389,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 
 chrome.runtime.sendMessage({ type: "MRAZ_EXTERNAL_READY" }).catch(() => {});
+
+// When this persistent chat tab is left open on the GM machine, its heartbeat
+// keeps the MV3 service worker awake enough to notice new HUMAN -> GM autoplay
+// work even while the local MRAZ scene tab is in the background.
+window.setInterval(() => {
+  chrome.runtime.sendMessage({ type: "MRAZ_AUTOPLAY_TICK" }).catch(() => {});
+}, 2500);

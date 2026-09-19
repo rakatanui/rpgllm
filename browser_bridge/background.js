@@ -1,4 +1,5 @@
 const JOB_PREFIX = "mraz-bridge-job:";
+const AUTOPLAY_SOURCE_KEY = "mraz-autoplay-source";
 
 function jobKey(jobId) {
   return JOB_PREFIX + jobId;
@@ -16,6 +17,19 @@ async function loadJob(jobId) {
 
 async function deleteJob(jobId) {
   await chrome.storage.session.remove(jobKey(jobId));
+}
+
+async function saveAutoplaySource(source) {
+  await chrome.storage.session.set({ [AUTOPLAY_SOURCE_KEY]: source });
+}
+
+async function loadAutoplaySource() {
+  const data = await chrome.storage.session.get(AUTOPLAY_SOURCE_KEY);
+  return data[AUTOPLAY_SOURCE_KEY] || null;
+}
+
+async function clearAutoplaySource() {
+  await chrome.storage.session.remove(AUTOPLAY_SOURCE_KEY);
 }
 
 async function allJobs() {
@@ -164,8 +178,102 @@ async function startJob(message, sender) {
   return { accepted: true };
 }
 
+async function registerAutoplaySource(message, sender) {
+  if (!sender.tab || !sender.tab.id || !message.sourceUrl) {
+    return { accepted: false };
+  }
+  const source = {
+    sourceTabId: sender.tab.id,
+    sourceUrl: message.sourceUrl,
+    registeredAt: Date.now(),
+    lastReloadExecution: null,
+    lastReloadAt: 0,
+  };
+  await saveAutoplaySource(source);
+  return { accepted: true };
+}
+
+async function tickAutoplay() {
+  const source = await loadAutoplaySource();
+  if (!source || !source.sourceTabId || !source.sourceUrl) {
+    return { accepted: false };
+  }
+
+  try {
+    await chrome.tabs.get(source.sourceTabId);
+  } catch {
+    await clearAutoplaySource();
+    return { accepted: false };
+  }
+
+  const jobs = await allJobs();
+  if (jobs.some((job) => job.sourceTabId === source.sourceTabId)) {
+    return { accepted: true, busy: true };
+  }
+
+  let response;
+  try {
+    response = await fetch(source.sourceUrl, {
+      method: "GET",
+      cache: "no-store",
+      credentials: "include",
+      redirect: "follow",
+    });
+  } catch {
+    return { accepted: false };
+  }
+  if (!response.ok) {
+    return { accepted: false };
+  }
+
+  const html = await response.text();
+  const autostartMatch = html.match(
+    /data-mraz-bridge-execution="(\d+)"[\s\S]{0,1200}?data-mraz-bridge-autostart="1"|data-mraz-bridge-autostart="1"[\s\S]{0,1200}?data-mraz-bridge-execution="(\d+)"/
+  );
+  const executionId = autostartMatch
+    ? (autostartMatch[1] || autostartMatch[2])
+    : null;
+
+  if (!executionId) {
+    if (source.lastReloadExecution !== null) {
+      source.lastReloadExecution = null;
+      source.lastReloadAt = 0;
+      await saveAutoplaySource(source);
+    }
+    return { accepted: true, pending: false };
+  }
+
+  const now = Date.now();
+  if (
+    source.lastReloadExecution === executionId &&
+    now - Number(source.lastReloadAt || 0) < 8000
+  ) {
+    return { accepted: true, pending: true, rateLimited: true };
+  }
+
+  source.lastReloadExecution = executionId;
+  source.lastReloadAt = now;
+  await saveAutoplaySource(source);
+  await chrome.tabs.reload(source.sourceTabId);
+  return { accepted: true, pending: true, reloaded: true };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
+
+  if (message.type === "MRAZ_AUTOPLAY_REGISTER") {
+    registerAutoplaySource(message, sender)
+      .then(sendResponse)
+      .catch(() => sendResponse({ accepted: false }));
+    return true;
+  }
+
+  if (message.type === "MRAZ_AUTOPLAY_TICK") {
+    tickAutoplay()
+      .then(sendResponse)
+      .catch(() => sendResponse({ accepted: false }));
+    return true;
+  }
 
   if (message.type === "MRAZ_BRIDGE_START") {
     startJob(message, sender)
@@ -271,6 +379,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const source = await loadAutoplaySource();
+  if (source && source.sourceTabId === tabId) {
+    await clearAutoplaySource();
+  }
+
   const jobs = await allJobs();
   for (const job of jobs) {
     if (job.sourceTabId === tabId) {
