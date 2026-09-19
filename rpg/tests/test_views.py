@@ -2015,6 +2015,14 @@ def test_human_submit_auto_continues_to_manual_chat_gm():
     assert 'data-mraz-gm-autoplay="1"' in gm_html
     assert 'data-mraz-bridge-autostart="1"' in gm_html
 
+    gm_execution.error = "Rejected response"
+    gm_execution.save(update_fields=["error", "updated_at"])
+    paused_html = client.get(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+    ).content.decode()
+    assert 'data-mraz-gm-autoplay="1"' in paused_html
+    assert 'data-mraz-bridge-autostart="1"' not in paused_html
+
 
 @pytest.mark.django_db
 def test_human_access_token_cannot_submit_another_players_execution():
