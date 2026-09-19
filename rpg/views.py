@@ -11,6 +11,7 @@ from django.http import FileResponse, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from rpg.forms import CharacterImageUploadForm
@@ -649,6 +650,7 @@ def human_player_fragment(request, access_token):
     return _secure_human_response(response)
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def submit_human_response(request, access_token, execution_id):
     scene, player, _ = _human_access_for_token(access_token)
@@ -689,6 +691,7 @@ def submit_human_response(request, access_token, execution_id):
     )
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def human_send_ooc(request, access_token):
     scene, player, _ = _human_access_for_token(access_token)
@@ -739,6 +742,7 @@ def human_appearance_image(request, access_token, appearance_id, image_kind):
     return response
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def set_human_current_appearance(request, access_token, appearance_id):
     scene, player, participation = _human_access_for_token(access_token)
@@ -769,6 +773,7 @@ def human_character_image(request, access_token):
     return response
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def upload_human_character_image(request, access_token):
     _, player, _ = _human_access_for_token(access_token)
@@ -790,6 +795,7 @@ def upload_human_character_image(request, access_token):
     )
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def remove_human_character_image(request, access_token):
     _, player, _ = _human_access_for_token(access_token)
