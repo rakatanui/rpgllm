@@ -19,6 +19,8 @@ from django.db.models import Max
 from rpg.models import (
     AuthorType,
     ExecutionState,
+    GameMasterConfig,
+    GameMasterTransport,
     Message,
     ManualChatContextMode,
     MessageRevision,
@@ -1773,6 +1775,11 @@ def _invalidate_manual_chat_memory_for_scene(scene: Scene) -> None:
     Player.objects.filter(
         scene_participations__scene=scene,
         transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    ).update(manual_chat_initialized=False)
+    GameMasterConfig.objects.filter(
+        campaign=scene.campaign,
+        transport=GameMasterTransport.MANUAL_CHAT,
         manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
     ).update(manual_chat_initialized=False)
 
