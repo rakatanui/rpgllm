@@ -63,3 +63,30 @@ def test_local_gm_hostname_remains_available_when_public_host_is_enabled():
     )
 
     assert response.status_code == 200
+
+
+
+@pytest.mark.django_db
+@override_settings(**PUBLIC_HOST_SETTINGS)
+def test_gm_scene_copies_public_https_player_link_when_configured():
+    campaign = make_campaign()
+    human = make_player(
+        campaign,
+        "Живой",
+        transport=PlayerTransport.HUMAN,
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[human],
+    )
+    token = scene.scene_participants.get(player=human).human_access_token
+
+    response = Client(HTTP_HOST="mraz.local").get(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+    )
+    html = response.content.decode()
+
+    expected = f"https://players.example.test{reverse('human_player_client', kwargs={'access_token': token})}"
+    assert response.status_code == 200
+    assert expected in html
