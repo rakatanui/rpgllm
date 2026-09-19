@@ -1,7 +1,7 @@
 """Tests for model-level visibility constraints."""
 import pytest
 from django.core.exceptions import ValidationError
-from rpg.models import AuthorType, Message, Visibility
+from rpg.models import AuthorType, CharacterAppearance, Message, SceneParticipant, Visibility
 from rpg.tests.factories import make_campaign, make_player, make_scene, make_three_players
 
 
@@ -63,3 +63,21 @@ def test_round_order_rejects_missing_player():
     scene = make_scene(camp, round_order=[local.pk, 999999])
     with pytest.raises(ValidationError):
         scene.full_clean()
+
+
+@pytest.mark.django_db
+def test_scene_participant_rejects_foreign_current_appearance():
+    camp = make_campaign()
+    local = make_player(camp, "Local")
+    other = make_player(camp, "Other")
+    scene = make_scene(camp, participants=[local, other])
+    foreign_form = CharacterAppearance.objects.create(
+        player=other,
+        name="Foreign form",
+        is_primary=True,
+    )
+    participation = SceneParticipant.objects.get(scene=scene, player=local)
+    participation.current_appearance = foreign_form
+
+    with pytest.raises(ValidationError):
+        participation.full_clean()
