@@ -188,6 +188,8 @@ def test_api_gm_creates_review_draft_then_turn_with_private_context():
     assert client.calls[0]["messages"][-1]["role"] == "user"
     assert "## EXECUTION REQUEST" in client.calls[0]["messages"][-1]["content"]
     assert "does not by itself justify WAIT" in client.calls[0]["messages"][-1]["content"]
+    assert f"player_id={human.pk}" in client.calls[0]["messages"][-1]["content"]
+    assert f"turn_targets=[{human.pk}]" in client.calls[0]["messages"][-1]["content"]
 
     gm_engine.publish_gm_execution(execution=execution)
     execution.refresh_from_db()
@@ -212,6 +214,44 @@ def test_api_gm_creates_review_draft_then_turn_with_private_context():
     player_execution = turn.executions.get(player=human)
     assert player_execution.state == ExecutionState.WAITING_HUMAN
     assert private.pk in player_execution.history_message_ids
+
+
+@pytest.mark.django_db
+def test_model_gm_narrate_becomes_turn_for_single_human_in_manual_scene():
+    campaign = make_campaign()
+    model = make_model("Solo GM", gateway_model="solo-gm")
+    human = make_player(
+        campaign,
+        "Human",
+        transport=PlayerTransport.HUMAN,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.LITELLM,
+        model_config=model,
+        review_before_publish=False,
+    )
+    client = StaticGMClient(
+        {
+            "action": "NARRATE",
+            "public": "В кафе входит незнакомец и направляется к твоему столику.",
+            "private": [],
+            "turn_targets": [],
+        }
+    )
+
+    with patch("rpg.services.gm_engine.get_llm_client", return_value=client):
+        execution = gm_engine.start_gm_execution(scene=scene)
+
+    execution.refresh_from_db()
+    assert execution.state == GameMasterExecutionState.PUBLISHED
+    assert execution.action == GameMasterAction.TURN
+    assert execution.turn_targets == [human.pk]
+    assert execution.published_turn_id is not None
+    player_execution = execution.published_turn.executions.get(player=human)
+    assert player_execution.state == ExecutionState.WAITING_HUMAN
 
 
 @pytest.mark.django_db
