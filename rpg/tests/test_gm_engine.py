@@ -287,7 +287,11 @@ def test_gm_narrate_publishes_without_opening_player_turn():
 @pytest.mark.django_db
 def test_manual_chat_gm_builds_bridge_and_imports_draft():
     campaign = make_campaign()
-    player = make_player(campaign, "P")
+    player = make_player(
+        campaign,
+        "P",
+        transport=PlayerTransport.HUMAN,
+    )
     scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
     config = GameMasterConfig.objects.create(
         campaign=campaign,
@@ -305,6 +309,8 @@ def test_manual_chat_gm_builds_bridge_and_imports_draft():
     assert "## EXECUTION REQUEST" in execution.external_prompt
     assert "explicitly invoked to produce the next immediate GM beat now" in execution.external_prompt
     assert "does not by itself justify WAIT" in execution.external_prompt
+    assert f"player_id={player.pk}" in execution.external_prompt
+    assert f"turn_targets=[{player.pk}]" in execution.external_prompt
     assert "TURN|NARRATE|WAIT" in execution.external_prompt
     assert execution.external_is_bootstrap is True
 
@@ -324,7 +330,9 @@ def test_manual_chat_gm_builds_bridge_and_imports_draft():
     execution.refresh_from_db()
     config.refresh_from_db()
     assert execution.state == GameMasterExecutionState.DRAFT
+    assert execution.action == GameMasterAction.TURN
     assert execution.public_draft == "За окном раздаётся выстрел."
+    assert execution.turn_targets == [player.pk]
     assert execution.external_synced_message_ids == execution.context_message_ids
     assert config.manual_chat_initialized is True
 
