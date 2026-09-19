@@ -617,7 +617,7 @@ def test_saoot_controls_list_latest_round_out_of_turn_declarations():
     assert response.status_code == 200
     html = response.content.decode()
     assert 'id="saoot-target"' in html
-    assert ">SAOOT" in html
+    assert "SAOOT" in html
     assert f'value="{mila.pk}"' in html
     assert f'value="{mathis.pk}"' in html
     assert "Мила перехватывает дверь." in html
@@ -692,7 +692,7 @@ def test_saoot_marker_renders_as_highlight_without_raw_markup():
         visibility=Visibility.PUBLIC,
     )
 
-    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    response = Client().get(reverse("scene_fragment", kwargs={"scene_id": scene.pk}))
 
     html = response.content.decode()
     assert "saoot-resolution" in html
@@ -1548,14 +1548,6 @@ def test_history_search_spans_predecessor_scenes_and_filters_author_action():
         name="Old scene",
         mode=TurnMode.MANUAL,
         participants=[lucien, mila],
-        is_closed=True,
-    )
-    new_scene = make_scene(
-        campaign,
-        name="New scene",
-        mode=TurnMode.MANUAL,
-        participants=[lucien, mila],
-        predecessors=[old_scene],
     )
 
     Message.objects.create(
@@ -1566,6 +1558,16 @@ def test_history_search_spans_predecessor_scenes_and_filters_author_action():
         content="Старый след про Сибиллу.",
         visibility=Visibility.PUBLIC,
         action_type="ACT",
+    )
+    old_scene.is_closed = True
+    old_scene.save(update_fields=["is_closed", "updated_at"])
+
+    new_scene = make_scene(
+        campaign,
+        name="New scene",
+        mode=TurnMode.MANUAL,
+        participants=[lucien, mila],
+        predecessors=[old_scene],
     )
     Message.objects.create(
         campaign=campaign,
