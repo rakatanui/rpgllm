@@ -83,7 +83,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name="characterappearance",
             constraint=models.UniqueConstraint(
-                condition=models.Q(("is_primary", True)),
+                condition=models.Q(is_primary=True),
                 fields=("player",),
                 name="uniq_primary_character_appearance_per_player",
             ),
