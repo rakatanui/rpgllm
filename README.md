@@ -340,6 +340,15 @@ through the player-facing client.
 The GM player card exposes **Open player client** for HUMAN participants. The
 client is deliberately thin and mobile-friendly:
 
+- a character card with portrait, player-facing summary, characteristics,
+  abilities and that character's private long-term memory summary;
+- portrait upload/replacement/removal directly from the player client
+  (JPEG/PNG/WebP, max 5 MB);
+- episode search across every Scene in which that character participated,
+  including episode title/description/summary plus PUBLIC history and only that
+  character's own PRIVATE_GM_PLAYER history;
+- a privacy-filtered episode detail page with the public transcript and that
+  character's private GM channel;
 - current public scene feed;
 - only that player's private GM channel;
 - clear waiting / active / inactive status;
@@ -348,6 +357,13 @@ client is deliberately thin and mobile-friendly:
 - server-derived legal action choices;
 - optional private note attached to the move;
 - standalone OOC message to the GM.
+
+Character-card descriptive fields are maintained by the GM in the Player admin.
+The model-facing `character_prompt` is intentionally not dumped into the human
+client; the client uses separate player-facing `character_summary`,
+`characteristics` and `abilities` fields. Uploaded portraits are stored in a
+persistent Docker `media_data` volume and served through the player-scoped
+application route rather than as a public static/media directory.
 
 ROUND rules remain authoritative on the server. An active human gets ACT/PASS;
 an inactive human gets PASS/ACT_OUT_OF_TURN. Human submissions pass through the
