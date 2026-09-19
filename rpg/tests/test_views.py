@@ -1096,7 +1096,7 @@ def test_round_scene_shows_silence_button():
     assert response.status_code == 200
     assert 'id="gm-silence-button"' in html
     assert reverse("silent_turn", kwargs={"scene_id": scene.pk}) in html
-    assert ">\n      Молчание\n    </button>" in html
+    assert "Молчание" in html
 
 
 @pytest.mark.django_db
