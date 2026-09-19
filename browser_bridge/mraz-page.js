@@ -1,5 +1,7 @@
 const BRIDGE_BUTTON_SELECTOR = ".mraz-browser-bridge-button";
 const STATUS_SELECTOR = ".mraz-browser-bridge-status";
+const AUTOPLAY_SELECTOR = '[data-mraz-gm-autoplay="1"]';
+const AUTOSTART_CARD_SELECTOR = '[data-mraz-bridge-card][data-mraz-bridge-autostart="1"]';
 
 function setBridgeReady() {
   document.documentElement.dataset.mrazBrowserBridge = "ready";
@@ -29,6 +31,7 @@ function makeJobId(card) {
 async function startBridge(button) {
   const card = bridgeCardFromButton(button);
   if (!card) return false;
+  if (card.dataset.mrazBridgeJob) return true;
 
   const promptElement = card.querySelector("[data-mraz-bridge-prompt]");
   const responseForm = card.querySelector("[data-mraz-bridge-response-form]");
@@ -129,5 +132,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+function autoStartBridgeIfPresent() {
+  const card = document.querySelector(AUTOSTART_CARD_SELECTOR);
+  if (!card || card.dataset.mrazBridgeJob) return false;
+  const button = card.querySelector(BRIDGE_BUTTON_SELECTOR);
+  if (!button || button.disabled) return false;
+  startBridge(button);
+  return true;
+}
+
+function autoplayEnabled() {
+  return Boolean(document.querySelector(AUTOPLAY_SELECTOR));
+}
+
+async function registerAutoplaySource() {
+  if (!autoplayEnabled()) return;
+  await chrome.runtime.sendMessage({
+    type: "MRAZ_AUTOPLAY_REGISTER",
+    sourceUrl: window.location.href,
+  }).catch(() => {});
+}
+
+function tickAutoplay() {
+  if (!autoplayEnabled()) return;
+  chrome.runtime.sendMessage({ type: "MRAZ_AUTOPLAY_TICK" }).catch(() => {});
+}
+
 setBridgeReady();
+autoStartBridgeIfPresent();
 chrome.runtime.sendMessage({ type: "MRAZ_SOURCE_READY" }).catch(() => {});
+registerAutoplaySource().then(tickAutoplay).catch(() => {});
+window.setInterval(tickAutoplay, 2500);
