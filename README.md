@@ -406,7 +406,7 @@ player browser
         → Django
 ```
 
-`player-edge` only proxies `/play/` and `/static/`. Every other path,
+`player-edge` only proxies `/play/` and `/static/rpg/`. Every other path,
 including `/`, `/scene/`, `/admin/`, debug pages and health endpoints,
 returns 404. Django also has a second host-level guard:
 when a request arrives on `PUBLIC_PLAYER_HOST`, only those same public
