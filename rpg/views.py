@@ -928,6 +928,8 @@ def set_player_nudge(request, scene_id, player_id):
     )
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
+    if player.transport == PlayerTransport.HUMAN:
+        return HttpResponseBadRequest("Nudge is for model players, not HUMAN transport")
     player.pending_nudge = (request.POST.get("content") or "").strip()
     player.save(update_fields=["pending_nudge", "updated_at"])
     return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
