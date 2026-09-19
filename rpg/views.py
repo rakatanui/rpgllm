@@ -316,7 +316,6 @@ def scene_view(request, scene_id):
     )
     unread_private_player_ids = _unread_private_player_ids(scene)
     human_access_by_player, human_client_url_by_player = _human_access_ui_context(
-        request,
         scene,
     )
     public_messages = list(
@@ -497,7 +496,7 @@ def players_status(request, scene_id):
     )
 
 
-def _human_access_ui_context(request, scene: Scene) -> tuple[dict, dict]:
+def _human_access_ui_context(scene: Scene) -> tuple[dict, dict]:
     participations = {
         participation.player_id: participation
         for participation in SceneParticipant.objects.filter(
@@ -506,11 +505,9 @@ def _human_access_ui_context(request, scene: Scene) -> tuple[dict, dict]:
         ).select_related("player")
     }
     urls = {
-        player_id: request.build_absolute_uri(
-            reverse(
-                "human_player_client",
-                kwargs={"access_token": participation.human_access_token},
-            )
+        player_id: reverse(
+            "human_player_client",
+            kwargs={"access_token": participation.human_access_token},
         )
         for player_id, participation in participations.items()
     }
