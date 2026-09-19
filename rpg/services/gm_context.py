@@ -107,15 +107,17 @@ def _latest_player_knowledge_lookup(scene: Scene) -> Message | None:
     message = (
         Message.objects.filter(
             scene=scene,
-            author_type=AuthorType.PLAYER,
             visibility=Visibility.PUBLIC,
         )
-        .exclude(action_type="PASS")
         .select_related("author_player")
         .order_by("-created_at", "-pk")
         .first()
     )
-    if message is None:
+    if (
+        message is None
+        or message.author_type != AuthorType.PLAYER
+        or message.action_type == "PASS"
+    ):
         return None
 
     text = (message.content or "").strip().lower()
