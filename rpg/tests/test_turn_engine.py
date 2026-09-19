@@ -1377,6 +1377,8 @@ def test_chat_memory_bootstrap_then_delta_only_sends_new_context(mock_backend):
     assert "MRAZ MANUAL CHAT BRIDGE · DELTA" in second_execution.external_prompt
     assert "## SYSTEM PROMPT" not in second_execution.external_prompt
     assert "BIG STATIC CAMPAIGN RULES" not in second_execution.external_prompt
+    assert "LAST RESPONSE ACCEPTED BY THE APPLICATION" in second_execution.external_prompt
+    assert "Первый ответ." in second_execution.external_prompt
     assert "Помни про красный ключ." in second_execution.external_prompt
     assert "Второй мастерский ввод." in second_execution.external_prompt
     assert "Первый мастерский ввод." not in second_execution.external_prompt
