@@ -20,6 +20,13 @@ def test_browser_bridge_manifest_is_loadable_and_scoped():
     assert "https://gemini.google.com/*" in manifest["host_permissions"]
     assert "https://chat.deepseek.com/*" in manifest["host_permissions"]
 
+    external_matches = next(
+        item["matches"]
+        for item in manifest["content_scripts"]
+        if "external-chat.js" in item["js"]
+    )
+    assert "https://chat.deepseek.com/*" in external_matches
+
 
 def test_browser_bridge_files_required_by_manifest_exist():
     manifest = json.loads((BRIDGE / "manifest.json").read_text(encoding="utf-8"))
@@ -53,4 +60,5 @@ def test_browser_bridge_contains_deepseek_adapter():
     assert "textarea[placeholder='Message DeepSeek']" in external
     assert "div.ds-message:has(.ds-markdown)" in external
     assert "completionStablePolls: 7" in external
+    assert "preferLastResponseBody: true" in external
     assert '"chat.deepseek.com"' in background
