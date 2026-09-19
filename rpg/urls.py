@@ -61,6 +61,31 @@ urlpatterns = [
         views.human_send_ooc,
         name="human_send_ooc",
     ),
+    path(
+        "scene/<int:scene_id>/gm-model/start/",
+        views.start_model_gm,
+        name="start_model_gm",
+    ),
+    path(
+        "scene/<int:scene_id>/gm-model/execution/<int:execution_id>/import/",
+        views.submit_external_model_gm,
+        name="submit_external_model_gm",
+    ),
+    path(
+        "scene/<int:scene_id>/gm-model/execution/<int:execution_id>/publish/",
+        views.publish_model_gm,
+        name="publish_model_gm",
+    ),
+    path(
+        "scene/<int:scene_id>/gm-model/execution/<int:execution_id>/discard/",
+        views.discard_model_gm,
+        name="discard_model_gm",
+    ),
+    path(
+        "scene/<int:scene_id>/gm-model/reset-chat/",
+        views.reset_model_gm_chat,
+        name="reset_model_gm_chat",
+    ),
     path("scene/<int:scene_id>/history-search/", views.search_history, name="search_history"),
     path("scene/<int:scene_id>/send/", views.send_gm_message, name="send_gm_message"),
     path("scene/<int:scene_id>/silence/", views.silent_turn, name="silent_turn"),

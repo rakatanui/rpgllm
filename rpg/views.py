@@ -26,12 +26,15 @@ from rpg.models import (
     Scene,
     SceneParticipant,
     ExecutionState,
+    GameMasterConfig,
+    GameMasterExecution,
+    GameMasterExecutionState,
     TurnExecution,
     TurnMode,
     TurnState,
     Visibility,
 )
-from rpg.services import turn_engine
+from rpg.services import gm_engine, turn_engine
 from rpg.services.context_builder import get_scene_lineage
 from rpg.services.scene_summary import generate_close_summary
 
@@ -333,6 +336,27 @@ def scene_view(request, scene_id):
         and message.author_type == AuthorType.PLAYER
     }
 
+    gm_config = (
+        GameMasterConfig.objects.filter(campaign=scene.campaign)
+        .select_related("model_config", "fallback_model_config")
+        .first()
+    )
+    gm_active_execution = gm_engine.get_active_gm_execution(scene)
+    gm_latest_execution = gm_engine.get_latest_gm_execution(scene)
+    gm_execution = gm_active_execution or gm_latest_execution
+    gm_private_drafts = {}
+    gm_target_ids = set()
+    if gm_execution is not None:
+        gm_private_drafts = {
+            int(item.get("player_id")): str(item.get("content", ""))
+            for item in (gm_execution.private_drafts or [])
+            if item.get("player_id") is not None
+        }
+        gm_target_ids = {
+            int(player_id)
+            for player_id in (gm_execution.turn_targets or [])
+        }
+
     player_private = {}
     for player in players:
         private_messages = list(
@@ -379,6 +403,16 @@ def scene_view(request, scene_id):
             "waiting_human_by_player": waiting_human_by_player,
             "saoot_candidates": saoot_candidates,
             "gm_only_messages": gm_only_messages,
+            "gm_config": gm_config,
+            "gm_execution": gm_execution,
+            "gm_active_execution": gm_active_execution,
+            "gm_private_drafts": gm_private_drafts,
+            "gm_target_ids": gm_target_ids,
+            "gm_actions": [
+                ("TURN", "TURN · publish + call players"),
+                ("NARRATE", "NARRATE · publish only"),
+                ("WAIT", "WAIT · publish nothing"),
+            ],
             "player_private": player_private,
             "modes": TurnMode.choices,
             "round_players": round_players,
@@ -832,6 +866,98 @@ def _selected_players_from_request(request, scene):
     if len(players_by_id) != len(requested_ids):
         raise ValidationError("Selected player is not a participant in this scene")
     return [players_by_id[player_id] for player_id in requested_ids]
+
+
+@require_http_methods(["POST"])
+def start_model_gm(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    try:
+        gm_engine.start_gm_execution(scene=scene)
+    except ValidationError as exc:
+        return HttpResponseBadRequest(str(exc))
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def submit_external_model_gm(request, scene_id, execution_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    execution = get_object_or_404(
+        GameMasterExecution.objects.select_related("config", "scene"),
+        pk=execution_id,
+        scene=scene,
+    )
+    try:
+        gm_engine.submit_external_gm_response(
+            execution=execution,
+            raw_text=request.POST.get("response") or "",
+        )
+    except ValidationError:
+        # Keep the bridge visible with its stored rejection reason.
+        pass
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def publish_model_gm(request, scene_id, execution_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    execution = get_object_or_404(
+        GameMasterExecution,
+        pk=execution_id,
+        scene=scene,
+    )
+
+    action = (request.POST.get("action") or execution.action or "").strip().upper()
+    public_text = request.POST.get("public")
+    private_by_player = {
+        player.pk: request.POST.get(f"private_{player.pk}") or ""
+        for player in _scene_players(scene)
+    }
+
+    raw_target_ids = request.POST.getlist("turn_targets")
+    try:
+        target_ids = [int(value) for value in raw_target_ids]
+    except ValueError:
+        return HttpResponseBadRequest("invalid GM turn target")
+    if action != "TURN":
+        target_ids = []
+    if action == "WAIT":
+        public_text = ""
+        private_by_player = {}
+
+    try:
+        gm_engine.publish_gm_execution(
+            execution=execution,
+            action=action,
+            public_text=public_text,
+            private_by_player=private_by_player,
+            turn_target_ids=target_ids,
+        )
+    except ValidationError as exc:
+        return HttpResponseBadRequest(str(exc))
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def discard_model_gm(request, scene_id, execution_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    execution = get_object_or_404(
+        GameMasterExecution,
+        pk=execution_id,
+        scene=scene,
+    )
+    try:
+        gm_engine.discard_gm_execution(execution=execution)
+    except ValidationError as exc:
+        return HttpResponseBadRequest(str(exc))
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def reset_model_gm_chat(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    config = get_object_or_404(GameMasterConfig, campaign=scene.campaign)
+    gm_engine.reset_gm_manual_chat_memory(config=config)
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
 
 
 @require_http_methods(["POST"])

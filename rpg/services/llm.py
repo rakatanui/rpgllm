@@ -51,6 +51,23 @@ class MockLLMClient:
         model: str,
         temperature: float = 0.7,
     ) -> LLMResponse:
+        if "[GAME MASTER]" in system_prompt:
+            public = "Mock GM advances one immediate beat."
+            raw = json.dumps(
+                {
+                    "action": "NARRATE",
+                    "public": public,
+                    "private": [],
+                    "turn_targets": [],
+                }
+            )
+            return LLMResponse(
+                raw_text=raw,
+                action_type="ACT",
+                public=public,
+                private_to_gm="",
+            )
+
         player_name = "Player"
         for line in system_prompt.splitlines():
             if line.startswith("[PLAYER:"):
