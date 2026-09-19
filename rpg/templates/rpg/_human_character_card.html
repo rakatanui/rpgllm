@@ -1,0 +1,97 @@
+<section class="panel human-character-card">
+  <div class="human-character-portrait-column">
+    <div class="human-character-portrait">
+      {% if player.character_image %}
+        <img src="{% url 'human_character_image' scene.pk player.pk %}?v={{ player.updated_at|date:'U' }}"
+             alt="{{ player.display_name }} portrait">
+      {% else %}
+        <div class="human-character-portrait-placeholder" aria-hidden="true">
+          {{ player.display_name|first|upper }}
+        </div>
+      {% endif %}
+    </div>
+
+    <form method="post"
+          enctype="multipart/form-data"
+          action="{% url 'upload_human_character_image' scene.pk player.pk %}"
+          class="human-character-image-form">
+      {% csrf_token %}
+      <input type="file"
+             name="image"
+             accept="image/jpeg,image/png,image/webp"
+             required>
+      <button class="btn btn-small" type="submit">Upload portrait</button>
+    </form>
+
+    {% if player.character_image %}
+      <form method="post"
+            action="{% url 'remove_human_character_image' scene.pk player.pk %}"
+            class="human-character-image-remove"
+            onsubmit="return confirm('Remove the current character portrait?')">
+        {% csrf_token %}
+        <button class="btn btn-small" type="submit">Remove portrait</button>
+      </form>
+    {% endif %}
+    <div class="meta">JPEG, PNG or WebP · max 5 MB</div>
+  </div>
+
+  <div class="human-character-body">
+    <div class="human-character-heading">
+      <div>
+        <div class="meta">Character</div>
+        <h2>{{ player.display_name }}</h2>
+      </div>
+      <a class="btn btn-small"
+         href="{% url 'human_episode_search' scene.pk player.pk %}">Search episodes</a>
+    </div>
+
+    {% if player.character_summary %}
+      <div class="human-character-summary">{{ player.character_summary }}</div>
+    {% elif player.character_prompt %}
+      <div class="human-character-summary meta">
+        Character card summary has not been filled in yet.
+      </div>
+    {% else %}
+      <div class="human-character-summary meta">No character summary yet.</div>
+    {% endif %}
+
+    <div class="human-character-sections">
+      <details {% if player.characteristics %}open{% endif %}>
+        <summary>Characteristics</summary>
+        {% if player.characteristics %}
+          <div class="msg-content">{{ player.characteristics }}</div>
+        {% else %}
+          <div class="meta">No characteristics added yet.</div>
+        {% endif %}
+      </details>
+
+      <details {% if player.abilities %}open{% endif %}>
+        <summary>Abilities</summary>
+        {% if player.abilities %}
+          <div class="msg-content">{{ player.abilities }}</div>
+        {% else %}
+          <div class="meta">No abilities added yet.</div>
+        {% endif %}
+      </details>
+
+      <details>
+        <summary>Memory summary</summary>
+        {% if player.memory_summary %}
+          <div class="msg-content">{{ player.memory_summary }}</div>
+        {% else %}
+          <div class="meta">No long-term memory summary yet.</div>
+        {% endif %}
+      </details>
+    </div>
+
+    <form method="get"
+          action="{% url 'human_episode_search' scene.pk player.pk %}"
+          class="human-episode-quick-search">
+      <input type="text"
+             name="q"
+             placeholder="Search scenes and your visible history..."
+             aria-label="Search character episodes">
+      <button class="btn" type="submit">Search history</button>
+    </form>
+  </div>
+</section>
