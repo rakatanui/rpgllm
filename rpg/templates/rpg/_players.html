@@ -36,6 +36,7 @@
           <span class="chip {% if access.human_access_enabled %}idle{% else %}error{% endif %}">
             PLAYER LINK {% if access.human_access_enabled %}ACTIVE{% else %}REVOKED{% endif %}
           </span>
+          <span class="meta">Bearer link: anyone who has it can act as this player in this scene.</span>
         </div>
         {% if access.human_access_enabled %}
           <input id="human-access-url-{{ p.pk }}"
