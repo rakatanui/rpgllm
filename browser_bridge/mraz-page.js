@@ -23,7 +23,7 @@ function setStatus(card, text, state = "") {
 function makeJobId(card) {
   const kind = card.dataset.mrazBridgeKind || "manual";
   const execution = card.dataset.mrazBridgeExecution || "unknown";
-  return kind + ":" + execution + ":" + Date.now();
+  return kind + ":" + execution;
 }
 
 async function startBridge(button) {
@@ -80,9 +80,12 @@ async function startBridge(button) {
 }
 
 function submitBridgeResult(message) {
+  const [kind, execution] = String(message.jobId || "").split(":", 2);
   const cards = document.querySelectorAll("[data-mraz-bridge-card]");
   const card = Array.from(cards).find(
-    (candidate) => candidate.dataset.mrazBridgeJob === message.jobId
+    (candidate) =>
+      candidate.dataset.mrazBridgeKind === kind &&
+      candidate.dataset.mrazBridgeExecution === execution
   );
   if (!card) return;
 
