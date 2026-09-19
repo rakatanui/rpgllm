@@ -132,13 +132,22 @@ function fillComposer(element, prompt) {
   ) {
     setNativeValue(element, prompt);
   } else {
-    element.replaceChildren();
-    if (element.classList.contains("ProseMirror") || element.tagName === "DIV") {
-      const paragraph = document.createElement("p");
-      paragraph.textContent = prompt;
-      element.appendChild(paragraph);
-    } else {
-      element.textContent = prompt;
+    let inserted = false;
+    try {
+      document.execCommand("selectAll", false, null);
+      inserted = document.execCommand("insertText", false, prompt);
+    } catch {
+      inserted = false;
+    }
+    if (!inserted || !(element.innerText || "").trim()) {
+      element.replaceChildren();
+      if (element.classList.contains("ProseMirror") || element.tagName === "DIV") {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = prompt;
+        element.appendChild(paragraph);
+      } else {
+        element.textContent = prompt;
+      }
     }
   }
 
