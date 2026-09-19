@@ -408,6 +408,7 @@ def publish_gm_execution(
         locked.public_draft = response.public
         locked.private_drafts = response.private
         locked.turn_targets = response.turn_targets
+        locked.scene_transition = response.scene_transition or {}
         locked.error = ""
         locked.save(
             update_fields=[
@@ -416,6 +417,7 @@ def publish_gm_execution(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "updated_at",
             ]
@@ -462,6 +464,14 @@ def publish_gm_execution(
 
         elif response.action != GameMasterAction.WAIT:
             raise ValidationError(f"Unsupported GM action: {response.action}")
+
+        if response.scene_transition:
+            new_name = response.scene_transition["name"]
+            Scene.objects.filter(pk=scene.pk).update(
+                name=new_name,
+                updated_at=timezone.now(),
+            )
+            scene.name = new_name
 
     except Exception as exc:
         GameMasterExecution.objects.filter(pk=execution.pk).update(
@@ -730,6 +740,7 @@ def _run_provider_execution(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "raw_response",
                 "latency_ms",
