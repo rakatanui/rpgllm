@@ -21,7 +21,6 @@ from rpg.models import (
 )
 from rpg.services import turn_engine
 from rpg.services.llm import LLMResponse, MockLLMClient
-from rpg.tests.test_turn_engine import RecordingClient
 from rpg.tests.factories import make_campaign, make_model, make_player, make_scene
 
 
@@ -1890,7 +1889,7 @@ def test_human_player_client_shows_round_legal_actions_only(mock_backend):
 
     with patch(
         "rpg.services.turn_engine.get_llm_client",
-        return_value=RecordingClient(),
+        return_value=MockLLMClient(),
     ):
         result = turn_engine.start_turn(scene=scene, gm_message_text="go")
     execution = result.turn.executions.get(player=human)
