@@ -6,6 +6,8 @@ from django.core.exceptions import ValidationError
 from rpg.models import (
     Campaign,
     CharacterAppearance,
+    GameMasterConfig,
+    GameMasterExecution,
     LoreEntry,
     Message,
     MessageRevision,
@@ -56,11 +58,43 @@ class SceneInline(admin.TabularInline):
     show_change_link = True
 
 
+class GameMasterConfigInline(admin.StackedInline):
+    model = GameMasterConfig
+    extra = 0
+    max_num = 1
+    fields = (
+        "enabled",
+        "transport",
+        "model_config",
+        "fallback_model_config",
+        "review_before_publish",
+        "system_prompt",
+        "manual_chat_label",
+        "manual_chat_url",
+        "manual_chat_context_mode",
+        "manual_chat_initialized",
+    )
+
+
+@admin.register(GameMasterConfig)
+class GameMasterConfigAdmin(admin.ModelAdmin):
+    list_display = (
+        "campaign",
+        "enabled",
+        "transport",
+        "model_config",
+        "review_before_publish",
+        "manual_chat_context_mode",
+    )
+    list_filter = ("enabled", "transport", "review_before_publish", "manual_chat_context_mode")
+    search_fields = ("campaign__name", "system_prompt", "manual_chat_label")
+
+
 @admin.register(Campaign)
 class CampaignAdmin(admin.ModelAdmin):
     list_display = ("name", "created_at")
     search_fields = ("name",)
-    inlines = [PlayerInline, SceneInline]
+    inlines = [GameMasterConfigInline, PlayerInline, SceneInline]
 
 
 class SceneForm(forms.ModelForm):
@@ -243,6 +277,33 @@ class PlayerAdmin(admin.ModelAdmin):
                 )
             },
         ),
+    )
+
+
+@admin.register(GameMasterExecution)
+class GameMasterExecutionAdmin(admin.ModelAdmin):
+    list_display = (
+        "pk",
+        "scene",
+        "state",
+        "transport",
+        "action",
+        "model_used",
+        "created_at",
+        "published_at",
+    )
+    list_filter = ("state", "transport", "action", "scene__campaign")
+    search_fields = ("scene__name", "error", "raw_response", "public_draft")
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+        "published_at",
+        "system_prompt_snapshot",
+        "request_messages",
+        "raw_response",
+        "external_prompt",
+        "context_message_ids",
+        "external_synced_message_ids",
     )
 
 
