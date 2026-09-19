@@ -17,6 +17,16 @@ urlpatterns = [
         name="human_player_fragment",
     ),
     path(
+        "scene/<int:scene_id>/human/<int:player_id>/appearance/<int:appearance_id>/<str:image_kind>/",
+        views.human_appearance_image,
+        name="human_appearance_image",
+    ),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/appearance/<int:appearance_id>/current/",
+        views.set_human_current_appearance,
+        name="set_human_current_appearance",
+    ),
+    path(
         "scene/<int:scene_id>/human/<int:player_id>/character-image/",
         views.human_character_image,
         name="human_character_image",
