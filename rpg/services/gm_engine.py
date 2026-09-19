@@ -173,10 +173,22 @@ def submit_external_gm_response(
     raw = (raw_text or "").strip()
     with transaction.atomic():
         execution = (
-            GameMasterExecution.objects.select_for_update()
-            .select_related("scene__campaign", "config")
+            GameMasterExecution.objects
+            .select_for_update()
             .get(pk=execution.pk)
         )
+
+        execution.scene = (
+            Scene.objects
+            .select_related("campaign")
+            .get(pk=execution.scene_id)
+        )
+
+        if execution.config_id:
+            execution.config = (
+                GameMasterConfig.objects
+                .get(pk=execution.config_id)
+            )
         if execution.scene.is_closed:
             raise ValidationError("Cannot import a GM response into a closed scene.")
         if execution.transport != GameMasterTransport.MANUAL_CHAT:
