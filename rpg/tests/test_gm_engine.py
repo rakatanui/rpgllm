@@ -23,7 +23,7 @@ from rpg.models import (
 )
 from rpg.services import gm_engine
 from rpg.services.gm_context import build_gm_context
-from rpg.services.llm import LLMResponse
+from rpg.services.llm import LLMResponse, MockLLMClient
 from rpg.tests.factories import make_campaign, make_model, make_player, make_scene
 
 
@@ -449,3 +449,17 @@ def test_gm_wait_publishes_nothing_and_never_starts_a_player_turn():
     assert not Message.objects.filter(scene=scene).exists()
     assert not scene.turns.exists()
     assert scene.gm_executions.count() == 1
+
+
+
+def test_mock_backend_emits_model_gm_envelope():
+    response = MockLLMClient().generate(
+        system_prompt="[GAME MASTER]\n# ROLE\nTest GM",
+        messages=[],
+        model="mock-echo",
+    )
+    payload = json.loads(response.raw_text)
+
+    assert payload["action"] == "NARRATE"
+    assert payload["private"] == []
+    assert payload["turn_targets"] == []
