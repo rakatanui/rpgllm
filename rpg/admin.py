@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 
 from rpg.models import (
     Campaign,
+    CharacterAppearance,
     LoreEntry,
     Message,
     MessageRevision,
@@ -103,7 +104,7 @@ def _scene_reaches(scene: Scene, target_scene_id: int) -> bool:
 class SceneParticipantInline(admin.TabularInline):
     model = SceneParticipant
     extra = 1
-    fields = ("player", "order")
+    fields = ("player", "order", "current_appearance")
     ordering = ("order", "pk")
 
 
@@ -155,6 +156,20 @@ class SceneAdmin(admin.ModelAdmin):
     )
 
 
+class CharacterAppearanceInline(admin.StackedInline):
+    model = CharacterAppearance
+    extra = 1
+    fields = (
+        "name",
+        "description",
+        "portrait_image",
+        "fullbody_image",
+        "is_primary",
+        "order",
+    )
+    ordering = ("order", "pk")
+
+
 @admin.register(Player)
 class PlayerAdmin(admin.ModelAdmin):
     list_display = (
@@ -168,6 +183,7 @@ class PlayerAdmin(admin.ModelAdmin):
     )
     list_filter = ("campaign", "transport", "manual_chat_context_mode", "status")
     search_fields = ("display_name",)
+    inlines = [CharacterAppearanceInline]
     fieldsets = (
         (
             None,
