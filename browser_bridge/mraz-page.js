@@ -87,7 +87,7 @@ function submitBridgeResult(message) {
       candidate.dataset.mrazBridgeKind === kind &&
       candidate.dataset.mrazBridgeExecution === execution
   );
-  if (!card) return;
+  if (!card) return false;
 
   const button = card.querySelector(BRIDGE_BUTTON_SELECTOR);
   if (button) button.disabled = false;
