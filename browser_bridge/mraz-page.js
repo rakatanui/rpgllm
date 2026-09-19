@@ -107,7 +107,10 @@ function submitBridgeResult(message) {
   response.value = message.response || "";
   response.dispatchEvent(new Event("input", { bubbles: true }));
   setStatus(card, "Response received. Importing…", "done");
-  form.requestSubmit();
+
+  // Let the extension message acknowledgement return before navigation tears
+  // down this content script. The normal Django form remains the authority.
+  window.setTimeout(() => form.requestSubmit(), 0);
   return true;
 }
 
