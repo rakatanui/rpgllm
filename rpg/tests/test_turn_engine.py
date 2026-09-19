@@ -1795,3 +1795,176 @@ def test_manual_chat_private_turn_explains_private_delivery(mock_backend):
     assert execution.state == ExecutionState.WAITING_EXTERNAL
     assert "# PRIVATE GM↔PLAYER TURN" in execution.external_prompt
     assert "NOT broadcast to the other scene participants" in execution.external_prompt
+
+
+
+@pytest.mark.django_db
+def test_human_turn_waits_without_calling_llm(mock_backend):
+    campaign = make_campaign()
+    human = make_player(
+        campaign,
+        "Human",
+        transport=PlayerTransport.HUMAN,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    with patch("rpg.services.turn_engine.get_llm_client") as get_client:
+        result = turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="Your move.",
+            selected_players=[human],
+        )
+
+    get_client.assert_not_called()
+    execution = result.turn.executions.get(player=human)
+    human.refresh_from_db()
+    result.turn.refresh_from_db()
+
+    assert execution.state == ExecutionState.WAITING_HUMAN
+    assert execution.transport == PlayerTransport.HUMAN
+    assert human.status == PlayerStatus.WAITING_HUMAN
+    assert result.turn.state == TurnState.RUNNING
+    assert not Message.objects.filter(
+        execution=execution,
+        author_type=AuthorType.PLAYER,
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_human_response_completes_execution(mock_backend):
+    campaign = make_campaign()
+    human = make_player(campaign, "Human", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Your move.",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+
+    submitted = turn_engine.submit_human_response(
+        execution=execution,
+        action_type="ACT",
+        public_text="Human opens the door.",
+        private_to_gm="I am checking the hinges too.",
+    )
+
+    execution.refresh_from_db()
+    human.refresh_from_db()
+    submitted.turn.refresh_from_db()
+
+    assert execution.state == ExecutionState.COMPLETED
+    assert execution.action_type == "ACT"
+    assert human.status == PlayerStatus.IDLE
+    assert submitted.turn.state == TurnState.COMPLETED
+    assert Message.objects.filter(
+        execution=execution,
+        visibility=Visibility.PUBLIC,
+        content="Human opens the door.",
+    ).exists()
+    assert Message.objects.filter(
+        execution=execution,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        content="I am checking the hinges too.",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_inactive_round_human_can_pass_but_not_act(mock_backend):
+    campaign = make_campaign()
+    api = make_player(campaign, "API")
+    human = make_player(campaign, "Human", transport=PlayerTransport.HUMAN)
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[api, human],
+        round_order=[api.pk, human.pk],
+        active_player_index=0,
+    )
+
+    with patch(
+        "rpg.services.turn_engine.get_llm_client",
+        return_value=RecordingClient(),
+    ):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+
+    execution = result.turn.executions.get(player=human)
+    assert turn_engine.allowed_human_actions(execution) == [
+        "PASS",
+        "ACT_OUT_OF_TURN",
+    ]
+
+    with pytest.raises(ValidationError, match="not allowed"):
+        turn_engine.submit_human_response(
+            execution=execution,
+            action_type="ACT",
+            public_text="Human says something anyway.",
+        )
+
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.WAITING_HUMAN
+    assert not Message.objects.filter(execution=execution).exists()
+
+    turn_engine.submit_human_response(
+        execution=execution,
+        action_type="PASS",
+        public_text="",
+    )
+    execution.refresh_from_db()
+    scene.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+    assert scene.active_player_index == 1
+
+
+@pytest.mark.django_db
+def test_human_private_turn_reply_stays_private(mock_backend):
+    campaign = make_campaign()
+    human = make_player(campaign, "Human", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.ROUND, participants=[human], round_order=[human.pk])
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Private question.",
+        selected_players=[human],
+        private_to_player=human,
+    )
+    execution = result.turn.executions.get(player=human)
+    assert turn_engine.allowed_human_actions(execution) == ["ACT", "PASS"]
+
+    turn_engine.submit_human_response(
+        execution=execution,
+        action_type="ACT",
+        public_text="Private answer.",
+    )
+
+    assert not Message.objects.filter(
+        execution=execution,
+        visibility=Visibility.PUBLIC,
+    ).exists()
+    assert Message.objects.filter(
+        execution=execution,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=human,
+        content="Private answer.",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_pending_human_execution_blocks_new_turn(mock_backend):
+    campaign = make_campaign()
+    human = make_player(campaign, "Human", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="first",
+        selected_players=[human],
+    )
+
+    with pytest.raises(ValidationError, match="unfinished external/human"):
+        turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="second",
+            selected_players=[human],
+        )
