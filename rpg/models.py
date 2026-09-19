@@ -704,6 +704,14 @@ class GameMasterExecution(models.Model):
     public_draft = models.TextField(blank=True)
     private_drafts = models.JSONField(default=list, blank=True)
     turn_targets = models.JSONField(default=list, blank=True)
+    scene_transition = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Optional model-requested update of the live Scene label, for example "
+            '{"name": "Гданьск - Машина у кафе"}. Empty means no transition.'
+        ),
+    )
     error = models.TextField(blank=True)
     context_message_ids = models.JSONField(default=list, blank=True)
     model_used = models.CharField(max_length=200, blank=True, default="")
