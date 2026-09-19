@@ -1,0 +1,228 @@
+{% load rpg_extras %}
+<section class="panel gm-model-panel">
+  <div class="gm-model-header">
+    <div>
+      <div class="meta">Game Master actor</div>
+      <h3>Model GM</h3>
+    </div>
+
+    {% if gm_config %}
+      <div class="gm-model-header-actions">
+        <span class="chip {% if gm_config.enabled %}generating{% endif %}">
+          {% if gm_config.enabled %}ENABLED{% else %}DISABLED{% endif %}
+        </span>
+        <span class="chip">{{ gm_config.get_transport_display }}</span>
+        {% if gm_config.transport == "LITELLM" and gm_config.model_config %}
+          <span class="meta">{{ gm_config.model_config.name }}</span>
+        {% elif gm_config.transport == "MANUAL_CHAT" and gm_config.manual_chat_label %}
+          <span class="meta">{{ gm_config.manual_chat_label }}</span>
+        {% endif %}
+        <a class="btn btn-small" href="/admin/rpg/gamemasterconfig/{{ gm_config.pk }}/change/">Configure</a>
+      </div>
+    {% else %}
+      <a class="btn btn-small" href="/admin/rpg/gamemasterconfig/add/">Configure</a>
+    {% endif %}
+  </div>
+
+  {% if not gm_config %}
+    <p class="meta">
+      No Game Master configuration exists for this campaign yet. Create one in Admin and bind it
+      to {{ campaign.name }}.
+    </p>
+  {% elif not gm_config.enabled %}
+    <p class="meta">
+      Model GM is configured but disabled. Human mastering continues normally.
+    </p>
+  {% else %}
+
+    {% if gm_execution and gm_execution.state == "WAITING_EXTERNAL" %}
+      <div class="gm-model-state-row">
+        <span class="chip waiting_external">WAITING EXTERNAL GM</span>
+        {% if gm_execution.external_is_bootstrap %}
+          <span class="chip">BOOTSTRAP</span>
+        {% else %}
+          <span class="chip">DELTA</span>
+        {% endif %}
+        <span class="meta">Execution #{{ gm_execution.pk }}</span>
+      </div>
+
+      {% if gm_execution.error %}
+        <div class="execution-error">{{ gm_execution.error }}</div>
+      {% endif %}
+
+      <label>Prompt for external GM chat</label>
+      <textarea id="gm-external-prompt-{{ gm_execution.pk }}"
+                class="gm-model-prompt"
+                rows="12"
+                readonly>{{ gm_execution.external_prompt }}</textarea>
+      <div class="toolbar">
+        <button class="btn btn-small"
+                type="button"
+                onclick="copyElementText('gm-external-prompt-{{ gm_execution.pk }}', this)">
+          Copy prompt
+        </button>
+        {% if gm_execution.external_chat_url %}
+          <a class="btn btn-small"
+             href="{{ gm_execution.external_chat_url }}"
+             target="_blank"
+             rel="noopener">Open {{ gm_execution.external_chat_label|default:"external chat" }}</a>
+        {% endif %}
+        {% if gm_config.manual_chat_context_mode == "CHAT_MEMORY" %}
+          <form method="post" action="{% url 'reset_model_gm_chat' scene.pk %}" class="inline">
+            {% csrf_token %}
+            <button class="btn btn-small" type="submit">Reset chat memory</button>
+          </form>
+        {% endif %}
+      </div>
+
+      <form method="post"
+            action="{% url 'submit_external_model_gm' scene.pk gm_execution.pk %}"
+            class="gm-model-import-form">
+        {% csrf_token %}
+        <label>Paste model response</label>
+        <textarea name="response"
+                  rows="9"
+                  placeholder='{"action":"TURN","public":"...","private":[],"turn_targets":[...]}'></textarea>
+        <div class="toolbar">
+          <button class="btn btn-primary" type="submit">Import GM response</button>
+        </div>
+      </form>
+
+      <form method="post"
+            action="{% url 'discard_model_gm' scene.pk gm_execution.pk %}"
+            class="inline"
+            onsubmit="return confirm('Discard this model-GM execution?');">
+        {% csrf_token %}
+        <button class="btn btn-small" type="submit">Discard</button>
+      </form>
+
+    {% elif gm_execution and gm_execution.state == "DRAFT" %}
+      <div class="gm-model-state-row">
+        <span class="chip waiting_human">GM DRAFT READY</span>
+        <span class="meta">
+          Execution #{{ gm_execution.pk }} · {{ gm_execution.model_used }}
+          {% if gm_execution.latency_ms %} · {{ gm_execution.latency_ms }} ms{% endif %}
+        </span>
+      </div>
+
+      {% if gm_execution.error %}
+        <div class="execution-error">{{ gm_execution.error }}</div>
+      {% endif %}
+
+      <form method="post"
+            action="{% url 'publish_model_gm' scene.pk gm_execution.pk %}"
+            class="gm-model-draft-form">
+        {% csrf_token %}
+
+        <div class="gm-model-draft-toolbar">
+          <label>
+            Action
+            <select name="action">
+              {% for value, label in gm_actions %}
+                <option value="{{ value }}" {% if gm_execution.action == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          {% if scene.mode == "ROUND" %}
+            <div class="meta">
+              ROUND targets are owned by TurnEngine. The model must leave turn_targets empty.
+            </div>
+          {% else %}
+            <div class="gm-model-targets">
+              <span class="meta">Turn targets:</span>
+              {% for p in players %}
+                <label>
+                  <input type="checkbox"
+                         name="turn_targets"
+                         value="{{ p.pk }}"
+                         {% if p.pk in gm_target_ids %}checked{% endif %}>
+                  {{ p.display_name }}
+                </label>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+
+        <label>Public GM beat</label>
+        <textarea name="public"
+                  rows="8"
+                  class="gm-model-public-draft">{{ gm_execution.public_draft }}</textarea>
+
+        <details class="gm-model-private-drafts" {% if gm_execution.private_drafts %}open{% endif %}>
+          <summary>Private GM → player messages</summary>
+          {% for p in players %}
+            <label>{{ p.display_name }}</label>
+            <textarea name="private_{{ p.pk }}"
+                      rows="3"
+                      placeholder="Optional private GM message...">{{ gm_private_drafts|get:p.pk }}</textarea>
+          {% endfor %}
+        </details>
+
+        <div class="toolbar gm-model-publish-toolbar">
+          <button class="btn btn-primary" type="submit">Publish model GM beat</button>
+          <span class="meta">
+            Publication is the canon boundary. TURN will call the normal player TurnEngine once.
+          </span>
+        </div>
+      </form>
+
+      <details class="gm-model-debug">
+        <summary>Raw model response</summary>
+        <pre>{{ gm_execution.raw_response }}</pre>
+      </details>
+
+      <form method="post"
+            action="{% url 'discard_model_gm' scene.pk gm_execution.pk %}"
+            class="inline"
+            onsubmit="return confirm('Discard this GM draft?');">
+        {% csrf_token %}
+        <button class="btn btn-small" type="submit">Discard draft</button>
+      </form>
+
+    {% elif gm_execution and gm_execution.state == "RUNNING" or gm_execution and gm_execution.state == "PENDING" %}
+      <div class="gm-model-state-row">
+        <span class="chip generating">GENERATING</span>
+        <span class="meta">Execution #{{ gm_execution.pk }}</span>
+      </div>
+
+    {% else %}
+      {% if gm_execution and gm_execution.state == "FAILED" or gm_execution and gm_execution.state == "INVALID" %}
+        <div class="gm-model-state-row">
+          <span class="chip error">{{ gm_execution.state }}</span>
+          <span class="meta">Execution #{{ gm_execution.pk }}</span>
+        </div>
+        <div class="execution-error">{{ gm_execution.error }}</div>
+        {% if gm_execution.raw_response %}
+          <details class="gm-model-debug">
+            <summary>Rejected/raw response</summary>
+            <pre>{{ gm_execution.raw_response }}</pre>
+          </details>
+        {% endif %}
+      {% elif gm_execution and gm_execution.state == "PUBLISHED" %}
+        <div class="gm-model-state-row">
+          <span class="chip idle">LAST GM BEAT PUBLISHED</span>
+          <span class="meta">
+            Execution #{{ gm_execution.pk }}
+            {% if gm_execution.published_turn_id %} · Turn #{{ gm_execution.published_turn_id }}{% endif %}
+          </span>
+        </div>
+      {% elif gm_execution and gm_execution.state == "DISCARDED" %}
+        <div class="gm-model-state-row">
+          <span class="chip idle">LAST GM DRAFT DISCARDED</span>
+          <span class="meta">Execution #{{ gm_execution.pk }}</span>
+        </div>
+      {% endif %}
+
+      {% if not scene.is_closed %}
+        <form method="post" action="{% url 'start_model_gm' scene.pk %}" class="gm-model-start-form">
+          {% csrf_token %}
+          <button class="btn btn-primary" type="submit">Ask GM model</button>
+          <span class="meta">
+            Creates one GM execution from current canon. It will not call itself again automatically.
+          </span>
+        </form>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+</section>
