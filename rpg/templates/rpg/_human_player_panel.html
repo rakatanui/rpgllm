@@ -89,7 +89,7 @@
               placeholder="Write your declaration. PASS may be left empty.">{{ waiting_execution.raw_response }}</textarea>
     <details id="human-private-note-details-{{ waiting_execution.pk }}"
              class="human-private-note"
-             data-human-preserve-open="private-note">
+             data-human-preserve-open="private-note-{{ waiting_execution.pk }}">
       <summary>Private note to GM</summary>
       <textarea id="human-private-note-{{ waiting_execution.pk }}"
                 name="private_to_gm"
