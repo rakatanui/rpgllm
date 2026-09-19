@@ -1,11 +1,17 @@
 {% load rpg_extras %}
 <section class="panel gm-model-panel"
+         {% if gm_config and gm_config.auto_continue %}
+           data-mraz-gm-autoplay="1"
+         {% endif %}
          {% if gm_execution and gm_execution.state == "WAITING_EXTERNAL" %}
            data-mraz-bridge-card
            data-mraz-bridge-kind="gm"
            data-mraz-bridge-execution="{{ gm_execution.pk }}"
            data-mraz-bridge-chat-url="{{ gm_execution.external_chat_url }}"
            data-mraz-bridge-label="{{ gm_execution.external_chat_label|default:'Model GM' }}"
+           {% if gm_config and gm_config.auto_continue %}
+             data-mraz-bridge-autostart="1"
+           {% endif %}
          {% endif %}>
   <div class="gm-model-header">
     <div>
@@ -18,6 +24,7 @@
         <span class="chip {% if gm_config.enabled %}generating{% endif %}">
           {% if gm_config.enabled %}ENABLED{% else %}DISABLED{% endif %}
         </span>
+        {% if gm_config.auto_continue %}<span class="chip generating">AUTO CONTINUE</span>{% endif %}
         <span class="chip">{{ gm_config.get_transport_display }}</span>
         {% if gm_config.transport == "LITELLM" and gm_config.model_config %}
           <span class="meta">{{ gm_config.model_config.name }}</span>
