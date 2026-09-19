@@ -68,6 +68,7 @@ class GameMasterConfigInline(admin.StackedInline):
         "model_config",
         "fallback_model_config",
         "review_before_publish",
+        "auto_continue",
         "system_prompt",
         "manual_chat_label",
         "manual_chat_url",
@@ -84,9 +85,16 @@ class GameMasterConfigAdmin(admin.ModelAdmin):
         "transport",
         "model_config",
         "review_before_publish",
+        "auto_continue",
         "manual_chat_context_mode",
     )
-    list_filter = ("enabled", "transport", "review_before_publish", "manual_chat_context_mode")
+    list_filter = (
+        "enabled",
+        "transport",
+        "review_before_publish",
+        "auto_continue",
+        "manual_chat_context_mode",
+    )
     search_fields = ("campaign__name", "system_prompt", "manual_chat_label")
 
 
