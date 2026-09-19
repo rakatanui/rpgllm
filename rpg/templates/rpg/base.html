@@ -490,6 +490,24 @@ function maybeAutoOpenPrivate({ initial = false } = {}) {
   window.dispatchEvent(new CustomEvent("open-private", { detail: { playerId } }));
 }
 
+function hydrateHumanAccessUrls(root = document) {
+  const scope = root && typeof root.querySelectorAll === "function" ? root : document;
+  scope.querySelectorAll(".human-access-url").forEach((input) => {
+    const raw = input.dataset.relativeUrl || input.value;
+    if (!raw) return;
+    try {
+      input.value = new URL(raw, window.location.href).href;
+    } catch (error) {
+      console.warn("Failed to build absolute human player URL", error);
+    }
+  });
+}
+
+hydrateHumanAccessUrls();
+document.body.addEventListener("htmx:afterSwap", (event) => {
+  hydrateHumanAccessUrls(event.detail?.target || document);
+});
+
 async function copyElementText(elementId, button) {
   const element = document.getElementById(elementId);
   if (!element) return;
