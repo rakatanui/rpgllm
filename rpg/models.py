@@ -39,6 +39,7 @@ class LoreScope(models.TextChoices):
 class ExecutionState(models.TextChoices):
     PENDING = "PENDING", "Pending"
     RUNNING = "RUNNING", "Running"
+    WAITING_EXTERNAL = "WAITING_EXTERNAL", "Waiting for external chat"
     COMPLETED = "COMPLETED", "Completed"
     FAILED = "FAILED", "Failed"
     INVALID = "INVALID", "Invalid response"
@@ -47,7 +48,18 @@ class ExecutionState(models.TextChoices):
 class PlayerStatus(models.TextChoices):
     IDLE = "idle", "Idle"
     GENERATING = "generating", "Generating"
+    WAITING_EXTERNAL = "waiting_external", "Waiting for external chat"
     ERROR = "error", "Error"
+
+
+class PlayerTransport(models.TextChoices):
+    LITELLM = "LITELLM", "LiteLLM / API"
+    MANUAL_CHAT = "MANUAL_CHAT", "Manual external chat"
+
+
+class ManualChatContextMode(models.TextChoices):
+    FULL = "FULL", "Full prompt every turn"
+    CHAT_MEMORY = "CHAT_MEMORY", "Use external chat memory after bootstrap"
 
 
 class ModelConfig(models.Model):
@@ -225,7 +237,38 @@ class Player(models.Model):
         blank=True,
         help_text="One-shot private GM instruction consumed by the player's next execution.",
     )
-    status = models.CharField(max_length=20, choices=PlayerStatus.choices, default=PlayerStatus.IDLE)
+    transport = models.CharField(
+        max_length=30,
+        choices=PlayerTransport.choices,
+        default=PlayerTransport.LITELLM,
+    )
+    manual_chat_label = models.CharField(
+        max_length=120,
+        blank=True,
+        help_text="Human label shown in the GM UI, e.g. ChatGPT 5.6 or Claude.",
+    )
+    manual_chat_url = models.URLField(
+        max_length=1000,
+        blank=True,
+        help_text="Optional URL of the persistent external chat used for this player.",
+    )
+    manual_chat_context_mode = models.CharField(
+        max_length=30,
+        choices=ManualChatContextMode.choices,
+        default=ManualChatContextMode.FULL,
+        help_text=(
+            "FULL sends complete application context every turn. CHAT_MEMORY sends one "
+            "full bootstrap, then only newly visible context and current turn constraints."
+        ),
+    )
+    manual_chat_initialized = models.BooleanField(
+        default=False,
+        help_text=(
+            "True after a successful bootstrap response was imported for CHAT_MEMORY. "
+            "Reset this if the external conversation is replaced or loses its memory."
+        ),
+    )
+    status = models.CharField(max_length=30, choices=PlayerStatus.choices, default=PlayerStatus.IDLE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -369,6 +412,22 @@ class TurnExecution(models.Model):
     request_messages = models.JSONField(default=list, blank=True)
     raw_response = models.TextField(blank=True)
     latency_ms = models.PositiveIntegerField(null=True, blank=True)
+    transport = models.CharField(
+        max_length=30,
+        choices=PlayerTransport.choices,
+        default=PlayerTransport.LITELLM,
+    )
+    external_prompt = models.TextField(blank=True)
+    external_context_mode = models.CharField(
+        max_length=30,
+        choices=ManualChatContextMode.choices,
+        blank=True,
+        default="",
+    )
+    external_chat_label = models.CharField(max_length=120, blank=True, default="")
+    external_chat_url = models.URLField(max_length=1000, blank=True, default="")
+    external_is_bootstrap = models.BooleanField(default=False)
+    external_synced_message_ids = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

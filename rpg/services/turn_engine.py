@@ -20,10 +20,12 @@ from rpg.models import (
     AuthorType,
     ExecutionState,
     Message,
+    ManualChatContextMode,
     MessageRevision,
     ModelConfig,
     Player,
     PlayerStatus,
+    PlayerTransport,
     Scene,
     Turn,
     TurnExecution,
@@ -31,8 +33,12 @@ from rpg.models import (
     TurnState,
     Visibility,
 )
-from rpg.services.context_builder import build_player_context, get_player_history_messages
-from rpg.services.llm import LLMResponse, get_llm_client
+from rpg.services.context_builder import (
+    build_player_context,
+    get_player_history_messages,
+    get_scene_lineage,
+)
+from rpg.services.llm import LLMResponse, get_llm_client, parse_structured_response
 
 logger = logging.getLogger("rpg.turn_engine")
 
@@ -90,6 +96,15 @@ def start_turn(
                     existing,
                     list(existing.messages.order_by("created_at")),
                 )
+
+        if TurnExecution.objects.filter(
+            turn__scene=locked_scene,
+            state=ExecutionState.WAITING_EXTERNAL,
+        ).exists():
+            raise ValidationError(
+                "This scene already has a manual-chat execution waiting for a pasted "
+                "response. Complete it before starting another model turn."
+            )
 
         if private_to_player is not None:
             _ensure_scene_participant(locked_scene, private_to_player)
@@ -159,6 +174,22 @@ def start_turn(
                 player=player,
                 order_index=index,
                 nudge_text=nudge,
+                transport=player.transport,
+                external_context_mode=(
+                    player.manual_chat_context_mode
+                    if player.transport == PlayerTransport.MANUAL_CHAT
+                    else ""
+                ),
+                external_chat_label=(
+                    player.manual_chat_label
+                    if player.transport == PlayerTransport.MANUAL_CHAT
+                    else ""
+                ),
+                external_chat_url=(
+                    player.manual_chat_url
+                    if player.transport == PlayerTransport.MANUAL_CHAT
+                    else ""
+                ),
             )
             executions.append(execution)
             if nudge:
@@ -182,7 +213,6 @@ def start_turn(
                 )
                 execution.history_message_ids = snapshot_ids
 
-    client = get_llm_client()
     generated: list[Message] = []
 
     if mode == TurnMode.TABLE and not is_private:
@@ -199,29 +229,55 @@ def start_turn(
             )
             execution.history_message_ids = history_ids
 
-    # ROUND contexts are frozen before any model call, so provider calls can run
-    # concurrently without leaking another player's response into the same round.
-    if mode == TurnMode.ROUND and not is_private and len(executions) > 1:
-        generated.extend(
-            _run_round_parallel(
-                executions=executions,
-                turn=turn,
-                client=client,
-            )
+    manual_executions = [
+        execution
+        for execution in executions
+        if execution.transport == PlayerTransport.MANUAL_CHAT
+    ]
+    provider_executions = [
+        execution
+        for execution in executions
+        if execution.transport != PlayerTransport.MANUAL_CHAT
+    ]
+
+    for execution in manual_executions:
+        out_of_turn = (
+            mode == TurnMode.ROUND
+            and execution.player_id != turn.active_player_id_snapshot
         )
-    else:
-        for execution in executions:
-            out_of_turn = (
-                mode == TurnMode.ROUND
-                and execution.player_id != turn.active_player_id_snapshot
-            )
-            message = _run_execution(
+        try:
+            _prepare_external_execution(
                 execution=execution,
-                client=client,
                 out_of_turn=out_of_turn,
             )
-            if message is not None:
-                generated.append(message)
+        except Exception as exc:
+            _mark_execution_error(execution, exc)
+
+    if provider_executions:
+        client = get_llm_client()
+        # ROUND contexts are frozen before any model call, so provider calls can run
+        # concurrently without leaking another player's response into the same round.
+        if mode == TurnMode.ROUND and not is_private and len(provider_executions) > 1:
+            generated.extend(
+                _run_round_parallel(
+                    executions=provider_executions,
+                    turn=turn,
+                    client=client,
+                )
+            )
+        else:
+            for execution in provider_executions:
+                out_of_turn = (
+                    mode == TurnMode.ROUND
+                    and execution.player_id != turn.active_player_id_snapshot
+                )
+                message = _run_execution(
+                    execution=execution,
+                    client=client,
+                    out_of_turn=out_of_turn,
+                )
+                if message is not None:
+                    generated.append(message)
 
     _refresh_turn_state(turn)
     turn.refresh_from_db()
@@ -281,12 +337,19 @@ def retry_execution(
         turn.mode == TurnMode.ROUND
         and execution.player_id != turn.active_player_id_snapshot
     )
-    message = _run_execution(
-        execution=execution,
-        client=get_llm_client(),
-        out_of_turn=out_of_turn,
-        model_config_override=model_config,
-    )
+    if execution.transport == PlayerTransport.MANUAL_CHAT:
+        _prepare_external_execution(
+            execution=execution,
+            out_of_turn=out_of_turn,
+        )
+        message = None
+    else:
+        message = _run_execution(
+            execution=execution,
+            client=get_llm_client(),
+            out_of_turn=out_of_turn,
+            model_config_override=model_config,
+        )
     _refresh_turn_state(turn)
     turn.refresh_from_db()
     if (
@@ -323,6 +386,10 @@ def regenerate_execution(
         raise RuntimeError("Only public executions can be regenerated here")
     if execution.state != ExecutionState.COMPLETED:
         raise RuntimeError("Only a COMPLETED execution can be regenerated")
+    if execution.transport == PlayerTransport.MANUAL_CHAT:
+        raise RuntimeError(
+            "Manual-chat executions are regenerated in the external chat, not through LiteLLM."
+        )
 
     public_message = (
         Message.objects.filter(
@@ -404,6 +471,7 @@ def regenerate_execution(
             locked_execution.save(
                 update_fields=["action_type", "error", "updated_at"]
             )
+            _invalidate_manual_chat_memory_for_scene(scene)
 
         public_message.refresh_from_db()
         return TurnResult(turn, [public_message])
@@ -455,6 +523,10 @@ def revise_execution_ooc(
         raise RuntimeError("OOC feedback requires a public player execution message")
     if execution.state != ExecutionState.COMPLETED:
         raise RuntimeError("OOC feedback requires a completed player execution")
+    if execution.transport == PlayerTransport.MANUAL_CHAT:
+        raise RuntimeError(
+            "Manual-chat declarations must be revised in the external chat."
+        )
 
     turn = execution.turn
     if turn.is_private:
@@ -537,6 +609,7 @@ def revise_execution_ooc(
                 locked_execution.save(
                     update_fields=["action_type", "updated_at"]
                 )
+                _invalidate_manual_chat_memory_for_scene(scene)
 
             private_note = (response.private_to_gm or "").strip()
             status_text = (
@@ -660,6 +733,15 @@ def _build_execution_request(
         history=_execution_history(execution, extra_history=extra_history),
     )
     _append_round_role_prompt(context, turn=turn, out_of_turn=out_of_turn)
+    if turn.is_private:
+        context.system_prompt += (
+            "\n\n# PRIVATE GM↔PLAYER TURN\n"
+            "This execution is a private GM↔player exchange. Your response field named "
+            '"public" is delivered only inside your private channel with the GM for this '
+            "turn; it is NOT broadcast to the other scene participants. private_to_gm "
+            "remains available for an additional hidden note, but usually leave it empty "
+            "because the main reply is already private."
+        )
     if turn.trigger_message_id is None:
         context.system_prompt += (
             "\n\n# GM SILENCE\n"
@@ -697,6 +779,356 @@ def _build_execution_request(
         latency_ms=None,
     )
     return context.system_prompt, context.messages, model, temperature
+
+
+def _manual_response_contract() -> str:
+    return (
+        "Return ONLY one response for this RPG execution. Prefer the exact JSON envelope:\n"
+        '{"action_type":"ACT|PASS|ACT_OUT_OF_TURN","public":"...","private_to_gm":"..."}\n'
+        "Do not wrap the JSON in commentary. The application will parse and validate the "
+        "result. Preserve [[SPEECH]]original[[RU]]Russian translation[[/SPEECH]] markup "
+        "for spoken dialogue. private_to_gm should stay empty unless there is a materially "
+        "important secret for the GM."
+    )
+
+
+def _manual_history_message(message: Message) -> str:
+    if message.author_type == AuthorType.GM:
+        author = "GM"
+    elif message.author_player_id:
+        author = message.author_player.display_name
+    else:
+        author = message.author_type
+
+    action = f" [{message.action_type}]" if message.action_type else ""
+    scope = (
+        "PRIVATE GM↔YOU"
+        if message.visibility == Visibility.PRIVATE_GM_PLAYER
+        else "PUBLIC"
+    )
+    return f"[{scope}] {author}{action}:\n{message.content}"
+
+
+def _previous_external_execution(execution: TurnExecution) -> TurnExecution | None:
+    return (
+        TurnExecution.objects.filter(
+            player_id=execution.player_id,
+            transport=PlayerTransport.MANUAL_CHAT,
+            state=ExecutionState.COMPLETED,
+            pk__lt=execution.pk,
+        )
+        .exclude(external_synced_message_ids=[])
+        .order_by("-pk")
+        .first()
+    )
+
+
+def _manual_delta_constraints(execution: TurnExecution, *, out_of_turn: bool) -> str:
+    turn = execution.turn
+    scene = turn.scene
+    lines = [
+        f"Scene: {scene.name}",
+        f"Turn mode: {turn.mode}",
+    ]
+    if scene.dialogue_language.strip():
+        lines.append(f"Default spoken language: {scene.dialogue_language.strip()}")
+    if scene.description.strip():
+        lines.append("Current scene description:\n" + scene.description.strip())
+    if scene.campaign.shared_memory.strip():
+        lines.append(
+            "Current shared campaign memory:\n"
+            + scene.campaign.shared_memory.strip()
+        )
+    if execution.player.memory_summary.strip():
+        lines.append(
+            "Current private long-term memory:\n"
+            + execution.player.memory_summary.strip()
+        )
+    if scene.memory_summary.strip():
+        lines.append("Current scene memory:\n" + scene.memory_summary.strip())
+
+    if turn.is_private:
+        lines.append(
+            "PRIVATE GM↔PLAYER TURN: the response field named public is delivered only "
+            "inside your private channel with the GM, not to the other participants."
+        )
+    if turn.mode == TurnMode.ROUND and not turn.is_private:
+        if out_of_turn:
+            lines.append(
+                "ROUND role: INACTIVE. PASS is expected. ACT_OUT_OF_TURN is allowed only "
+                "for one genuinely urgent intervention that cannot wait. Hard limit: "
+                "650 visible characters, 2 paragraphs, 1 direct question."
+            )
+        else:
+            lines.append(
+                "ROUND role: ACTIVE. You may ACT or PASS. ACT hard limit: 1200 visible "
+                "characters, 6 paragraphs, 2 direct questions; normally prefer 2-3 paragraphs."
+            )
+    if turn.trigger_message_id is None:
+        lines.append(
+            "GM SILENCE: there is no new GM event or hidden instruction. Continue only "
+            "from established state and visible history."
+        )
+    if execution.nudge_text.strip():
+        lines.append(
+            "ONE-SHOT GM NUDGE (meta, not fiction): " + execution.nudge_text.strip()
+        )
+    return "\n".join(lines)
+
+
+def _build_manual_chat_prompt(
+    *,
+    execution: TurnExecution,
+    out_of_turn: bool,
+    system_prompt: str,
+    messages: list[dict],
+) -> tuple[str, bool]:
+    player = execution.player
+    mode = execution.external_context_mode or ManualChatContextMode.FULL
+    previous = _previous_external_execution(execution)
+    current_lineage_ids = {
+        lineage_scene.pk for lineage_scene in get_scene_lineage(execution.turn.scene)
+    }
+    previous_is_in_lineage = (
+        previous is not None
+        and previous.turn.scene_id in current_lineage_ids
+    )
+    previous_is_same_chat = (
+        previous is not None
+        and previous.external_chat_url == execution.external_chat_url
+        and previous.external_chat_label == execution.external_chat_label
+    )
+    use_delta = (
+        mode == ManualChatContextMode.CHAT_MEMORY
+        and player.manual_chat_initialized
+        and previous is not None
+        and previous_is_in_lineage
+        and previous_is_same_chat
+        and bool(previous.external_synced_message_ids)
+    )
+
+    if not use_delta:
+        rendered_messages = []
+        for item in messages:
+            role = str(item.get("role", "user")).upper()
+            rendered_messages.append(f"[{role}]\n{item.get('content', '')}")
+        prompt = (
+            "# MRAZ MANUAL CHAT BRIDGE\n"
+            "This message comes from the GM application. You are the LLM player for "
+            f"{player.display_name}. Treat the SYSTEM PROMPT below as authoritative. "
+            "The external conversation may keep its own memory, but this full packet is "
+            "the authoritative application state for this execution.\n\n"
+            "## SYSTEM PROMPT\n"
+            + system_prompt
+            + "\n\n## CHAT CONTEXT\n"
+            + ("\n\n".join(rendered_messages) if rendered_messages else "(no chat history)")
+            + "\n\n## RESPONSE CONTRACT\n"
+            + _manual_response_contract()
+        )
+        return prompt, mode == ManualChatContextMode.CHAT_MEMORY
+
+    previously_synced = set(previous.external_synced_message_ids or [])
+    new_ids = [
+        message_id
+        for message_id in execution.history_message_ids
+        if message_id not in previously_synced
+    ]
+    if execution.turn.trigger_message_id and execution.turn.trigger_message_id not in new_ids:
+        if execution.turn.trigger_message_id not in previously_synced:
+            new_ids.append(execution.turn.trigger_message_id)
+
+    by_id = {
+        message.pk: message
+        for message in Message.objects.filter(pk__in=new_ids)
+        .select_related("author_player")
+    }
+    new_messages = [
+        by_id[message_id]
+        for message_id in new_ids
+        if message_id in by_id
+    ]
+    updates = (
+        "\n\n".join(_manual_history_message(message) for message in new_messages)
+        or "(no new visible messages since the last synchronized external response)"
+    )
+    accepted_messages = list(
+        Message.objects.filter(
+            execution=previous,
+            author_type=AuthorType.PLAYER,
+        )
+        .select_related("author_player")
+        .order_by("created_at", "pk")
+    )
+    accepted = (
+        "\n\n".join(
+            _manual_history_message(message) for message in accepted_messages
+        )
+        or "(no accepted player message was stored)"
+    )
+    prompt = (
+        "# MRAZ MANUAL CHAT BRIDGE · DELTA\n"
+        "Continue the SAME RPG character in this SAME persistent external conversation. "
+        "Keep the full character/world/rules context already established earlier in this "
+        "chat. The application is intentionally sending only changes since the last "
+        "successfully imported response. Do not invent missing changes. Drafts or rejected "
+        "answers that may exist in this web chat are NOT canon unless the application "
+        "accepted them.\n\n"
+        "## LAST RESPONSE ACCEPTED BY THE APPLICATION\n"
+        + accepted
+        + "\n\n## CURRENT EXECUTION CONSTRAINTS\n"
+        + _manual_delta_constraints(execution, out_of_turn=out_of_turn)
+        + "\n\n## NEW CONTEXT SINCE LAST SYNC\n"
+        + updates
+        + "\n\n## RESPONSE CONTRACT\n"
+        + _manual_response_contract()
+    )
+    return prompt, False
+
+
+def _prepare_external_execution(
+    *,
+    execution: TurnExecution,
+    out_of_turn: bool,
+) -> None:
+    execution.refresh_from_db()
+    system_prompt, messages, _, _ = _build_execution_request(
+        execution=execution,
+        out_of_turn=out_of_turn,
+    )
+    prompt, is_bootstrap = _build_manual_chat_prompt(
+        execution=execution,
+        out_of_turn=out_of_turn,
+        system_prompt=system_prompt,
+        messages=messages,
+    )
+    label = (execution.external_chat_label or execution.player.display_name).strip()
+    TurnExecution.objects.filter(pk=execution.pk).update(
+        state=ExecutionState.WAITING_EXTERNAL,
+        error="",
+        external_prompt=prompt,
+        external_is_bootstrap=is_bootstrap,
+        model_used=f"manual-chat:{label}",
+        raw_response="",
+        latency_ms=None,
+    )
+    execution.state = ExecutionState.WAITING_EXTERNAL
+    execution.external_prompt = prompt
+    execution.external_is_bootstrap = is_bootstrap
+    _set_player_status(execution.player, PlayerStatus.WAITING_EXTERNAL)
+
+
+def submit_external_response(
+    *,
+    execution: TurnExecution,
+    raw_text: str,
+) -> TurnResult:
+    raw = (raw_text or "").strip()
+    rejection: ValidationError | None = None
+    message: Message | None = None
+
+    with transaction.atomic():
+        execution = (
+            TurnExecution.objects.select_for_update()
+            .select_related("turn__scene__campaign", "player")
+            .get(pk=execution.pk)
+        )
+        turn = execution.turn
+        scene = turn.scene
+        player = execution.player
+
+        if scene.is_closed:
+            raise ValidationError("Cannot import an external response into a closed scene.")
+        if execution.transport != PlayerTransport.MANUAL_CHAT:
+            raise ValidationError("Execution is not a manual-chat execution.")
+        if execution.state != ExecutionState.WAITING_EXTERNAL:
+            raise ValidationError("Execution is not waiting for an external response.")
+
+        if not raw:
+            execution.error = "External response cannot be empty."
+            execution.raw_response = ""
+            execution.save(update_fields=["error", "raw_response", "updated_at"])
+            _set_player_status(player, PlayerStatus.WAITING_EXTERNAL)
+            rejection = ValidationError("External response cannot be empty.")
+        else:
+            out_of_turn = (
+                turn.mode == TurnMode.ROUND
+                and execution.player_id != turn.active_player_id_snapshot
+            )
+            try:
+                response = parse_structured_response(raw)
+                _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
+                _validate_response_discipline(
+                    turn=turn,
+                    out_of_turn=out_of_turn,
+                    response=response,
+                )
+                _require_public_body(response)
+
+                message = _persist_player_response(
+                    execution=execution,
+                    response=response,
+                )
+                created_ids = list(
+                    Message.objects.filter(execution=execution)
+                    .order_by("created_at", "pk")
+                    .values_list("pk", flat=True)
+                )
+                synced_ids = list(dict.fromkeys([
+                    *execution.history_message_ids,
+                    *created_ids,
+                ]))
+                execution.state = ExecutionState.COMPLETED
+                execution.action_type = response.action_type
+                execution.error = ""
+                execution.raw_response = raw
+                execution.external_synced_message_ids = synced_ids
+                execution.save(
+                    update_fields=[
+                        "state",
+                        "action_type",
+                        "error",
+                        "raw_response",
+                        "external_synced_message_ids",
+                        "updated_at",
+                    ]
+                )
+                if (
+                    execution.external_context_mode == ManualChatContextMode.CHAT_MEMORY
+                    and execution.external_is_bootstrap
+                ):
+                    Player.objects.filter(pk=player.pk).update(
+                        manual_chat_initialized=True
+                    )
+                    player.manual_chat_initialized = True
+                _set_player_status(player, PlayerStatus.IDLE)
+            except Exception as exc:
+                execution.state = ExecutionState.WAITING_EXTERNAL
+                execution.error = str(exc)
+                execution.raw_response = raw
+                execution.save(
+                    update_fields=["state", "error", "raw_response", "updated_at"]
+                )
+                _set_player_status(player, PlayerStatus.WAITING_EXTERNAL)
+                rejection = (
+                    exc
+                    if isinstance(exc, ValidationError)
+                    else ValidationError(f"External response rejected: {exc}")
+                )
+
+    if rejection is not None:
+        raise rejection
+
+    turn = Turn.objects.get(pk=execution.turn_id)
+    _refresh_turn_state(turn)
+    turn.refresh_from_db()
+    if (
+        turn.mode == TurnMode.ROUND
+        and not turn.is_private
+        and turn.state == TurnState.COMPLETED
+    ):
+        _advance_round_once(turn)
+        turn.refresh_from_db()
+    return TurnResult(turn, [message] if message is not None else [])
 
 
 def _provider_generate(client, *, system_prompt, messages, model, temperature):
@@ -1074,6 +1506,15 @@ def ensure_message_revision(message: Message) -> list[MessageRevision]:
     return list(message.revisions.order_by("revision_index", "pk"))
 
 
+def _invalidate_manual_chat_memory_for_scene(scene: Scene) -> None:
+    """Force persistent external chats to re-bootstrap after retroactive canon edits."""
+    Player.objects.filter(
+        scene_participations__scene=scene,
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    ).update(manual_chat_initialized=False)
+
+
 def restore_message_revision(
     *,
     message: Message,
@@ -1096,6 +1537,7 @@ def restore_message_revision(
             action_type=revision.action_type
         )
         _record_message_revision(locked, reason="RESTORE")
+        _invalidate_manual_chat_memory_for_scene(message.scene)
     return locked
 
 
@@ -1121,6 +1563,18 @@ def undo_latest_public_turn(scene: Scene) -> None:
                 locked_scene.save(
                     update_fields=["active_player_index", "updated_at"]
                 )
+
+        # A persistent external chat cannot forget an undone exchange. Force a
+        # fresh authoritative bootstrap next time so application canon and chat
+        # memory converge again.
+        turn_player_ids = list(
+            latest.executions.values_list("player_id", flat=True)
+        )
+        _invalidate_manual_chat_memory_for_scene(locked_scene)
+        if turn_player_ids:
+            Player.objects.filter(pk__in=turn_player_ids).update(
+                status=PlayerStatus.IDLE
+            )
 
         Message.objects.filter(turn=latest).delete()
         latest.delete()

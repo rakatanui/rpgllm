@@ -67,7 +67,7 @@ Tests run entirely inside Docker (dev dependencies are isolated in a
 `web-test` build target):
 
 ```bash
-docker compose run --rm web-test pytest
+docker compose run --rm --build web-test pytest
 ```
 
 ## Mock mode vs real providers
@@ -324,6 +324,73 @@ spoken sentence in the actual in-world language using:
 The normal scene view shows only the original-language sentence. Hovering or
 keyboard-focusing it displays the Russian translation in a tooltip. The Russian
 GM interface language is not treated as the in-world spoken language.
+
+## Manual external-chat transport
+
+A player can use `transport = MANUAL_CHAT` instead of LiteLLM/API generation.
+This is intentionally a human-in-the-loop bridge for models that are available
+only through a normal web chat.
+
+Configure the Player in Admin with:
+
+- **transport** = `MANUAL_CHAT`
+- optional **manual_chat_label** such as `ChatGPT 5.6`
+- optional **manual_chat_url** pointing at the persistent external conversation
+- **manual_chat_context_mode** = `FULL` or `CHAT_MEMORY`
+
+When that player is invoked, the TurnExecution moves to
+`WAITING_EXTERNAL` instead of calling LiteLLM. The player card shows the exact
+packet plus **Copy prompt**, **Open chat**, and a multiline response paste box.
+The pasted result then goes through the same structured-response parser,
+ROUND-role validation, ACT/ACT_OUT_OF_TURN limits, bilingual speech rendering,
+private_to_gm handling, Turn completion, and ROUND advancement as an API reply.
+A rejected paste leaves the execution in `WAITING_EXTERNAL` with the error and
+raw pasted text still visible for correction. While any manual execution is
+waiting, the Turn Engine blocks starting another model turn in that scene so a
+human cannot accidentally create two overlapping frozen timelines while
+copying things between browser tabs.
+
+`FULL` sends the complete authoritative application prompt and visible history
+on every execution.
+
+`CHAT_MEMORY` performs one complete **BOOTSTRAP** first. After a successful
+bootstrap response is pasted back, the Player is marked synchronized. Later
+executions send **DELTA** packets containing only newly visible public/private
+messages since the last successfully imported external response plus current
+scene/ROUND constraints, GM Silence state, one-shot Nudge, the current compact
+shared/player/scene memories, and the response contract. Every DELTA also
+re-states the **last response actually accepted by the application**. This is
+deliberately redundant: if the GM edited pasted JSON, or the web chat produced a
+rejected draft before the accepted one, the persistent chat is pulled back
+toward application canon instead of trusting its own conversational memory.
+If the last synchronized external execution belongs to a scene outside the current predecessor lineage,
+the bridge falls back to a full bootstrap instead of trusting unrelated branch
+memory.
+
+If the external conversation is replaced, cleared, or no longer remembers its
+bootstrap, use **Reset chat memory** on the player card. The next execution will
+send a fresh full bootstrap. Major out-of-band changes to character/world rules
+should be treated the same way when you want the external chat re-seeded from
+authoritative application context. Retroactive application edits such as Undo,
+Restore, Regen, or an OOC revision that changes public canon automatically mark
+persistent manual-chat players in that scene as needing a fresh bootstrap.
+
+CHAT_MEMORY assumes one persistent external conversation per continuous story
+lineage. If the same character is deliberately played through incompatible
+parallel branches, use separate external chats/URLs for those branches; a later
+bootstrap is authoritative, but a web chat may still remember material from a
+different branch because, unlike our database, it has no shame and no rollback.
+
+General GM **OOC / META** messages and private GM messages naturally enter the
+next DELTA because they are part of that player's visible history. One-shot
+**Nudge** is embedded directly in the pending manual packet and remains frozen
+for that execution.
+
+The API-only per-message **Regen** and immediate **OOC revision** controls are
+hidden for manual-chat declarations rather than silently calling the player's
+old LiteLLM model. Use the persistent external chat plus the normal OOC/meta
+channel for now; a later browser bridge can automate the same Copy/Open/Paste
+contract without changing the Turn Engine.
 
 ## Stop
 

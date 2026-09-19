@@ -9,8 +9,10 @@ from rpg.models import (
     AuthorType,
     ExecutionState,
     LoreEntry,
+    ManualChatContextMode,
     Message,
     MessageRevision,
+    PlayerTransport,
     Turn,
     TurnExecution,
     TurnMode,
@@ -393,8 +395,7 @@ def test_latest_failed_execution_shows_single_model_retry_button():
 
     assert response.status_code == 200
     html = response.content.decode()
-    assert "Retry Матис only" in html
-    assert "Retry Люсьен only" not in html
+    assert ">Retry</button>" in html
     assert reverse(
         "retry_execution",
         kwargs={"scene_id": scene.pk, "execution_id": failed.pk},
@@ -1591,3 +1592,194 @@ def test_history_search_spans_predecessor_scenes_and_filters_author_action():
     assert "Старый след про Сибиллу." in html
     assert "Old scene" in html
     assert "Новая реплика." not in html
+
+
+
+@pytest.mark.django_db
+def test_manual_chat_player_card_shows_copy_open_and_paste_controls():
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_label="ChatGPT",
+        manual_chat_url="https://chatgpt.com/c/example",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Что делаешь?",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "External response needed" in html
+    assert "BOOTSTRAP" in html
+    assert "Copy prompt" in html
+    assert "Open chat" in html
+    assert "https://chatgpt.com/c/example" in html
+    assert "Accept pasted response" in html
+    assert reverse(
+        "submit_external_response",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) in html
+
+
+@pytest.mark.django_db
+def test_external_response_view_imports_valid_paste():
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+
+    response = Client().post(
+        reverse(
+            "submit_external_response",
+            kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+        ),
+        {
+            "response": (
+                '{"action_type":"ACT","public":"Люсьен отвечает.",'
+                '"private_to_gm":""}'
+            )
+        },
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+    assert Message.objects.filter(
+        execution=execution,
+        content="Люсьен отвечает.",
+        visibility=Visibility.PUBLIC,
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_external_response_view_redirects_and_keeps_rejection_on_execution():
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+
+    response = Client().post(
+        reverse(
+            "submit_external_response",
+            kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+        ),
+        {"response": '{"action_type":"ACT","public":"' + ("x" * 1201) + '"}'},
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.WAITING_EXTERNAL
+    assert "too long" in execution.error
+
+
+@pytest.mark.django_db
+def test_reset_manual_chat_memory_forces_next_bootstrap():
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_initialized=True,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    response = Client().post(
+        reverse(
+            "reset_manual_chat_memory",
+            kwargs={"scene_id": scene.pk, "player_id": lucien.pk},
+        )
+    )
+
+    assert response.status_code == 302
+    lucien.refresh_from_db()
+    assert lucien.manual_chat_initialized is False
+
+
+
+@pytest.mark.django_db
+def test_manual_chat_paste_box_is_preserved_across_player_polling():
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+
+    response = Client().get(
+        reverse("players_status", kwargs={"scene_id": scene.pk})
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert f'id="external-response-{execution.pk}"' in html
+    assert "hx-preserve" in html
+
+
+@pytest.mark.django_db
+def test_manual_chat_public_reply_hides_api_only_ooc_and_regen_controls():
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+    turn_engine.submit_external_response(
+        execution=execution,
+        raw_text='{"action_type":"ACT","public":"Ответ.","private_to_gm":""}',
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "Versions / restore" in html
+    assert reverse(
+        "execution_debug",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) in html
+    assert reverse(
+        "regenerate_execution",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) not in html

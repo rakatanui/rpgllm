@@ -15,6 +15,16 @@ urlpatterns = [
          name="mark_private_read"),
     path("scene/<int:scene_id>/private/<int:player_id>/", views.private_channel,
          name="private_channel"),
+    path(
+        "scene/<int:scene_id>/external/<int:execution_id>/submit/",
+        views.submit_external_response,
+        name="submit_external_response",
+    ),
+    path(
+        "scene/<int:scene_id>/manual-chat/<int:player_id>/reset-memory/",
+        views.reset_manual_chat_memory,
+        name="reset_manual_chat_memory",
+    ),
     path("scene/<int:scene_id>/mode/", views.set_mode, name="set_mode"),
     path(
         "scene/<int:scene_id>/retry/<int:execution_id>/",
