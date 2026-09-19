@@ -14,6 +14,7 @@ from rpg.models import (
     PlayerStatus,
     PlayerTransport,
     Turn,
+    TurnExecution,
     TurnMode,
     TurnState,
     Visibility,
