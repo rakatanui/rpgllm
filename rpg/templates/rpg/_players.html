@@ -30,6 +30,50 @@
 
     <div>status: <span class="chip {{ p.status }}">{{ p.status }}</span></div>
 
+    {% if p.transport == "HUMAN" and access %}
+      <div class="human-access-controls">
+        <div class="human-access-status">
+          <span class="chip {% if access.human_access_enabled %}idle{% else %}error{% endif %}">
+            PLAYER LINK {% if access.human_access_enabled %}ACTIVE{% else %}REVOKED{% endif %}
+          </span>
+        </div>
+        {% if access.human_access_enabled %}
+          <input id="human-access-url-{{ p.pk }}"
+                 class="human-access-url"
+                 type="text"
+                 value="{{ client_url }}"
+                 readonly
+                 aria-label="Secret player link for {{ p.display_name }}">
+          <div class="toolbar">
+            <a class="btn btn-small human-client-link"
+               href="{% url 'human_player_client' access.human_access_token %}"
+               target="_blank" rel="noopener noreferrer">Open player client</a>
+            <button type="button"
+                    class="btn btn-small"
+                    onclick="copyElementText('human-access-url-{{ p.pk }}', this)">Copy link</button>
+        {% else %}
+          <div class="toolbar">
+        {% endif %}
+            <form method="post"
+                  action="{% url 'regenerate_human_access' scene.pk p.pk %}"
+                  class="inline"
+                  onsubmit="return confirm('Generate a new secret player link? The old link will stop working immediately.');">
+              {% csrf_token %}
+              <button class="btn btn-small" type="submit">Regenerate</button>
+            </form>
+            <form method="post"
+                  action="{% url 'toggle_human_access' scene.pk p.pk %}"
+                  class="inline"
+                  {% if access.human_access_enabled %}onsubmit="return confirm('Revoke this player link immediately?');"{% endif %}>
+              {% csrf_token %}
+              <button class="btn btn-small" type="submit">
+                {% if access.human_access_enabled %}Revoke{% else %}Enable{% endif %}
+              </button>
+            </form>
+          </div>
+      </div>
+    {% endif %}
+
     {% if not scene.is_closed %}
       {% if p.transport != "HUMAN" %}
         <form method="post" action="{% url 'set_player_nudge' scene.pk p.pk %}"
@@ -41,51 +85,7 @@
           </button>
         </form>
       {% endif %}
-      {% if p.transport == "HUMAN" %}
-        {% if access %}
-          <div class="human-access-controls">
-            <div class="human-access-status">
-              <span class="chip {% if access.human_access_enabled %}idle{% else %}error{% endif %}">
-                PLAYER LINK {% if access.human_access_enabled %}ACTIVE{% else %}REVOKED{% endif %}
-              </span>
-            </div>
-            {% if access.human_access_enabled %}
-              <input id="human-access-url-{{ p.pk }}"
-                     class="human-access-url"
-                     type="text"
-                     value="{{ client_url }}"
-                     readonly
-                     aria-label="Secret player link for {{ p.display_name }}">
-              <div class="toolbar">
-                <a class="btn btn-small human-client-link"
-                   href="{% url 'human_player_client' access.human_access_token %}"
-                   target="_blank" rel="noopener noreferrer">Open player client</a>
-                <button type="button"
-                        class="btn btn-small"
-                        onclick="copyElementText('human-access-url-{{ p.pk }}', this)">Copy link</button>
-            {% else %}
-              <div class="toolbar">
-            {% endif %}
-                <form method="post"
-                      action="{% url 'regenerate_human_access' scene.pk p.pk %}"
-                      class="inline"
-                      onsubmit="return confirm('Generate a new secret player link? The old link will stop working immediately.');">
-                  {% csrf_token %}
-                  <button class="btn btn-small" type="submit">Regenerate</button>
-                </form>
-                <form method="post"
-                      action="{% url 'toggle_human_access' scene.pk p.pk %}"
-                      class="inline"
-                      {% if access.human_access_enabled %}onsubmit="return confirm('Revoke this player link immediately?');"{% endif %}>
-                  {% csrf_token %}
-                  <button class="btn btn-small" type="submit">
-                    {% if access.human_access_enabled %}Revoke{% else %}Enable{% endif %}
-                  </button>
-                </form>
-              </div>
-          </div>
-        {% endif %}
-      {% elif p.transport == "MANUAL_CHAT" and p.manual_chat_context_mode == "CHAT_MEMORY" %}
+      {% if p.transport == "MANUAL_CHAT" and p.manual_chat_context_mode == "CHAT_MEMORY" %}
         <form method="post"
               action="{% url 'reset_manual_chat_memory' scene.pk p.pk %}"
               class="inline"
