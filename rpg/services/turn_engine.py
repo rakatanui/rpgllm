@@ -57,6 +57,7 @@ def start_turn(
     private_to_player: Player | None = None,
     client_turn_id: str | uuid.UUID | None = None,
     silent: bool = False,
+    private_gm_messages: dict[int, str] | None = None,
 ) -> TurnResult:
     """Create and execute one immutable GM-triggered turn.
 
@@ -75,6 +76,15 @@ def start_turn(
 
     normalized_id = _normalize_client_turn_id(client_turn_id)
     selected_players = selected_players or []
+    private_gm_messages = {
+        int(player_id): (content or "").strip()
+        for player_id, content in (private_gm_messages or {}).items()
+        if (content or "").strip()
+    }
+    if private_to_player is not None and private_gm_messages:
+        raise ValidationError(
+            "Additional private GM messages are not supported inside a private turn."
+        )
 
     with transaction.atomic():
         locked_scene = (
@@ -168,6 +178,30 @@ def start_turn(
             )
             turn.trigger_message = gm_message
             turn.save(update_fields=["trigger_message"])
+
+        if private_gm_messages:
+            scene_players_by_id = {
+                player.pk: player for player in _scene_players(locked_scene)
+            }
+            unknown_ids = [
+                player_id
+                for player_id in private_gm_messages
+                if player_id not in scene_players_by_id
+            ]
+            if unknown_ids:
+                raise ValidationError(
+                    f"Private GM target is not a scene participant: {unknown_ids}"
+                )
+            for player_id, private_content in private_gm_messages.items():
+                Message.objects.create(
+                    campaign=locked_scene.campaign,
+                    scene=locked_scene,
+                    turn=turn,
+                    author_type=AuthorType.GM,
+                    content=private_content,
+                    visibility=Visibility.PRIVATE_GM_PLAYER,
+                    private_player=scene_players_by_id[player_id],
+                )
 
         executions = []
         for index, player in enumerate(targets):
