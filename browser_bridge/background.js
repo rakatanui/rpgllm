@@ -178,6 +178,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "MRAZ_EXTERNAL_READY") {
+    (async () => {
+      if (!sender.tab || !sender.tab.id) {
+        sendResponse({ accepted: false });
+        return;
+      }
+      const jobs = await allJobs();
+      for (const job of jobs) {
+        if (job.targetTabId === sender.tab.id && job.state === "waiting-tab") {
+          await sendJobToExternalTab(job);
+        }
+      }
+      sendResponse({ accepted: true });
+    })();
+    return true;
+  }
+
   if (
     message.type === "MRAZ_EXTERNAL_RESULT" ||
     message.type === "MRAZ_EXTERNAL_ERROR"
