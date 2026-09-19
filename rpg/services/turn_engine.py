@@ -482,9 +482,9 @@ def regenerate_execution(
         raise RuntimeError("Only public executions can be regenerated here")
     if execution.state != ExecutionState.COMPLETED:
         raise RuntimeError("Only a COMPLETED execution can be regenerated")
-    if execution.transport == PlayerTransport.MANUAL_CHAT:
+    if execution.transport != PlayerTransport.LITELLM:
         raise RuntimeError(
-            "Manual-chat executions are regenerated in the external chat, not through LiteLLM."
+            "Only LiteLLM/API executions can be regenerated through the model backend."
         )
 
     public_message = (
@@ -619,9 +619,9 @@ def revise_execution_ooc(
         raise RuntimeError("OOC feedback requires a public player execution message")
     if execution.state != ExecutionState.COMPLETED:
         raise RuntimeError("OOC feedback requires a completed player execution")
-    if execution.transport == PlayerTransport.MANUAL_CHAT:
+    if execution.transport != PlayerTransport.LITELLM:
         raise RuntimeError(
-            "Manual-chat declarations must be revised in the external chat."
+            "Automatic OOC revision is available only for LiteLLM/API executions."
         )
 
     turn = execution.turn
