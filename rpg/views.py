@@ -476,7 +476,6 @@ def players_status(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     players = _scene_players(scene)
     human_access_by_player, human_client_url_by_player = _human_access_ui_context(
-        request,
         scene,
     )
     return render(
