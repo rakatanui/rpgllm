@@ -103,13 +103,15 @@ async function sendJobToExternalTab(job) {
 
 async function notifySource(job, payload) {
   try {
-    await chrome.tabs.sendMessage(job.sourceTabId, {
+    const response = await chrome.tabs.sendMessage(job.sourceTabId, {
       type: "MRAZ_BRIDGE_RESULT",
       jobId: job.jobId,
       ...payload,
     });
+    return Boolean(response && response.accepted);
   } catch (error) {
     console.warn("MRAZ bridge could not notify source tab", error);
+    return false;
   }
 }
 
@@ -187,6 +189,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "MRAZ_SOURCE_READY") {
+    (async () => {
+      if (!sender.tab || !sender.tab.id) {
+        sendResponse({ accepted: false });
+        return;
+      }
+      const jobs = await allJobs();
+      for (const job of jobs) {
+        if (
+          job.sourceTabId === sender.tab.id &&
+          job.state === "result-ready" &&
+          job.result
+        ) {
+          const delivered = await notifySource(job, job.result);
+          if (delivered) {
+            await deleteJob(job.jobId);
+          }
+        }
+      }
+      sendResponse({ accepted: true });
+    })();
+    return true;
+  }
+
   if (message.type === "MRAZ_EXTERNAL_READY") {
     (async () => {
       if (!sender.tab || !sender.tab.id) {
@@ -215,13 +241,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
-      await notifySource(job, {
+      job.state = "result-ready";
+      job.result = {
         ok: message.type === "MRAZ_EXTERNAL_RESULT",
         response: message.response || "",
         error: message.error || "",
-      });
-      await deleteJob(message.jobId);
-      sendResponse({ accepted: true });
+      };
+      await saveJob(job);
+      const delivered = await notifySource(job, job.result);
+      if (delivered) {
+        await deleteJob(message.jobId);
+      }
+      sendResponse({ accepted: true, delivered });
     })();
     return true;
   }
