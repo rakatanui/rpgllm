@@ -1984,3 +1984,39 @@ def test_gm_player_card_links_human_client(mock_backend):
         kwargs={"scene_id": scene.pk, "player_id": human.pk},
     ) in html
     assert "Open player client" in html
+
+
+
+@pytest.mark.django_db
+def test_human_declaration_hides_model_regen_and_ooc_revision_controls(mock_backend):
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    turn_engine.submit_human_response(
+        execution=execution,
+        action_type="ACT",
+        public_text="Человеческая заявка.",
+    )
+    message = Message.objects.get(
+        execution=execution,
+        visibility=Visibility.PUBLIC,
+        author_type=AuthorType.PLAYER,
+    )
+
+    html = Client().get(reverse("scene", kwargs={"scene_id": scene.pk})).content.decode()
+
+    assert reverse(
+        "regenerate_execution",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) not in html
+    assert reverse(
+        "ooc_revision",
+        kwargs={"scene_id": scene.pk, "message_id": message.pk},
+    ) not in html
+    assert "Versions / restore" in html
