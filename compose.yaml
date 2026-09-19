@@ -89,11 +89,15 @@ services:
     image: nginx:alpine
     profiles: ["public-player"]
     restart: unless-stopped
+    environment:
+      PUBLIC_PLAYER_HOST: ${PUBLIC_PLAYER_HOST:-}
+      # Only substitute our deployment variable; leave nginx variables intact.
+      NGINX_ENVSUBST_FILTER: ^PUBLIC_PLAYER_HOST$
     depends_on:
       web:
         condition: service_healthy
     volumes:
-      - ./deploy/player-edge.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/player-edge.nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
     healthcheck:
       test: ["CMD", "nginx", "-t"]
       interval: 10s
