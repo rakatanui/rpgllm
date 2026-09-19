@@ -1,6 +1,6 @@
 {% load rpg_extras %}
 {% for p in players %}
-  {% with failed=failed_execution_by_player|get:p.pk %}
+  {% with failed=failed_execution_by_player|get:p.pk waiting=waiting_external_by_player|get:p.pk %}
   <div class="player-row {% if scene.mode == "ROUND" and p.pk == active_round_player_id %}active{% endif %}">
     <div class="player-row-title">
       <strong>{{ p.display_name }}</strong>
@@ -11,10 +11,21 @@
         <span class="chip" title="{{ p.pending_nudge }}">NUDGE</span>
       {% endif %}
     </div>
+
     <div class="meta">
-      model: {% if p.model_config %}{{ p.model_config.name }}{% else %}—{% endif %}
-      {% if p.fallback_model_config %} · fallback: {{ p.fallback_model_config.name }}{% endif %}
+      {% if p.transport == "MANUAL_CHAT" %}
+        transport: manual chat
+        {% if p.manual_chat_label %} · {{ p.manual_chat_label }}{% endif %}
+        · {{ p.manual_chat_context_mode }}
+        {% if p.manual_chat_context_mode == "CHAT_MEMORY" %}
+          · memory {% if p.manual_chat_initialized %}synced{% else %}needs bootstrap{% endif %}
+        {% endif %}
+      {% else %}
+        model: {% if p.model_config %}{{ p.model_config.name }}{% else %}—{% endif %}
+        {% if p.fallback_model_config %} · fallback: {{ p.fallback_model_config.name }}{% endif %}
+      {% endif %}
     </div>
+
     <div>status: <span class="chip {{ p.status }}">{{ p.status }}</span></div>
 
     {% if not scene.is_closed %}
@@ -26,6 +37,50 @@
           Nudge
         </button>
       </form>
+      {% if p.transport == "MANUAL_CHAT" and p.manual_chat_context_mode == "CHAT_MEMORY" %}
+        <form method="post"
+              action="{% url 'reset_manual_chat_memory' scene.pk p.pk %}"
+              class="inline"
+              onsubmit="return confirm('Сбросить синхронизацию памяти внешнего чата? Следующий ход отправит полный bootstrap.')">
+          {% csrf_token %}
+          <button class="btn btn-small" type="submit">Reset chat memory</button>
+        </form>
+      {% endif %}
+    {% endif %}
+
+    {% if waiting %}
+      <details class="external-wait-card" open>
+        <summary>
+          External response needed
+          {% if waiting.external_is_bootstrap %}<span class="chip">BOOTSTRAP</span>{% else %}<span class="chip">DELTA</span>{% endif %}
+        </summary>
+        {% if waiting.error %}
+          <div class="execution-error">Rejected: {{ waiting.error }}</div>
+        {% endif %}
+        <div class="meta">
+          {{ waiting.external_chat_label|default:"External chat" }}
+          · {{ waiting.external_context_mode }}
+        </div>
+        <textarea id="external-prompt-{{ waiting.pk }}"
+                  class="external-prompt"
+                  readonly>{{ waiting.external_prompt }}</textarea>
+        <div class="toolbar">
+          <button type="button" class="btn btn-small"
+                  onclick="copyElementText('external-prompt-{{ waiting.pk }}', this)">Copy prompt</button>
+          {% if waiting.external_chat_url %}
+            <a class="btn btn-small" href="{{ waiting.external_chat_url }}" target="_blank" rel="noopener noreferrer">Open chat</a>
+          {% endif %}
+          <a class="btn btn-small" href="{% url 'execution_debug' scene.pk waiting.pk %}">Debug</a>
+        </div>
+        <form method="post"
+              action="{% url 'submit_external_response' scene.pk waiting.pk %}"
+              class="external-response-form">
+          {% csrf_token %}
+          <textarea name="response" rows="6"
+                    placeholder="Paste the external chat response here...">{{ waiting.raw_response }}</textarea>
+          <button class="btn btn-primary" type="submit">Accept pasted response</button>
+        </form>
+      </details>
     {% endif %}
 
     {% if failed %}
@@ -39,7 +94,7 @@
           {% csrf_token %}
           <button class="btn btn-retry" type="submit">Retry</button>
         </form>
-        {% if p.fallback_model_config and p.fallback_model_config.enabled %}
+        {% if p.transport != "MANUAL_CHAT" and p.fallback_model_config and p.fallback_model_config.enabled %}
           <form method="post"
                 action="{% url 'retry_execution_fallback' scene.pk failed.pk %}"
                 class="retry-execution-form">
