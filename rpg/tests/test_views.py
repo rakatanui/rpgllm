@@ -2445,9 +2445,9 @@ def test_human_client_puts_gameplay_before_reference_and_collapses_character_sec
         _human_url("human_player_client", scene, human)
     ).content.decode()
 
-    primary_index = html.index("human-character-primary-card")
+    primary_index = html.index('id="human-character-primary"')
     gameplay_index = html.index('id="human-player-panel"')
-    reference_index = html.index("human-character-reference")
+    reference_index = html.index('id="human-character-reference"')
 
     assert primary_index < gameplay_index < reference_index
     assert not re.search(
