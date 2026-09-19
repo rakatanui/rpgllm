@@ -311,6 +311,70 @@ def start_silent_turn(
     )
 
 
+def _retry_correction_prompt(
+    *,
+    execution: TurnExecution,
+    previous_state: str,
+    previous_error: str,
+    previous_raw_response: str,
+    out_of_turn: bool,
+) -> str:
+    """Build high-salience repair guidance for an INVALID retry.
+
+    FAILED executions are provider/runtime failures and should normally retry the
+    frozen request unchanged. INVALID means the model answered, but the
+    application rejected the answer, so the retry needs the exact rejection
+    reason and the rejected response instead of asking the model to guess again.
+    """
+    if previous_state != ExecutionState.INVALID:
+        return ""
+
+    error = (previous_error or "The previous response violated application rules.").strip()
+    raw = (previous_raw_response or "").strip()
+    if len(raw) > 6000:
+        raw = "...[truncated]\n" + raw[-6000:]
+    if not raw:
+        raw = "(raw rejected response unavailable)"
+
+    role_guidance = ""
+    turn = execution.turn
+    if turn.mode == TurnMode.ROUND and not turn.is_private:
+        if out_of_turn:
+            role_guidance = (
+                "\n\nCRITICAL ROUND CORRECTION:\n"
+                "You are NOT the active player. Your default answer is PASS. "
+                "Ordinary speech, answering a question, volunteering information, "
+                "commentary, exposition, non-urgent movement, and anything that can "
+                "wait for your normal turn MUST be PASS. "
+                "Do NOT relabel an ordinary ACT as ACT_OUT_OF_TURN just to preserve "
+                "the rejected content. ACT_OUT_OF_TURN is allowed only for one "
+                "genuinely urgent intervention that must happen before the active "
+                "player's turn resolves. If the rejected response was merely something "
+                "you wanted to say or do, return PASS."
+            )
+        else:
+            role_guidance = (
+                "\n\nCRITICAL ROUND CORRECTION:\n"
+                "You ARE the active player. Only ACT or PASS is allowed. "
+                "Do not use ACT_OUT_OF_TURN."
+            )
+
+    return (
+        "\n\n# RETRY AFTER VALIDATION FAILURE\n"
+        "Your previous response was rejected by the application. This retry is the "
+        "SAME frozen turn, not a new scene beat. Correct the rejected response instead "
+        "of repeating the same invalid choice. Obey the validation error exactly. "
+        "Return a complete replacement JSON response in the normal schema."
+        + role_guidance
+        + "\n\nVALIDATION ERROR:\n"
+        + error
+        + "\n\nPREVIOUS REJECTED RESPONSE:\n"
+        + raw
+        + "\n\nProduce a corrected replacement now. Do not mention this retry or the "
+        "validation machinery in-fiction."
+    )
+
+
 def retry_execution(
     execution: TurnExecution,
     *,
@@ -327,16 +391,29 @@ def retry_execution(
             raise RuntimeError("Cannot retry an execution in a closed scene")
         if execution.state not in (ExecutionState.FAILED, ExecutionState.INVALID):
             raise RuntimeError("Can only retry a FAILED or INVALID execution")
+
+        previous_state = execution.state
+        previous_error = execution.error
+        previous_raw_response = execution.raw_response
+
+        turn = execution.turn
+        out_of_turn = (
+            turn.mode == TurnMode.ROUND
+            and execution.player_id != turn.active_player_id_snapshot
+        )
+        correction_prompt = _retry_correction_prompt(
+            execution=execution,
+            previous_state=previous_state,
+            previous_error=previous_error,
+            previous_raw_response=previous_raw_response,
+            out_of_turn=out_of_turn,
+        )
+
         execution.state = ExecutionState.PENDING
         execution.error = ""
         execution.action_type = ""
         execution.save(update_fields=["state", "error", "action_type", "updated_at"])
 
-    turn = execution.turn
-    out_of_turn = (
-        turn.mode == TurnMode.ROUND
-        and execution.player_id != turn.active_player_id_snapshot
-    )
     if execution.transport == PlayerTransport.MANUAL_CHAT:
         _prepare_external_execution(
             execution=execution,
@@ -349,6 +426,7 @@ def retry_execution(
             client=get_llm_client(),
             out_of_turn=out_of_turn,
             model_config_override=model_config,
+            extra_system_prompt=correction_prompt,
         )
     _refresh_turn_state(turn)
     turn.refresh_from_db()
@@ -1313,6 +1391,7 @@ def _run_execution(
     client,
     out_of_turn: bool,
     model_config_override: ModelConfig | None = None,
+    extra_system_prompt: str = "",
 ) -> Message | None:
     execution.refresh_from_db()
     turn = execution.turn
@@ -1331,6 +1410,7 @@ def _run_execution(
             client=client,
             out_of_turn=out_of_turn,
             model_config_override=model_config_override,
+            extra_system_prompt=extra_system_prompt,
         )
         return _finalize_execution_response(
             execution=execution,
