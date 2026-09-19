@@ -330,6 +330,42 @@ The normal scene view shows only the original-language sentence. Hovering or
 keyboard-focusing it displays the Russian translation in a tooltip. The Russian
 GM interface language is not treated as the in-world spoken language.
 
+## Human player client
+
+A Player may use `transport = HUMAN`. The Turn Engine then creates a normal
+frozen execution but does not call LiteLLM and does not generate an external
+prompt. The execution waits in `WAITING_HUMAN` until the living player submits
+through the player-facing client.
+
+The GM player card exposes **Open player client** for HUMAN participants. The
+client is deliberately thin and mobile-friendly:
+
+- current public scene feed;
+- only that player's private GM channel;
+- clear waiting / active / inactive status;
+- a move composer shown only when an execution is actually waiting for that
+  player;
+- server-derived legal action choices;
+- optional private note attached to the move;
+- standalone OOC message to the GM.
+
+ROUND rules remain authoritative on the server. An active human gets ACT/PASS;
+an inactive human gets PASS/ACT_OUT_OF_TURN. Human submissions pass through the
+same response-length/paragraph/question validation and the same persistence,
+private-message, Turn completion and ROUND advancement paths as model replies.
+Private GM→human response requests stay private.
+
+A scene with a `WAITING_HUMAN` or `WAITING_EXTERNAL` execution refuses to
+start another model turn until the outstanding response is completed. This
+prevents the public scene from advancing underneath a player who still has an
+open execution.
+
+**Important demo-stage limitation:** the HUMAN client currently uses ordinary
+`scene_id/player_id` routes and has no player authentication or access token.
+Its queries are server-side privacy-filtered and never return another player's
+private messages or GM_ONLY messages, but the route itself is not suitable for
+Internet exposure yet. Tokenized player access is the next deployment step.
+
 ## Manual external-chat transport
 
 A player can use `transport = MANUAL_CHAT` instead of LiteLLM/API generation.
