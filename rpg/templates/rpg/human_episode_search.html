@@ -1,0 +1,61 @@
+{% extends "rpg/base.html" %}
+{% block title %}{{ player.display_name }} · Episode search{% endblock %}
+{% block favicon %}
+<link rel="icon" type="image/svg+xml" href="/static/rpg/favicon-player.svg">
+{% endblock %}
+{% block body_class %}human-player-page{% endblock %}
+{% block nav %}{% endblock %}
+{% block meta %}Player client · history{% endblock %}
+{% block content %}
+<div class="human-history-shell">
+  <div class="human-history-header">
+    <div>
+      <div class="meta">{{ campaign.name }} · {{ player.display_name }}</div>
+      <h2>Episode search</h2>
+    </div>
+    <a class="btn" href="{% url 'human_player_client' scene.pk player.pk %}">Back to current scene</a>
+  </div>
+
+  <form method="get" class="human-history-search-form">
+    <input type="text"
+           name="q"
+           value="{{ q }}"
+           placeholder="Search episode title, scene description, public history or your private GM channel..."
+           autofocus>
+    <button class="btn btn-primary" type="submit">Search</button>
+    {% if q %}
+      <a class="btn" href="{% url 'human_episode_search' scene.pk player.pk %}">Clear</a>
+    {% endif %}
+  </form>
+
+  <section class="panel human-episode-results">
+    {% for episode in episodes %}
+      <article class="human-episode-result">
+        <div class="human-episode-result-title">
+          <a href="{% url 'human_episode_detail' scene.pk player.pk episode.pk %}">
+            {{ episode.name }}
+          </a>
+          {% if episode.pk == scene.pk %}
+            <span class="chip waiting_human">CURRENT</span>
+          {% elif episode.is_closed %}
+            <span class="chip">CLOSED</span>
+          {% else %}
+            <span class="chip">OPEN</span>
+          {% endif %}
+        </div>
+        {% if episode.description %}
+          <div class="human-episode-description">{{ episode.description|truncatechars:320 }}</div>
+        {% endif %}
+        <div class="meta">
+          Started {{ episode.created_at|date:"Y-m-d H:i" }}
+          {% if episode.closed_at %} · closed {{ episode.closed_at|date:"Y-m-d H:i" }}{% endif %}
+        </div>
+      </article>
+    {% empty %}
+      <p class="meta">
+        {% if q %}No episodes matched this search.{% else %}This character has no episodes yet.{% endif %}
+      </p>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}
