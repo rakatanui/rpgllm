@@ -358,10 +358,12 @@ bootstrap response is pasted back, the Player is marked synchronized. Later
 executions send **DELTA** packets containing only newly visible public/private
 messages since the last successfully imported external response plus current
 scene/ROUND constraints, GM Silence state, one-shot Nudge, the current compact
-shared/player/scene memories, and the response contract. Imported response
-messages are included in the sync watermark, so the model's own previous answer
-is not pointlessly echoed back on the next delta. If the last synchronized
-external execution belongs to a scene outside the current predecessor lineage,
+shared/player/scene memories, and the response contract. Every DELTA also
+re-states the **last response actually accepted by the application**. This is
+deliberately redundant: if the GM edited pasted JSON, or the web chat produced a
+rejected draft before the accepted one, the persistent chat is pulled back
+toward application canon instead of trusting its own conversational memory.
+If the last synchronized external execution belongs to a scene outside the current predecessor lineage,
 the bridge falls back to a full bootstrap instead of trusting unrelated branch
 memory.
 
