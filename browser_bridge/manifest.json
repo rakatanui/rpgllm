@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "MRAZ Browser Bridge",
+  "version": "0.1.0",
+  "description": "Moves MRAZ MANUAL_CHAT prompts into persistent web chats and returns structured responses.",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://mraz.local/*",
+    "http://127.0.0.100/*",
+    "http://localhost/*",
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://mraz.local/*",
+        "http://127.0.0.100/*",
+        "http://localhost/*"
+      ],
+      "js": [
+        "mraz-page.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "external-chat.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
