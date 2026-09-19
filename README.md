@@ -345,7 +345,10 @@ The pasted result then goes through the same structured-response parser,
 ROUND-role validation, ACT/ACT_OUT_OF_TURN limits, bilingual speech rendering,
 private_to_gm handling, Turn completion, and ROUND advancement as an API reply.
 A rejected paste leaves the execution in `WAITING_EXTERNAL` with the error and
-raw pasted text still visible for correction.
+raw pasted text still visible for correction. While any manual execution is
+waiting, the Turn Engine blocks starting another model turn in that scene so a
+human cannot accidentally create two overlapping frozen timelines while
+copying things between browser tabs.
 
 `FULL` sends the complete authoritative application prompt and visible history
 on every execution.
@@ -354,9 +357,13 @@ on every execution.
 bootstrap response is pasted back, the Player is marked synchronized. Later
 executions send **DELTA** packets containing only newly visible public/private
 messages since the last successfully imported external response plus current
-scene/ROUND constraints, GM Silence state, one-shot Nudge, and the response
-contract. Imported response messages are included in the sync watermark, so the
-model's own previous answer is not pointlessly echoed back on the next delta.
+scene/ROUND constraints, GM Silence state, one-shot Nudge, the current compact
+shared/player/scene memories, and the response contract. Imported response
+messages are included in the sync watermark, so the model's own previous answer
+is not pointlessly echoed back on the next delta. If the last synchronized
+external execution belongs to a scene outside the current predecessor lineage,
+the bridge falls back to a full bootstrap instead of trusting unrelated branch
+memory.
 
 If the external conversation is replaced, cleared, or no longer remembers its
 bootstrap, use **Reset chat memory** on the player card. The next execution will
