@@ -68,6 +68,28 @@ class ManualChatContextMode(models.TextChoices):
     CHAT_MEMORY = "CHAT_MEMORY", "Use external chat memory after bootstrap"
 
 
+class GameMasterTransport(models.TextChoices):
+    LITELLM = "LITELLM", "LiteLLM / API"
+    MANUAL_CHAT = "MANUAL_CHAT", "Manual external chat"
+
+
+class GameMasterExecutionState(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    RUNNING = "RUNNING", "Running"
+    WAITING_EXTERNAL = "WAITING_EXTERNAL", "Waiting for external chat"
+    DRAFT = "DRAFT", "Draft ready"
+    PUBLISHED = "PUBLISHED", "Published"
+    FAILED = "FAILED", "Failed"
+    INVALID = "INVALID", "Invalid response"
+    DISCARDED = "DISCARDED", "Discarded"
+
+
+class GameMasterAction(models.TextChoices):
+    TURN = "TURN", "Publish and run player turn"
+    NARRATE = "NARRATE", "Publish without player turn"
+    WAIT = "WAIT", "Do nothing"
+
+
 class ModelConfig(models.Model):
     name = models.CharField(max_length=120, unique=True)
     gateway_model = models.CharField(
@@ -108,6 +130,61 @@ class Campaign(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class GameMasterConfig(models.Model):
+    campaign = models.OneToOneField(
+        Campaign,
+        on_delete=models.CASCADE,
+        related_name="gm_config",
+    )
+    enabled = models.BooleanField(default=False)
+    transport = models.CharField(
+        max_length=30,
+        choices=GameMasterTransport.choices,
+        default=GameMasterTransport.LITELLM,
+    )
+    model_config = models.ForeignKey(
+        ModelConfig,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="gm_configs",
+    )
+    fallback_model_config = models.ForeignKey(
+        ModelConfig,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="gm_fallback_configs",
+    )
+    system_prompt = models.TextField(
+        blank=True,
+        help_text=(
+            "Authoritative instructions for the model acting as Game Master. "
+            "Campaign, scene, lore, characters and all GM-visible history are added separately."
+        ),
+    )
+    review_before_publish = models.BooleanField(
+        default=True,
+        help_text=(
+            "When enabled, model output becomes an editable draft. When disabled, "
+            "a valid result is published immediately."
+        ),
+    )
+    manual_chat_label = models.CharField(max_length=120, blank=True)
+    manual_chat_url = models.URLField(max_length=1000, blank=True)
+    manual_chat_context_mode = models.CharField(
+        max_length=30,
+        choices=ManualChatContextMode.choices,
+        default=ManualChatContextMode.FULL,
+    )
+    manual_chat_initialized = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"GM / {self.campaign.name}"
 
 
 class Scene(models.Model):
@@ -552,6 +629,74 @@ class TurnExecution(models.Model):
 
     def __str__(self):
         return f"Turn #{self.turn_id} / {self.player} ({self.state})"
+
+
+class GameMasterExecution(models.Model):
+    scene = models.ForeignKey(
+        Scene,
+        on_delete=models.CASCADE,
+        related_name="gm_executions",
+    )
+    config = models.ForeignKey(
+        GameMasterConfig,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="executions",
+    )
+    state = models.CharField(
+        max_length=30,
+        choices=GameMasterExecutionState.choices,
+        default=GameMasterExecutionState.PENDING,
+    )
+    transport = models.CharField(
+        max_length=30,
+        choices=GameMasterTransport.choices,
+        default=GameMasterTransport.LITELLM,
+    )
+    action = models.CharField(
+        max_length=20,
+        choices=GameMasterAction.choices,
+        blank=True,
+        default="",
+    )
+    public_draft = models.TextField(blank=True)
+    private_drafts = models.JSONField(default=list, blank=True)
+    turn_targets = models.JSONField(default=list, blank=True)
+    error = models.TextField(blank=True)
+    context_message_ids = models.JSONField(default=list, blank=True)
+    model_used = models.CharField(max_length=200, blank=True, default="")
+    system_prompt_snapshot = models.TextField(blank=True)
+    request_messages = models.JSONField(default=list, blank=True)
+    raw_response = models.TextField(blank=True)
+    latency_ms = models.PositiveIntegerField(null=True, blank=True)
+    external_prompt = models.TextField(blank=True)
+    external_context_mode = models.CharField(
+        max_length=30,
+        choices=ManualChatContextMode.choices,
+        blank=True,
+        default="",
+    )
+    external_chat_label = models.CharField(max_length=120, blank=True, default="")
+    external_chat_url = models.URLField(max_length=1000, blank=True, default="")
+    external_is_bootstrap = models.BooleanField(default=False)
+    external_synced_message_ids = models.JSONField(default=list, blank=True)
+    published_turn = models.ForeignKey(
+        Turn,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="gm_executions",
+    )
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    def __str__(self):
+        return f"GM execution #{self.pk} / {self.scene} / {self.state}"
 
 
 class MessageRevision(models.Model):
