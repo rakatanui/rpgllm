@@ -52,7 +52,13 @@
       <details class="external-wait-card" open>
         <summary>
           External response needed
-          {% if waiting.external_is_bootstrap %}<span class="chip">BOOTSTRAP</span>{% else %}<span class="chip">DELTA</span>{% endif %}
+          {% if waiting.external_context_mode == "FULL" %}
+            <span class="chip">FULL</span>
+          {% elif waiting.external_is_bootstrap %}
+            <span class="chip">BOOTSTRAP</span>
+          {% else %}
+            <span class="chip">DELTA</span>
+          {% endif %}
         </summary>
         {% if waiting.error %}
           <div class="execution-error">Rejected: {{ waiting.error }}</div>
