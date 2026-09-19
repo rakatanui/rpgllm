@@ -733,6 +733,15 @@ def _build_execution_request(
         history=_execution_history(execution, extra_history=extra_history),
     )
     _append_round_role_prompt(context, turn=turn, out_of_turn=out_of_turn)
+    if turn.is_private:
+        context.system_prompt += (
+            "\n\n# PRIVATE GM↔PLAYER TURN\n"
+            "This execution is a private GM↔player exchange. Your response field named "
+            '"public" is delivered only inside your private channel with the GM for this '
+            "turn; it is NOT broadcast to the other scene participants. private_to_gm "
+            "remains available for an additional hidden note, but usually leave it empty "
+            "because the main reply is already private."
+        )
     if turn.trigger_message_id is None:
         context.system_prompt += (
             "\n\n# GM SILENCE\n"
@@ -838,6 +847,11 @@ def _manual_delta_constraints(execution: TurnExecution, *, out_of_turn: bool) ->
     if scene.memory_summary.strip():
         lines.append("Current scene memory:\n" + scene.memory_summary.strip())
 
+    if turn.is_private:
+        lines.append(
+            "PRIVATE GM↔PLAYER TURN: the response field named public is delivered only "
+            "inside your private channel with the GM, not to the other participants."
+        )
     if turn.mode == TurnMode.ROUND and not turn.is_private:
         if out_of_turn:
             lines.append(
