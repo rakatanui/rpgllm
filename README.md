@@ -67,7 +67,7 @@ Tests run entirely inside Docker (dev dependencies are isolated in a
 `web-test` build target):
 
 ```bash
-docker compose run --rm web-test pytest
+docker compose run --rm --build web-test pytest
 ```
 
 ## Mock mode vs real providers
