@@ -277,6 +277,61 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
     )
 
 
+def build_gm_authoritative_fact_corpus(*, scene: Scene) -> str:
+    """Flatten authoritative GM-visible facts for conservative exact-literal checks."""
+    campaign = scene.campaign
+    blocks: list[str] = [
+        campaign.name,
+        campaign.description,
+        campaign.system_prompt,
+        campaign.shared_memory,
+    ]
+
+    for entry in LoreEntry.objects.filter(campaign=campaign, enabled=True).order_by(
+        "priority", "title", "pk"
+    ):
+        blocks.extend([entry.title, entry.category, entry.content])
+
+    for participation in (
+        SceneParticipant.objects.filter(scene=scene)
+        .select_related("player", "current_appearance")
+        .prefetch_related("player__appearances")
+        .order_by("order", "pk")
+    ):
+        player = participation.player
+        blocks.extend(
+            [
+                player.display_name,
+                player.character_prompt,
+                player.character_summary,
+                player.characteristics,
+                player.abilities,
+                player.memory_summary,
+            ]
+        )
+        for appearance in player.appearances.all():
+            blocks.extend([appearance.name, appearance.description])
+
+    lineage = get_scene_lineage(scene)
+    for lineage_scene in lineage:
+        blocks.extend(
+            [
+                lineage_scene.name,
+                lineage_scene.description,
+                lineage_scene.memory_summary,
+            ]
+        )
+
+    lineage_ids = [item.pk for item in lineage]
+    for message in (
+        Message.objects.filter(scene_id__in=lineage_ids)
+        .order_by("created_at", "pk")
+    ):
+        blocks.append(message.content)
+
+    return "\n".join((block or "").strip() for block in blocks if (block or "").strip())
+
+
 def get_gm_history_messages(*, scene: Scene) -> list[Message]:
     lineage = get_scene_lineage(scene)
     scene_ids = [item.pk for item in lineage]
