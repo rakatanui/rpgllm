@@ -33,7 +33,11 @@ from rpg.models import (
     TurnState,
     Visibility,
 )
-from rpg.services.context_builder import build_player_context, get_player_history_messages
+from rpg.services.context_builder import (
+    build_player_context,
+    get_player_history_messages,
+    get_scene_lineage,
+)
 from rpg.services.llm import LLMResponse, get_llm_client, parse_structured_response
 
 logger = logging.getLogger("rpg.turn_engine")
@@ -866,10 +870,18 @@ def _build_manual_chat_prompt(
     player = execution.player
     mode = execution.external_context_mode or ManualChatContextMode.FULL
     previous = _previous_external_execution(execution)
+    current_lineage_ids = {
+        lineage_scene.pk for lineage_scene in get_scene_lineage(execution.turn.scene)
+    }
+    previous_is_in_lineage = (
+        previous is not None
+        and previous.turn.scene_id in current_lineage_ids
+    )
     use_delta = (
         mode == ManualChatContextMode.CHAT_MEMORY
         and player.manual_chat_initialized
         and previous is not None
+        and previous_is_in_lineage
         and bool(previous.external_synced_message_ids)
     )
 
