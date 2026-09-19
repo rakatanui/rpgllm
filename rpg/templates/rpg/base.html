@@ -276,10 +276,12 @@
 <body class="{% block body_class %}{% endblock %}">
 <header>
   <h1>MRAZ Master</h1>
+  {% block nav %}
   <nav>
     <a href="/">Home</a>
     <a href="/admin/">Admin</a>
   </nav>
+  {% endblock %}
   <div style="margin-left:auto" class="meta">{% block meta %}{% endblock %}</div>
 </header>
 <div class="container">
