@@ -1423,3 +1423,31 @@ def test_mixed_round_waits_for_manual_chat_then_advances_once(mock_backend):
     scene.refresh_from_db()
     assert result.turn.state == TurnState.COMPLETED
     assert scene.active_player_index == 1
+
+
+
+@pytest.mark.django_db
+def test_pending_manual_chat_blocks_overlapping_model_turns(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    first = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="first",
+        selected_players=[lucien],
+    )
+    assert first.turn.executions.get(player=lucien).state == ExecutionState.WAITING_EXTERNAL
+
+    with pytest.raises(ValidationError, match="waiting for a pasted response"):
+        turn_engine.start_turn(
+            scene=scene,
+            gm_message_text="second",
+            selected_players=[lucien],
+        )
+
+    assert scene.turns.count() == 1
