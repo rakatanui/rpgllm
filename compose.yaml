@@ -102,7 +102,7 @@ services:
       - /bin/sh
       - -c
       - |
-        test -n "$PUBLIC_PLAYER_HOST" || {
+        test -n "${PUBLIC_PLAYER_HOST:-}" || {
           echo "PUBLIC_PLAYER_HOST is required for the public-player profile" >&2
           exit 1
         }
