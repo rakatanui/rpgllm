@@ -18,6 +18,9 @@
           <span class="chip">INACTIVE ROUND PLAYER</span>
         {% endif %}
       {% endif %}
+    {% elif gm_active_execution %}
+      <span class="chip generating">MASTER THINKING</span>
+      <span class="meta">The Game Master is preparing the next beat.</span>
     {% elif scene.mode == "ROUND" and is_active_round %}
       <span class="chip">YOU ARE ACTIVE</span>
       <span class="meta">Waiting for the GM to open the next turn.</span>
