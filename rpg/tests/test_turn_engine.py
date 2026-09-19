@@ -1483,3 +1483,43 @@ def test_undo_manual_chat_memory_turn_forces_fresh_bootstrap(mock_backend):
 
     lucien.refresh_from_db()
     assert lucien.manual_chat_initialized is False
+
+
+
+@pytest.mark.django_db
+def test_chat_memory_url_change_forces_new_bootstrap(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_label="ChatGPT",
+        manual_chat_url="https://chatgpt.com/c/one",
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    first = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="first",
+        selected_players=[lucien],
+    )
+    first_execution = first.turn.executions.get(player=lucien)
+    turn_engine.submit_external_response(
+        execution=first_execution,
+        raw_text='{"action_type":"ACT","public":"one","private_to_gm":""}',
+    )
+
+    lucien.manual_chat_url = "https://chatgpt.com/c/two"
+    lucien.save(update_fields=["manual_chat_url", "updated_at"])
+
+    second = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="second",
+        selected_players=[lucien],
+    )
+    second_execution = second.turn.executions.get(player=lucien)
+
+    assert second_execution.external_is_bootstrap is True
+    assert "## SYSTEM PROMPT" in second_execution.external_prompt
+    assert second_execution.external_chat_url.endswith("/two")
