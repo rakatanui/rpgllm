@@ -687,7 +687,6 @@ def human_episode_search(request, scene_id, player_id):
         episodes = episodes.filter(
             Q(name__icontains=q)
             | Q(description__icontains=q)
-            | Q(memory_summary__icontains=q)
             | visible_message_match
         ).distinct()
 
