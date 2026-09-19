@@ -118,10 +118,30 @@ def build_player_context(
         )
 
     parts.append("# YOUR CHARACTER")
+    character_parts = []
     if player.character_prompt.strip():
-        parts.append(player.character_prompt.strip())
-    else:
-        parts.append(f"You are {player.display_name}.")
+        character_parts.append(player.character_prompt.strip())
+    elif not (
+        player.character_summary.strip()
+        or player.characteristics.strip()
+        or player.abilities.strip()
+    ):
+        character_parts.append(f"You are {player.display_name}.")
+
+    if player.character_summary.strip():
+        character_parts.append(
+            "Character summary:\n" + player.character_summary.strip()
+        )
+    if player.characteristics.strip():
+        character_parts.append(
+            "Characteristics:\n" + player.characteristics.strip()
+        )
+    if player.abilities.strip():
+        character_parts.append(
+            "Abilities:\n" + player.abilities.strip()
+        )
+
+    parts.append("\n\n".join(character_parts))
 
     if player.memory_summary.strip():
         parts.append(
