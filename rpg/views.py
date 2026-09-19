@@ -15,10 +15,12 @@ from rpg.models import (
     Campaign,
     LoreEntry,
     LoreScope,
+    ManualChatContextMode,
     Message,
     MessageRevision,
     ModelConfig,
     Player,
+    PlayerTransport,
     Scene,
     SceneParticipant,
     ExecutionState,
@@ -190,6 +192,18 @@ def _failed_execution_by_player(scene):
     return {execution.player_id: execution for execution in failures}
 
 
+def _waiting_external_by_player(scene):
+    latest_turn = scene.turns.order_by("-created_at", "-pk").first()
+    if latest_turn is None:
+        return {}
+    waiting = (
+        latest_turn.executions.filter(state=ExecutionState.WAITING_EXTERNAL)
+        .select_related("player")
+        .order_by("order_index", "pk")
+    )
+    return {execution.player_id: execution for execution in waiting}
+
+
 def _unread_private_player_ids(scene):
     return list(
         Message.objects.filter(
@@ -291,6 +305,7 @@ def scene_view(request, scene_id):
     player_color_by_id = _player_color_classes(players)
     public_blocks = _public_message_blocks(public_messages)
     failed_execution_by_player = _failed_execution_by_player(scene)
+    waiting_external_by_player = _waiting_external_by_player(scene)
     saoot_candidates = _saoot_candidates(scene)
     gm_only_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.GM_ONLY)
@@ -345,6 +360,7 @@ def scene_view(request, scene_id):
             "public_blocks": public_blocks,
             "player_color_by_id": player_color_by_id,
             "failed_execution_by_player": failed_execution_by_player,
+            "waiting_external_by_player": waiting_external_by_player,
             "saoot_candidates": saoot_candidates,
             "gm_only_messages": gm_only_messages,
             "player_private": player_private,
@@ -412,6 +428,7 @@ def players_status(request, scene_id):
             "unread_private_player_ids": _unread_private_player_ids(scene),
             "active_round_player_id": _active_round_player_id(scene),
             "failed_execution_by_player": _failed_execution_by_player(scene),
+            "waiting_external_by_player": _waiting_external_by_player(scene),
         },
     )
 
@@ -575,6 +592,43 @@ def mark_private_read(request, scene_id, player_id):
         gm_unread=True,
     ).update(gm_unread=False)
     return HttpResponse(status=204)
+
+
+@require_http_methods(["POST"])
+def submit_external_response(request, scene_id, execution_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    execution = get_object_or_404(
+        TurnExecution.objects.select_related("turn__scene", "player"),
+        pk=execution_id,
+        turn__scene=scene,
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    raw = request.POST.get("response") or ""
+    try:
+        turn_engine.submit_external_response(
+            execution=execution,
+            raw_text=raw,
+        )
+    except ValidationError:
+        # The service stores the rejection reason on the execution. Redirect back
+        # so polling/UI shows it next to the same paste box instead of replacing
+        # the whole app with a bare HTTP 400 page.
+        pass
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
+
+
+@require_http_methods(["POST"])
+def reset_manual_chat_memory(request, scene_id, player_id):
+    scene = get_object_or_404(Scene, pk=scene_id)
+    player = get_object_or_404(
+        Player,
+        pk=player_id,
+        scene_participations__scene=scene,
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    player.manual_chat_initialized = False
+    player.save(update_fields=["manual_chat_initialized", "updated_at"])
+    return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))
 
 
 @require_http_methods(["POST"])
