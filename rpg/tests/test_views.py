@@ -13,6 +13,9 @@ from rpg.models import (
     AuthorType,
     CharacterAppearance,
     ExecutionState,
+    GameMasterConfig,
+    GameMasterExecutionState,
+    GameMasterTransport,
     LoreEntry,
     ManualChatContextMode,
     Message,
@@ -1958,6 +1961,59 @@ def test_human_submit_view_completes_waiting_execution(mock_backend):
         visibility=Visibility.PUBLIC,
         content="Я отвечаю.",
     ).exists()
+
+
+@pytest.mark.django_db
+def test_human_submit_auto_continues_to_manual_chat_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Твой ход.",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    client = Client()
+
+    response = client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Я осматриваю вошедшего мужчину."},
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+
+    gm_execution = scene.gm_executions.get()
+    assert gm_execution.state == GameMasterExecutionState.WAITING_EXTERNAL
+    assert gm_execution.external_chat_url == "https://chatgpt.com/c/test-gm"
+
+    human_html = client.get(
+        _human_url("human_player_client", scene, human)
+    ).content.decode()
+    assert "MASTER THINKING" in human_html
+
+    gm_html = client.get(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+    ).content.decode()
+    assert 'data-mraz-gm-autoplay="1"' in gm_html
+    assert 'data-mraz-bridge-autostart="1"' in gm_html
 
 
 @pytest.mark.django_db
