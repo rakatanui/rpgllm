@@ -29,8 +29,14 @@ CSRF_TRUSTED_ORIGINS = [
 
 PUBLIC_PLAYER_HOST = os.environ.get("PUBLIC_PLAYER_HOST", "").strip().lower()
 if PUBLIC_PLAYER_HOST:
-    if "://" in PUBLIC_PLAYER_HOST or "/" in PUBLIC_PLAYER_HOST:
-        raise RuntimeError("PUBLIC_PLAYER_HOST must be a bare hostname, without scheme or path")
+    if (
+        "://" in PUBLIC_PLAYER_HOST
+        or "/" in PUBLIC_PLAYER_HOST
+        or ":" in PUBLIC_PLAYER_HOST
+    ):
+        raise RuntimeError(
+            "PUBLIC_PLAYER_HOST must be a bare hostname, without scheme, port, or path"
+        )
     if PUBLIC_PLAYER_HOST not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(PUBLIC_PLAYER_HOST)
     public_player_origin = f"https://{PUBLIC_PLAYER_HOST}"
