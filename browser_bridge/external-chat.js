@@ -214,6 +214,15 @@ function pageIsBusy(adapter) {
   });
 }
 
+function sendButtonReady(adapter) {
+  const button = firstElement(adapter.send);
+  return Boolean(
+    button &&
+    !button.disabled &&
+    button.getAttribute("aria-disabled") !== "true"
+  );
+}
+
 async function waitForSendButton(adapter) {
   return waitForElement(
     adapter.send,
@@ -253,10 +262,15 @@ async function waitForFreshResponse(adapter, beforeTexts) {
         stablePolls = 0;
       }
 
+      const idle = !pageIsBusy(adapter);
+      const composerReadyAgain = sendButtonReady(adapter);
       if (
-        stablePolls >= 3 &&
-        !pageIsBusy(adapter) &&
-        Date.now() - started > 2500
+        idle &&
+        Date.now() - started > 4000 &&
+        (
+          (stablePolls >= 3 && composerReadyAgain) ||
+          stablePolls >= 7
+        )
       ) {
         return candidate.text;
       }
