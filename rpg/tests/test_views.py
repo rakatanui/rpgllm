@@ -11,6 +11,7 @@ from django.urls import reverse
 
 from rpg.models import (
     AuthorType,
+    CharacterAppearance,
     ExecutionState,
     LoreEntry,
     ManualChatContextMode,
@@ -2438,3 +2439,86 @@ def test_human_episode_detail_shows_only_public_and_own_private_history():
     assert "VISIBLE_OWN_PRIVATE" in html
     assert "HIDDEN_OTHER_PRIVATE" not in html
     assert "HIDDEN_GM_ONLY" not in html
+
+
+@pytest.mark.django_db
+def test_human_client_can_browse_and_set_character_appearances():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    human_form = CharacterAppearance.objects.create(
+        player=human,
+        name="Человеческий",
+        description="Обычный человеческий облик.",
+        is_primary=True,
+        order=0,
+    )
+    true_form = CharacterAppearance.objects.create(
+        player=human,
+        name="Истинный",
+        description="Крылья, светящиеся глаза и знаки Света.",
+        order=1,
+    )
+
+    client = Client()
+    base_url = reverse(
+        "human_player_client",
+        kwargs={"scene_id": scene.pk, "player_id": human.pk},
+    )
+
+    html = client.get(base_url).content.decode()
+    assert "Человеческий" in html
+    assert "Истинный" in html
+    assert "Обычный человеческий облик." in html
+    assert "CURRENT FORM" in html
+
+    alternate_html = client.get(base_url, {"appearance": true_form.pk}).content.decode()
+    assert "Крылья, светящиеся глаза и знаки Света." in alternate_html
+    assert reverse(
+        "set_human_current_appearance",
+        kwargs={
+            "scene_id": scene.pk,
+            "player_id": human.pk,
+            "appearance_id": true_form.pk,
+        },
+    ) in alternate_html
+
+    response = client.post(
+        reverse(
+            "set_human_current_appearance",
+            kwargs={
+                "scene_id": scene.pk,
+                "player_id": human.pk,
+                "appearance_id": true_form.pk,
+            },
+        )
+    )
+    assert response.status_code == 302
+    participation = scene.scene_participants.get(player=human)
+    assert participation.current_appearance_id == true_form.pk
+    assert human_form.pk != true_form.pk
+
+
+@pytest.mark.django_db
+def test_human_cannot_set_another_players_appearance():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    other = make_player(campaign, "Другой")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human, other])
+    foreign_form = CharacterAppearance.objects.create(
+        player=other,
+        name="Чужой облик",
+        is_primary=True,
+    )
+
+    response = Client().post(
+        reverse(
+            "set_human_current_appearance",
+            kwargs={
+                "scene_id": scene.pk,
+                "player_id": human.pk,
+                "appearance_id": foreign_form.pk,
+            },
+        )
+    )
+    assert response.status_code == 404
