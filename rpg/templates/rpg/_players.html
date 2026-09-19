@@ -101,7 +101,9 @@
               action="{% url 'retry_execution' scene.pk failed.pk %}"
               class="retry-execution-form">
           {% csrf_token %}
-          <button class="btn btn-retry" type="submit">Retry</button>
+          <button class="btn btn-retry" type="submit">
+            {% if failed.state == "INVALID" %}Retry + fix{% else %}Retry{% endif %}
+          </button>
         </form>
         {% if p.transport != "MANUAL_CHAT" and p.fallback_model_config and p.fallback_model_config.enabled %}
           <form method="post"
@@ -109,7 +111,7 @@
                 class="retry-execution-form">
             {% csrf_token %}
             <button class="btn btn-retry" type="submit">
-              Retry {{ p.fallback_model_config.name }}
+              {% if failed.state == "INVALID" %}Retry + fix{% else %}Retry{% endif %} {{ p.fallback_model_config.name }}
             </button>
           </form>
         {% endif %}

@@ -266,7 +266,12 @@ snapshot.
 
 Players can have an optional fallback `ModelConfig`. Failed/invalid executions
 then offer both a same-model retry and a one-off fallback retry without changing
-the player's normal model assignment.
+the player's normal model assignment. A retry of an `INVALID` execution is
+corrective rather than blind: the model receives the exact validator error and
+its previous rejected raw response. For an inactive ROUND player the repair
+prompt explicitly says that ordinary speech/commentary must become `PASS`, not
+be relabelled as `ACT_OUT_OF_TURN`. Provider/runtime `FAILED` retries still
+reuse the frozen request without this model-correction layer.
 
 Each player card also has **Nudge**. A Nudge is a one-shot private GM
 instruction snapshotted into the next execution for that player, then consumed.

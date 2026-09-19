@@ -186,6 +186,135 @@ def test_round_server_validates_action_types(mock_backend, active, action, valid
 
 
 @pytest.mark.django_db
+def test_retry_invalid_inactive_round_response_gets_corrective_prompt(mock_backend):
+    camp = make_campaign()
+    lucien = make_player(camp, "Lucien")
+    mathis = make_player(camp, "Mathis")
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mathis.pk],
+        active_player_index=0,
+        participants=[lucien, mathis],
+    )
+
+    class StubbornClient(MockLLMClient):
+        def __init__(self):
+            self.mathis_calls = 0
+            self.retry_prompt = ""
+
+        def generate(self, *, system_prompt, messages, model, temperature=0.7):
+            name = next(
+                line[len("[PLAYER:"):].rstrip("]").strip()
+                for line in system_prompt.splitlines()
+                if line.startswith("[PLAYER:")
+            )
+            if name == "Mathis":
+                self.mathis_calls += 1
+                if self.mathis_calls == 1:
+                    return LLMResponse(
+                        raw_text=(
+                            '{"action_type":"ACT","public":"Mathis wants to add something.",'
+                            '"private_to_gm":""}'
+                        ),
+                        action_type="ACT",
+                        public="Mathis wants to add something.",
+                        private_to_gm="",
+                    )
+                self.retry_prompt = system_prompt
+                return LLMResponse(
+                    raw_text='{"action_type":"PASS","public":"","private_to_gm":""}',
+                    action_type="PASS",
+                    public="",
+                    private_to_gm="",
+                )
+            return _resp(name, action="ACT", public="Lucien acts.")
+
+    client = StubbornClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+        execution = result.turn.executions.get(player=mathis)
+        assert execution.state == ExecutionState.INVALID
+        assert "inactive ROUND player returned forbidden action ACT" in execution.error
+
+        turn_engine.retry_execution(execution)
+
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+    assert execution.action_type == "PASS"
+    assert "# RETRY AFTER VALIDATION FAILURE" in client.retry_prompt
+    assert "Your default answer is PASS" in client.retry_prompt
+    assert "Do NOT relabel an ordinary ACT as ACT_OUT_OF_TURN" in client.retry_prompt
+    assert "inactive ROUND player returned forbidden action ACT" in client.retry_prompt
+    assert "Mathis wants to add something." in client.retry_prompt
+    assert "# RETRY AFTER VALIDATION FAILURE" in execution.system_prompt_snapshot
+
+
+@pytest.mark.django_db
+def test_fallback_retry_of_invalid_execution_keeps_corrective_prompt(mock_backend):
+    camp = make_campaign()
+    fallback = make_model("Fallback", gateway_model="fallback-model")
+    lucien = make_player(camp, "Lucien")
+    mathis = make_player(
+        camp,
+        "Mathis",
+        fallback_model_config=fallback,
+    )
+    scene = make_scene(
+        camp,
+        mode=TurnMode.ROUND,
+        round_order=[lucien.pk, mathis.pk],
+        active_player_index=0,
+        participants=[lucien, mathis],
+    )
+
+    class FallbackCorrectionClient(MockLLMClient):
+        def __init__(self):
+            self.fallback_prompt = ""
+
+        def generate(self, *, system_prompt, messages, model, temperature=0.7):
+            name = next(
+                line[len("[PLAYER:"):].rstrip("]").strip()
+                for line in system_prompt.splitlines()
+                if line.startswith("[PLAYER:")
+            )
+            if name == "Mathis" and model == "fallback-model":
+                self.fallback_prompt = system_prompt
+                return LLMResponse(
+                    raw_text='{"action_type":"PASS","public":"","private_to_gm":""}',
+                    action_type="PASS",
+                    public="",
+                    private_to_gm="",
+                )
+            if name == "Mathis":
+                return LLMResponse(
+                    raw_text=(
+                        '{"action_type":"ACT","public":"Mathis speaks anyway.",'
+                        '"private_to_gm":""}'
+                    ),
+                    action_type="ACT",
+                    public="Mathis speaks anyway.",
+                    private_to_gm="",
+                )
+            return _resp(name, action="ACT", public="Lucien acts.")
+
+    client = FallbackCorrectionClient()
+    with patch("rpg.services.turn_engine.get_llm_client", return_value=client):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+        execution = result.turn.executions.get(player=mathis)
+        assert execution.state == ExecutionState.INVALID
+
+        turn_engine.retry_execution(execution, model_config=fallback)
+
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+    assert execution.model_used == "fallback-model"
+    assert "# RETRY AFTER VALIDATION FAILURE" in client.fallback_prompt
+    assert "Your default answer is PASS" in client.fallback_prompt
+    assert "Mathis speaks anyway." in client.fallback_prompt
+
+
+@pytest.mark.django_db
 def test_private_to_gm_not_stored_on_public_message(mock_backend):
     camp = make_campaign()
     lucien = make_player(camp, "Lucien")
@@ -1057,8 +1186,10 @@ def test_retry_can_use_fallback_model(mock_backend):
     class FailThenClient(MockLLMClient):
         def __init__(self):
             self.models = []
-        def generate(self, *, model, **kwargs):
+            self.prompts = []
+        def generate(self, *, model, system_prompt, **kwargs):
             self.models.append(model)
+            self.prompts.append(system_prompt)
             if model == "primary-model":
                 raise RuntimeError("provider down")
             return _resp("Lucien", public="Fallback answer.")
@@ -1078,6 +1209,7 @@ def test_retry_can_use_fallback_model(mock_backend):
     assert execution.state == ExecutionState.COMPLETED
     assert execution.model_used == "fallback-model"
     assert client.models == ["primary-model", "fallback-model"]
+    assert all("# RETRY AFTER VALIDATION FAILURE" not in prompt for prompt in client.prompts)
 
 
 @pytest.mark.django_db
