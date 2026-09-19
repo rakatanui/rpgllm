@@ -363,7 +363,6 @@ def discard_gm_execution(*, execution: GameMasterExecution) -> GameMasterExecuti
     with transaction.atomic():
         execution = (
             GameMasterExecution.objects.select_for_update()
-            .select_related("config")
             .get(pk=execution.pk)
         )
         if execution.state not in ACTIVE_GM_STATES:
@@ -372,7 +371,7 @@ def discard_gm_execution(*, execution: GameMasterExecution) -> GameMasterExecuti
         execution.save(update_fields=["state", "updated_at"])
 
         if (
-            execution.config is not None
+            execution.config_id is not None
             and execution.transport == GameMasterTransport.MANUAL_CHAT
             and execution.external_context_mode == ManualChatContextMode.CHAT_MEMORY
         ):
@@ -644,7 +643,6 @@ def _build_manual_chat_prompt(
         and previous is not None
         and previous.external_chat_url == execution.external_chat_url
         and previous.external_chat_label == execution.external_chat_label
-        and bool(previous.external_synced_message_ids)
     )
 
     if not use_delta:
@@ -726,7 +724,6 @@ def _previous_external_execution(
             state=GameMasterExecutionState.PUBLISHED,
             pk__lt=execution.pk,
         )
-        .exclude(external_synced_message_ids=[])
         .order_by("-pk")
         .first()
     )
