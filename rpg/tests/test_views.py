@@ -1827,6 +1827,16 @@ def test_invalid_execution_labels_retry_as_corrective():
 
 
 
+def _human_token(scene, player):
+    return scene.scene_participants.get(player=player).human_access_token
+
+
+def _human_url(name, scene, player, **kwargs):
+    params = {"access_token": _human_token(scene, player)}
+    params.update(kwargs)
+    return reverse(name, kwargs=params)
+
+
 @pytest.mark.django_db
 def test_human_player_client_shows_only_public_and_own_private_messages():
     campaign = make_campaign()
@@ -1865,12 +1875,7 @@ def test_human_player_client_shows_only_public_and_own_private_messages():
         visibility=Visibility.GM_ONLY,
     )
 
-    response = Client().get(
-        reverse(
-            "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": human.pk},
-        )
-    )
+    response = Client().get(_human_url("human_player_client", scene, human))
     html = response.content.decode()
 
     assert response.status_code == 200
@@ -1879,6 +1884,9 @@ def test_human_player_client_shows_only_public_and_own_private_messages():
     assert "OTHER_PRIVATE_SECRET" not in html
     assert "GM_ONLY_SECRET" not in html
     assert 'href="/admin/"' not in html
+    assert response["Cache-Control"] == "private, no-store"
+    assert response["Referrer-Policy"] == "no-referrer"
+    assert response["X-Robots-Tag"] == "noindex, nofollow"
 
 
 @pytest.mark.django_db
@@ -1901,16 +1909,14 @@ def test_human_player_client_shows_round_legal_actions_only(mock_backend):
         result = turn_engine.start_turn(scene=scene, gm_message_text="go")
     execution = result.turn.executions.get(player=human)
 
-    response = Client().get(
-        reverse(
-            "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": human.pk},
-        )
-    )
+    response = Client().get(_human_url("human_player_client", scene, human))
     html = response.content.decode()
 
     assert response.status_code == 200
-    assert f'action="{reverse("submit_human_response", kwargs={"scene_id": scene.pk, "player_id": human.pk, "execution_id": execution.pk})}"' in html
+    assert (
+        f'action="{_human_url("submit_human_response", scene, human, execution_id=execution.pk)}"'
+        in html
+    )
     assert '<option value="PASS">PASS</option>' in html
     assert '<option value="ACT_OUT_OF_TURN">ACT_OUT_OF_TURN</option>' in html
     assert '<option value="ACT">ACT</option>' not in html
@@ -1929,18 +1935,17 @@ def test_human_submit_view_completes_waiting_execution(mock_backend):
     execution = result.turn.executions.get(player=human)
 
     response = Client().post(
-        reverse(
+        _human_url(
             "submit_human_response",
-            kwargs={
-                "scene_id": scene.pk,
-                "player_id": human.pk,
-                "execution_id": execution.pk,
-            },
+            scene,
+            human,
+            execution_id=execution.pk,
         ),
         {"action_type": "ACT", "content": "Я отвечаю.", "private_to_gm": ""},
     )
 
     assert response.status_code == 302
+    assert response["Location"] == _human_url("human_player_client", scene, human)
     execution.refresh_from_db()
     assert execution.state == ExecutionState.COMPLETED
     assert Message.objects.filter(
@@ -1951,16 +1956,45 @@ def test_human_submit_view_completes_waiting_execution(mock_backend):
 
 
 @pytest.mark.django_db
+def test_human_access_token_cannot_submit_another_players_execution():
+    campaign = make_campaign()
+    human_a = make_player(campaign, "A", transport=PlayerTransport.HUMAN)
+    human_b = make_player(campaign, "B", transport=PlayerTransport.HUMAN)
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[human_a, human_b],
+    )
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[human_b],
+    )
+    b_execution = result.turn.executions.get(player=human_b)
+
+    response = Client().post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human_a,
+            execution_id=b_execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Попытка подмены."},
+    )
+
+    assert response.status_code == 404
+    b_execution.refresh_from_db()
+    assert b_execution.state == ExecutionState.WAITING_HUMAN
+
+
+@pytest.mark.django_db
 def test_human_ooc_is_private_and_unread_for_gm():
     campaign = make_campaign()
     human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
     scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
 
     response = Client().post(
-        reverse(
-            "human_send_ooc",
-            kwargs={"scene_id": scene.pk, "player_id": human.pk},
-        ),
+        _human_url("human_send_ooc", scene, human),
         {"content": "А это точно хорошая идея?"},
     )
 
@@ -1976,22 +2010,99 @@ def test_human_ooc_is_private_and_unread_for_gm():
 
 
 @pytest.mark.django_db
-def test_gm_player_card_links_human_client(mock_backend):
+def test_gm_player_card_exposes_secret_human_link_and_management_controls(mock_backend):
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    participation = scene.scene_participants.get(player=human)
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+    client_url = _human_url("human_player_client", scene, human)
+
+    assert response.status_code == 200
+    assert "transport: human player" in html
+    assert str(participation.human_access_token) in html
+    assert client_url in html
+    assert "Copy link" in html
+    assert "Regenerate" in html
+    assert "Revoke" in html
+    assert "Open player client" in html
+    assert reverse(
+        "regenerate_human_access",
+        kwargs={"scene_id": scene.pk, "player_id": human.pk},
+    ) in html
+    assert reverse(
+        "toggle_human_access",
+        kwargs={"scene_id": scene.pk, "player_id": human.pk},
+    ) in html
+
+
+@pytest.mark.django_db
+def test_human_access_can_be_revoked_enabled_and_regenerated():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    client = Client()
+    participation = scene.scene_participants.get(player=human)
+    original_token = participation.human_access_token
+    original_url = reverse(
+        "human_player_client",
+        kwargs={"access_token": original_token},
+    )
+
+    assert client.get(original_url).status_code == 200
+
+    revoke = client.post(
+        reverse(
+            "toggle_human_access",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        )
+    )
+    assert revoke.status_code == 302
+    participation.refresh_from_db()
+    assert participation.human_access_enabled is False
+    assert client.get(original_url).status_code == 404
+
+    enable = client.post(
+        reverse(
+            "toggle_human_access",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        )
+    )
+    assert enable.status_code == 302
+    participation.refresh_from_db()
+    assert participation.human_access_enabled is True
+    assert client.get(original_url).status_code == 200
+
+    regenerated = client.post(
+        reverse(
+            "regenerate_human_access",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        )
+    )
+    assert regenerated.status_code == 302
+    participation.refresh_from_db()
+    assert participation.human_access_enabled is True
+    assert participation.human_access_token != original_token
+    assert client.get(original_url).status_code == 404
+    assert client.get(
+        reverse(
+            "human_player_client",
+            kwargs={"access_token": participation.human_access_token},
+        )
+    ).status_code == 200
+
+
+@pytest.mark.django_db
+def test_old_id_based_human_client_url_is_not_routed():
     campaign = make_campaign()
     human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
     scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
 
-    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
-    html = response.content.decode()
+    response = Client().get(f"/scene/{scene.pk}/human/{human.pk}/")
 
-    assert response.status_code == 200
-    assert "transport: human player" in html
-    assert reverse(
-        "human_player_client",
-        kwargs={"scene_id": scene.pk, "player_id": human.pk},
-    ) in html
-    assert "Open player client" in html
-
+    assert response.status_code == 404
 
 
 @pytest.mark.django_db
@@ -2029,9 +2140,8 @@ def test_human_declaration_hides_model_regen_and_ooc_revision_controls(mock_back
     assert "Versions / restore" in html
 
 
-
 @pytest.mark.django_db
-def test_human_client_preserves_disclosures_and_scroll_across_polling():
+def test_human_client_preserves_disclosures_scroll_and_focus_across_polling():
     campaign = make_campaign()
     human = make_player(
         campaign,
@@ -2046,12 +2156,7 @@ def test_human_client_preserves_disclosures_and_scroll_across_polling():
         description="Длинная сцена.",
     )
 
-    response = Client().get(
-        reverse(
-            "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": human.pk},
-        )
-    )
+    response = Client().get(_human_url("human_player_client", scene, human))
     html = response.content.decode()
 
     assert response.status_code == 200
@@ -2066,7 +2171,7 @@ def test_human_client_preserves_disclosures_and_scroll_across_polling():
     assert "captureHumanPollingState" in html
     assert "restoreHumanPollingState" in html
     assert "bottomGap" in html
-
+    assert "selectionStart" in html
 
 
 @pytest.mark.django_db
@@ -2089,10 +2194,7 @@ def test_human_client_uses_player_favicon():
     scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
 
     html = Client().get(
-        reverse(
-            "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": human.pk},
-        )
+        _human_url("human_player_client", scene, human)
     ).content.decode()
 
     assert 'href="/static/rpg/favicon-player.svg"' in html
@@ -2133,7 +2235,6 @@ def test_favicon_static_assets_are_discoverable():
     assert finders.find("rpg/favicon-admin.svg")
 
 
-
 @pytest.mark.django_db
 def test_human_client_renders_character_card_and_episode_search():
     campaign = make_campaign()
@@ -2154,10 +2255,7 @@ def test_human_client_renders_character_card_and_episode_search():
     )
 
     html = Client().get(
-        reverse(
-            "human_player_client",
-            kwargs={"scene_id": scene.pk, "player_id": human.pk},
-        )
+        _human_url("human_player_client", scene, human)
     ).content.decode()
 
     assert "Character" in html
@@ -2165,14 +2263,8 @@ def test_human_client_renders_character_card_and_episode_search():
     assert "Сила 2" in html
     assert "Видит следы магии" in html
     assert "Помнит встречу у старого вокзала" in html
-    assert reverse(
-        "human_episode_search",
-        kwargs={"scene_id": scene.pk, "player_id": human.pk},
-    ) in html
-    assert reverse(
-        "upload_human_character_image",
-        kwargs={"scene_id": scene.pk, "player_id": human.pk},
-    ) in html
+    assert _human_url("human_episode_search", scene, human) in html
+    assert _human_url("upload_human_character_image", scene, human) in html
 
 
 @pytest.mark.django_db
@@ -2185,10 +2277,7 @@ def test_human_can_upload_replace_and_remove_character_portrait(tmp_path):
     png_bytes = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     )
-    upload_url = reverse(
-        "upload_human_character_image",
-        kwargs={"scene_id": scene.pk, "player_id": human.pk},
-    )
+    upload_url = _human_url("upload_human_character_image", scene, human)
 
     with override_settings(MEDIA_ROOT=tmp_path):
         response = client.post(
@@ -2207,10 +2296,7 @@ def test_human_can_upload_replace_and_remove_character_portrait(tmp_path):
         assert human.character_image.name.endswith(".png")
 
         image_response = client.get(
-            reverse(
-                "human_character_image",
-                kwargs={"scene_id": scene.pk, "player_id": human.pk},
-            )
+            _human_url("human_character_image", scene, human)
         )
         assert image_response.status_code == 200
         assert image_response["Content-Type"] == "image/png"
@@ -2232,10 +2318,7 @@ def test_human_can_upload_replace_and_remove_character_portrait(tmp_path):
         assert not (tmp_path / old_name).exists()
 
         removed = client.post(
-            reverse(
-                "remove_human_character_image",
-                kwargs={"scene_id": scene.pk, "player_id": human.pk},
-            )
+            _human_url("remove_human_character_image", scene, human)
         )
         assert removed.status_code == 302
         human.refresh_from_db()
@@ -2250,10 +2333,7 @@ def test_human_portrait_rejects_non_image_upload(tmp_path):
 
     with override_settings(MEDIA_ROOT=tmp_path):
         response = Client().post(
-            reverse(
-                "upload_human_character_image",
-                kwargs={"scene_id": scene.pk, "player_id": human.pk},
-            ),
+            _human_url("upload_human_character_image", scene, human),
             {
                 "image": SimpleUploadedFile(
                     "not-an-image.txt",
@@ -2333,10 +2413,7 @@ def test_human_episode_search_is_participant_and_visibility_scoped():
     )
 
     client = Client()
-    search_url = reverse(
-        "human_episode_search",
-        kwargs={"scene_id": current.pk, "player_id": human.pk},
-    )
+    search_url = _human_url("human_episode_search", current, human)
 
     public_html = client.get(search_url, {"q": "VISIBLE_PUBLIC_NEEDLE"}).content.decode()
     assert "Warehouse" in public_html
@@ -2356,13 +2433,11 @@ def test_human_episode_search_is_participant_and_visibility_scoped():
     assert "Warehouse" not in gm_only_html
 
     outsider_html = client.get(search_url, {"q": "Forbidden Archive"}).content.decode()
-    outsider_detail_url = reverse(
+    outsider_detail_url = _human_url(
         "human_episode_detail",
-        kwargs={
-            "scene_id": current.pk,
-            "player_id": human.pk,
-            "episode_id": outsider_episode.pk,
-        },
+        current,
+        human,
+        episode_id=outsider_episode.pk,
     )
     assert outsider_detail_url not in outsider_html
 
@@ -2424,13 +2499,11 @@ def test_human_episode_detail_shows_only_public_and_own_private_history():
     )
 
     html = Client().get(
-        reverse(
+        _human_url(
             "human_episode_detail",
-            kwargs={
-                "scene_id": current.pk,
-                "player_id": human.pk,
-                "episode_id": episode.pk,
-            },
+            current,
+            human,
+            episode_id=episode.pk,
         )
     ).content.decode()
 
@@ -2461,10 +2534,7 @@ def test_human_client_can_browse_and_set_character_appearances():
     )
 
     client = Client()
-    base_url = reverse(
-        "human_player_client",
-        kwargs={"scene_id": scene.pk, "player_id": human.pk},
-    )
+    base_url = _human_url("human_player_client", scene, human)
 
     html = client.get(base_url).content.decode()
     assert "Человеческий" in html
@@ -2474,23 +2544,19 @@ def test_human_client_can_browse_and_set_character_appearances():
 
     alternate_html = client.get(base_url, {"appearance": true_form.pk}).content.decode()
     assert "Крылья, светящиеся глаза и знаки Света." in alternate_html
-    assert reverse(
+    assert _human_url(
         "set_human_current_appearance",
-        kwargs={
-            "scene_id": scene.pk,
-            "player_id": human.pk,
-            "appearance_id": true_form.pk,
-        },
+        scene,
+        human,
+        appearance_id=true_form.pk,
     ) in alternate_html
 
     response = client.post(
-        reverse(
+        _human_url(
             "set_human_current_appearance",
-            kwargs={
-                "scene_id": scene.pk,
-                "player_id": human.pk,
-                "appearance_id": true_form.pk,
-            },
+            scene,
+            human,
+            appearance_id=true_form.pk,
         )
     )
     assert response.status_code == 302
@@ -2500,7 +2566,7 @@ def test_human_client_can_browse_and_set_character_appearances():
 
 
 @pytest.mark.django_db
-def test_human_cannot_set_another_players_appearance():
+def test_human_token_cannot_set_another_players_appearance():
     campaign = make_campaign()
     human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
     other = make_player(campaign, "Другой")
@@ -2512,13 +2578,11 @@ def test_human_cannot_set_another_players_appearance():
     )
 
     response = Client().post(
-        reverse(
+        _human_url(
             "set_human_current_appearance",
-            kwargs={
-                "scene_id": scene.pk,
-                "player_id": human.pk,
-                "appearance_id": foreign_form.pk,
-            },
+            scene,
+            human,
+            appearance_id=foreign_form.pk,
         )
     )
     assert response.status_code == 404
