@@ -342,6 +342,7 @@ def submit_external_gm_response(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "raw_response",
                 "external_synced_message_ids",
@@ -660,6 +661,7 @@ def _response_from_execution(
         turn_targets=list(
             turn_target_ids if turn_target_ids is not None else execution.turn_targets or []
         ),
+        scene_transition=(execution.scene_transition or None),
     )
 
 
@@ -672,6 +674,7 @@ def _apply_response_to_execution(
     execution.public_draft = response.public
     execution.private_drafts = response.private
     execution.turn_targets = response.turn_targets
+    execution.scene_transition = response.scene_transition or {}
     execution.error = ""
     execution.raw_response = response.raw_text
 
