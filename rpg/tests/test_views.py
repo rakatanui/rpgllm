@@ -2399,12 +2399,6 @@ def test_human_episode_search_is_participant_and_visibility_scoped():
     human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
     other = make_player(campaign, "Другой")
 
-    current = make_scene(
-        campaign,
-        name="Current",
-        mode=TurnMode.MANUAL,
-        participants=[human, other],
-    )
     public_episode = make_scene(
         campaign,
         name="Warehouse",
@@ -2424,6 +2418,12 @@ def test_human_episode_search_is_participant_and_visibility_scoped():
         name="Forbidden Archive",
         mode=TurnMode.MANUAL,
         participants=[other],
+    )
+    current = make_scene(
+        campaign,
+        name="Current",
+        mode=TurnMode.MANUAL,
+        participants=[human, other],
     )
 
     Message.objects.create(
@@ -2498,18 +2498,18 @@ def test_human_episode_detail_shows_only_public_and_own_private_history():
     campaign = make_campaign()
     human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
     other = make_player(campaign, "Другой")
-    current = make_scene(
-        campaign,
-        name="Current",
-        mode=TurnMode.MANUAL,
-        participants=[human, other],
-    )
     episode = make_scene(
         campaign,
         name="Past episode",
         mode=TurnMode.MANUAL,
         participants=[human, other],
         memory_summary="EPISODE_SUMMARY_VISIBLE",
+    )
+    current = make_scene(
+        campaign,
+        name="Current",
+        mode=TurnMode.MANUAL,
+        participants=[human, other],
     )
 
     Message.objects.create(
