@@ -18,6 +18,14 @@ def test_browser_bridge_manifest_is_loadable_and_scoped():
     assert "https://chatgpt.com/*" in manifest["host_permissions"]
     assert "https://claude.ai/*" in manifest["host_permissions"]
     assert "https://gemini.google.com/*" in manifest["host_permissions"]
+    assert "https://chat.deepseek.com/*" in manifest["host_permissions"]
+
+    external_matches = next(
+        item["matches"]
+        for item in manifest["content_scripts"]
+        if "external-chat.js" in item["js"]
+    )
+    assert "https://chat.deepseek.com/*" in external_matches
 
 
 def test_browser_bridge_files_required_by_manifest_exist():
@@ -41,3 +49,16 @@ def test_browser_bridge_keeps_results_until_source_acknowledges_import():
     assert "response && response.accepted" in background
     assert "form.requestSubmit()" in source
     assert "data-mraz-bridge-card" in source
+
+
+
+def test_browser_bridge_contains_deepseek_adapter():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+
+    assert '"chat.deepseek.com": {' in external
+    assert "textarea[placeholder='Message DeepSeek']" in external
+    assert "div.ds-message:has(.ds-markdown)" in external
+    assert "completionStablePolls: 7" in external
+    assert "preferLastResponseBody: true" in external
+    assert '"chat.deepseek.com"' in background

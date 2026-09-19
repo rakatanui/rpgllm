@@ -21,6 +21,7 @@ Current adapters:
 - ChatGPT: `https://chatgpt.com/...`
 - Claude: `https://claude.ai/...`
 - Gemini: `https://gemini.google.com/...`
+- DeepSeek: `https://chat.deepseek.com/a/chat/s/...`
 
 Use a persistent conversation URL in the Player/GameMaster manual-chat config.
 A generic "new chat" URL defeats CHAT_MEMORY semantics because the bridge cannot
@@ -68,6 +69,7 @@ The extension requests tab/storage access plus host permissions only for:
 - `chatgpt.com`
 - `claude.ai`
 - `gemini.google.com`
+- `chat.deepseek.com`
 
 It does not request `<all_urls>`.
 

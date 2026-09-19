@@ -54,6 +54,36 @@ const ADAPTERS = {
       'button[data-testid*="stop"]',
     ],
   },
+  "chat.deepseek.com": {
+    name: "DeepSeek",
+    composer: [
+      "textarea[placeholder='Message DeepSeek']",
+      "textarea",
+    ],
+    send: [
+      "[role='button'].ds-button._52c986b",
+      ".ds-button._52c986b.ds-button--circle",
+      "div.ds-icon-button._52c986b",
+      ".ds-button.ds-button--circle",
+      "[role='button'].ds-button",
+      "div.ds-icon-button[role='button']",
+    ],
+    assistant: [
+      "div.ds-message:has(.ds-markdown)",
+      ".ds-message:has(.ds-markdown)",
+    ],
+    responseBody: [
+      ".ds-markdown",
+      '[class*="markdown"]',
+    ],
+    busy: [
+      '[aria-label*="Stop"]',
+      '[title*="Stop"]',
+    ],
+    completionStablePolls: 7,
+    fallbackStablePolls: 10,
+    preferLastResponseBody: true,
+  },
   "gemini.google.com": {
     name: "Gemini",
     composer: [
@@ -178,11 +208,19 @@ function visibleText(element) {
 
 function responseText(node, adapter) {
   for (const selector of adapter.responseBody) {
-    const body = node.matches && node.matches(selector)
-      ? node
-      : node.querySelector(selector);
-    const text = visibleText(body);
-    if (text) return text;
+    if (node.matches && node.matches(selector)) {
+      const ownText = visibleText(node);
+      if (ownText) return ownText;
+    }
+
+    const bodies = Array.from(node.querySelectorAll(selector));
+    if (adapter.preferLastResponseBody) {
+      bodies.reverse();
+    }
+    for (const body of bodies) {
+      const text = visibleText(body);
+      if (text) return text;
+    }
   }
   return visibleText(node);
 }
@@ -264,12 +302,14 @@ async function waitForFreshResponse(adapter, beforeTexts) {
 
       const idle = !pageIsBusy(adapter);
       const composerReadyAgain = sendButtonReady(adapter);
+      const readyStablePolls = adapter.completionStablePolls || 3;
+      const fallbackStablePolls = adapter.fallbackStablePolls || 7;
       if (
         idle &&
         Date.now() - started > 4000 &&
         (
-          (stablePolls >= 3 && composerReadyAgain) ||
-          stablePolls >= 7
+          (stablePolls >= readyStablePolls && composerReadyAgain) ||
+          stablePolls >= fallbackStablePolls
         )
       ) {
         return candidate.text;

@@ -540,7 +540,7 @@ The optional Chromium/Edge extension in `browser_bridge/` automates the
 existing Copy → Open chat → Paste loop without changing the MANUAL_CHAT
 protocol, parser, or Turn Engine.
 
-Supported adapters currently target ChatGPT, Claude, and Gemini. When the
+Supported adapters currently target ChatGPT, Claude, Gemini, and DeepSeek. When the
 extension is loaded, a waiting MANUAL_CHAT player or manual model-GM card gains
 a **Send via browser bridge** button. One click opens or focuses the configured
 persistent conversation, sends the exact external prompt, waits for the newest
