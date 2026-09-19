@@ -1,4 +1,7 @@
 """Core data models for MRAZ Master."""
+from pathlib import Path
+import uuid
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
@@ -211,12 +214,36 @@ class Scene(models.Model):
                 )
 
 
+def character_image_upload_to(instance, filename):
+    ext = Path(filename or "").suffix.lower()
+    if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
+        ext = ".img"
+    return f"characters/player_{instance.pk}/{uuid.uuid4().hex}{ext}"
+
+
 class Player(models.Model):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="players")
     display_name = models.CharField(max_length=120)
     character_prompt = models.TextField(
         blank=True,
         help_text="Character description / system prompt for this player's LLM.",
+    )
+    character_image = models.ImageField(
+        upload_to=character_image_upload_to,
+        blank=True,
+        help_text="Portrait shown on the human-player character card.",
+    )
+    character_summary = models.TextField(
+        blank=True,
+        help_text="Player-facing short character description / identity summary.",
+    )
+    characteristics = models.TextField(
+        blank=True,
+        help_text="Player-facing characteristics, stats, traits, or other sheet data.",
+    )
+    abilities = models.TextField(
+        blank=True,
+        help_text="Player-facing abilities, powers, skills, spells, or special rules.",
     )
     memory_summary = models.TextField(
         blank=True,
