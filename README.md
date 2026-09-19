@@ -532,8 +532,43 @@ for that execution.
 The API-only per-message **Regen** and immediate **OOC revision** controls are
 hidden for manual-chat declarations rather than silently calling the player's
 old LiteLLM model. Use the persistent external chat plus the normal OOC/meta
-channel for now; a later browser bridge can automate the same Copy/Open/Paste
-contract without changing the Turn Engine.
+channel for those corrections.
+
+## Browser bridge for MANUAL_CHAT
+
+The optional Chromium/Edge extension in `browser_bridge/` automates the
+existing Copy → Open chat → Paste loop without changing the MANUAL_CHAT
+protocol, parser, or Turn Engine.
+
+Supported adapters currently target ChatGPT, Claude, and Gemini. When the
+extension is loaded, a waiting MANUAL_CHAT player or manual model-GM card gains
+a **Send via browser bridge** button. One click opens or focuses the configured
+persistent conversation, sends the exact external prompt, waits for the newest
+assistant response to finish, returns the raw text to the original MRAZ scene,
+and submits it through the existing Django import form.
+
+The source scene may HTMX-refresh or reload while the model is thinking.
+Bridge jobs are keyed by execution id and kept in `chrome.storage.session`.
+A completed answer is retained until the matching execution card acknowledges
+that it actually received the result.
+
+Manual Copy/Open/Paste controls remain available as a fallback because web-chat
+DOMs are not stable APIs.
+
+Installation has no build step:
+
+```text
+Edge:   edge://extensions/
+Chrome: chrome://extensions/
+→ Developer mode
+→ Load unpacked
+→ select <repo>/browser_bridge
+→ reload the MRAZ scene page
+```
+
+The bridge intentionally requires one explicit click per execution. It does not
+create an autonomous model-to-model loop. Full permissions and troubleshooting
+notes are in `browser_bridge/README.md`.
 
 ## Stop
 
