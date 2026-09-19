@@ -9,6 +9,7 @@
   <p>
     state: <span class="chip {{ execution.state|lower }}">{{ execution.state }}</span>
     action: <span class="chip">{{ execution.action_type|default:"—" }}</span>
+    transport: <span class="chip">{{ execution.transport }}</span>
     model: <span class="chip">{{ execution.model_used|default:"—" }}</span>
     latency: <span class="chip">{% if execution.latency_ms != None %}{{ execution.latency_ms }} ms{% else %}—{% endif %}</span>
   </p>
@@ -22,11 +23,22 @@
   {% endif %}
   <h3>Frozen history IDs</h3>
   <pre style="white-space:pre-wrap">{{ execution.history_message_ids }}</pre>
+  {% if execution.transport == "MANUAL_CHAT" %}
+    <h3>Manual-chat packet</h3>
+    <p class="meta">
+      mode: {{ execution.external_context_mode|default:"—" }}
+      · bootstrap: {{ execution.external_is_bootstrap }}
+      · chat: {{ execution.external_chat_label|default:"—" }}
+    </p>
+    <pre style="white-space:pre-wrap;max-height:520px;overflow:auto">{{ execution.external_prompt }}</pre>
+    <h3>Synced message IDs</h3>
+    <pre style="white-space:pre-wrap">{{ execution.external_synced_message_ids }}</pre>
+  {% endif %}
   <h3>System prompt</h3>
   <pre style="white-space:pre-wrap;max-height:420px;overflow:auto">{{ execution.system_prompt_snapshot }}</pre>
   <h3>Request messages</h3>
   <pre style="white-space:pre-wrap;max-height:420px;overflow:auto">{{ execution.request_messages }}</pre>
-  <h3>Raw provider response</h3>
+  <h3>{% if execution.transport == "MANUAL_CHAT" %}Raw pasted response{% else %}Raw provider response{% endif %}</h3>
   <pre style="white-space:pre-wrap;max-height:420px;overflow:auto">{{ execution.raw_response }}</pre>
 </div>
 {% endblock %}
