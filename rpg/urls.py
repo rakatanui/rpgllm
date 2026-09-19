@@ -17,6 +17,31 @@ urlpatterns = [
         name="human_player_fragment",
     ),
     path(
+        "scene/<int:scene_id>/human/<int:player_id>/character-image/",
+        views.human_character_image,
+        name="human_character_image",
+    ),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/character-image/upload/",
+        views.upload_human_character_image,
+        name="upload_human_character_image",
+    ),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/character-image/remove/",
+        views.remove_human_character_image,
+        name="remove_human_character_image",
+    ),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/episodes/",
+        views.human_episode_search,
+        name="human_episode_search",
+    ),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/episodes/<int:episode_id>/",
+        views.human_episode_detail,
+        name="human_episode_detail",
+    ),
+    path(
         "scene/<int:scene_id>/human/<int:player_id>/execution/<int:execution_id>/submit/",
         views.submit_human_response,
         name="submit_human_response",
