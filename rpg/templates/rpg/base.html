@@ -144,10 +144,32 @@
   .human-character-image-form { display:grid; gap:6px; margin-top:8px; }
   .human-character-image-form input[type=file] { max-width:100%; font-size:11px; color:var(--muted); }
   .human-character-image-remove { margin-top:6px; }
+  .human-appearance-switcher { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+  .human-appearance-tab { display:inline-flex; align-items:center; gap:4px; padding:4px 7px;
+                          border:1px solid var(--border); border-radius:6px; color:var(--muted);
+                          font-size:11px; text-decoration:none; background:var(--bg); }
+  .human-appearance-tab:hover { border-color:var(--accent); color:var(--text); text-decoration:none; }
+  .human-appearance-tab.selected { border-color:var(--accent); color:var(--text); }
+  .human-appearance-current-dot { color:var(--ok); font-size:9px; }
   .human-character-body { min-width:0; }
   .human-character-heading { display:flex; justify-content:space-between; gap:10px;
                              align-items:flex-start; margin-bottom:8px; }
   .human-character-heading h2 { margin:2px 0 0; font-size:22px; }
+  .human-appearance-title { display:flex; align-items:center; gap:7px; flex-wrap:wrap;
+                            margin-top:5px; font-weight:bold; }
+  .human-current-appearance-chip { color:var(--ok); border-color:rgba(63,185,80,.55); }
+  .human-appearance-description { white-space:pre-wrap; line-height:1.5; margin:8px 0 10px;
+                                  padding:8px 10px; border-left:3px solid var(--accent);
+                                  background:rgba(88,166,255,.05); }
+  .human-set-current-appearance { margin:0 0 10px; }
+  .human-fullbody-reference { margin:0 0 10px; border:1px solid var(--border); border-radius:7px;
+                              padding:8px; background:rgba(255,255,255,.02); }
+  .human-fullbody-reference > summary { cursor:pointer; color:var(--muted); font-size:12px;
+                                        font-weight:bold; text-transform:uppercase; }
+  .human-fullbody-reference a { display:block; margin-top:8px; text-align:center; }
+  .human-fullbody-reference img { display:block; width:auto; max-width:100%; max-height:78vh;
+                                  margin:0 auto; object-fit:contain; border-radius:7px;
+                                  background:var(--bg); }
   .human-character-summary { white-space:pre-wrap; line-height:1.5; margin-bottom:10px; }
   .human-character-sections { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
   .human-character-sections details { border:1px solid var(--border); border-radius:7px;

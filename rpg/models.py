@@ -221,6 +221,17 @@ def character_image_upload_to(instance, filename):
     return f"characters/player_{instance.pk}/{uuid.uuid4().hex}{ext}"
 
 
+def character_appearance_upload_to(instance, filename):
+    ext = Path(filename or "").suffix.lower()
+    if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
+        ext = ".img"
+    appearance_id = instance.pk or "new"
+    return (
+        f"characters/player_{instance.player_id}/appearance_{appearance_id}/"
+        f"{uuid.uuid4().hex}{ext}"
+    )
+
+
 class Player(models.Model):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="players")
     display_name = models.CharField(max_length=120)
@@ -310,6 +321,56 @@ class Player(models.Model):
         return self.display_name
 
 
+class CharacterAppearance(models.Model):
+    player = models.ForeignKey(
+        Player,
+        on_delete=models.CASCADE,
+        related_name="appearances",
+    )
+    name = models.CharField(max_length=120)
+    description = models.TextField(
+        blank=True,
+        help_text=(
+            "Player-facing description of this form. It is also included in the "
+            "model context when this is the current appearance."
+        ),
+    )
+    portrait_image = models.ImageField(
+        upload_to=character_appearance_upload_to,
+        blank=True,
+        help_text="Square/cropped portrait for compact character cards.",
+    )
+    fullbody_image = models.ImageField(
+        upload_to=character_appearance_upload_to,
+        blank=True,
+        help_text="Full-body/reference image shown without cropping.",
+    )
+    is_primary = models.BooleanField(
+        default=False,
+        help_text="Fallback appearance when a scene has no explicit current form.",
+    )
+    order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["order", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["player", "name"],
+                name="uniq_character_appearance_name_per_player",
+            ),
+            models.UniqueConstraint(
+                fields=["player"],
+                condition=Q(is_primary=True),
+                name="uniq_primary_character_appearance_per_player",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.player} / {self.name}"
+
+
 class SceneParticipant(models.Model):
     scene = models.ForeignKey(
         Scene,
@@ -322,6 +383,17 @@ class SceneParticipant(models.Model):
         related_name="scene_participations",
     )
     order = models.PositiveSmallIntegerField(default=0)
+    current_appearance = models.ForeignKey(
+        CharacterAppearance,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scene_participations",
+        help_text=(
+            "Appearance currently used by this character in this scene. "
+            "Leave empty to use the primary appearance."
+        ),
+    )
 
     class Meta:
         ordering = ["order", "pk"]
@@ -344,6 +416,14 @@ class SceneParticipant(models.Model):
         ):
             raise ValidationError(
                 {"player": "Scene participant must belong to the same campaign."}
+            )
+        if (
+            self.current_appearance_id
+            and self.player_id
+            and self.current_appearance.player_id != self.player_id
+        ):
+            raise ValidationError(
+                {"current_appearance": "Current appearance must belong to this player."}
             )
 
 
