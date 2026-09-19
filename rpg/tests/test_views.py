@@ -21,6 +21,7 @@ from rpg.models import (
 )
 from rpg.services import turn_engine
 from rpg.services.llm import LLMResponse, MockLLMClient
+from rpg.tests.test_turn_engine import RecordingClient
 from rpg.tests.factories import make_campaign, make_model, make_player, make_scene
 
 
@@ -1817,3 +1818,170 @@ def test_invalid_execution_labels_retry_as_corrective():
 
     assert "Retry + fix" in html
     assert "Retry + fix Fallback Fix" in html
+
+
+
+@pytest.mark.django_db
+def test_human_player_client_shows_only_public_and_own_private_messages():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    other = make_player(campaign, "Другой")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human, other])
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="PUBLIC_VISIBLE",
+        visibility=Visibility.PUBLIC,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="OWN_PRIVATE_VISIBLE",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=human,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="OTHER_PRIVATE_SECRET",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=other,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="GM_ONLY_SECRET",
+        visibility=Visibility.GM_ONLY,
+    )
+
+    response = Client().get(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        )
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "PUBLIC_VISIBLE" in html
+    assert "OWN_PRIVATE_VISIBLE" in html
+    assert "OTHER_PRIVATE_SECRET" not in html
+    assert "GM_ONLY_SECRET" not in html
+    assert 'href="/admin/"' not in html
+
+
+@pytest.mark.django_db
+def test_human_player_client_shows_round_legal_actions_only(mock_backend):
+    campaign = make_campaign()
+    api = make_player(campaign, "API")
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[api, human],
+        round_order=[api.pk, human.pk],
+        active_player_index=0,
+    )
+
+    with patch(
+        "rpg.services.turn_engine.get_llm_client",
+        return_value=RecordingClient(),
+    ):
+        result = turn_engine.start_turn(scene=scene, gm_message_text="go")
+    execution = result.turn.executions.get(player=human)
+
+    response = Client().get(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        )
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert f'action="{reverse("submit_human_response", kwargs={"scene_id": scene.pk, "player_id": human.pk, "execution_id": execution.pk})}"' in html
+    assert '<option value="PASS">PASS</option>' in html
+    assert '<option value="ACT_OUT_OF_TURN">ACT_OUT_OF_TURN</option>' in html
+    assert '<option value="ACT">ACT</option>' not in html
+
+
+@pytest.mark.django_db
+def test_human_submit_view_completes_waiting_execution(mock_backend):
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+
+    response = Client().post(
+        reverse(
+            "submit_human_response",
+            kwargs={
+                "scene_id": scene.pk,
+                "player_id": human.pk,
+                "execution_id": execution.pk,
+            },
+        ),
+        {"action_type": "ACT", "content": "Я отвечаю.", "private_to_gm": ""},
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+    assert Message.objects.filter(
+        execution=execution,
+        visibility=Visibility.PUBLIC,
+        content="Я отвечаю.",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_human_ooc_is_private_and_unread_for_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    response = Client().post(
+        reverse(
+            "human_send_ooc",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        ),
+        {"content": "А это точно хорошая идея?"},
+    )
+
+    assert response.status_code == 302
+    message = Message.objects.get(
+        scene=scene,
+        author_player=human,
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=human,
+    )
+    assert message.content == "[OOC PLAYER]\nА это точно хорошая идея?"
+    assert message.gm_unread is True
+
+
+@pytest.mark.django_db
+def test_gm_player_card_links_human_client(mock_backend):
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "transport: human player" in html
+    assert reverse(
+        "human_player_client",
+        kwargs={"scene_id": scene.pk, "player_id": human.pk},
+    ) in html
+    assert "Open player client" in html
