@@ -33,7 +33,11 @@ from rpg.models import (
 )
 from rpg.services import turn_engine
 from rpg.services.context_builder import get_scene_lineage
-from rpg.services.gm_context import build_gm_context, build_gm_knowledge_retrieval
+from rpg.services.gm_context import (
+    build_gm_authoritative_fact_corpus,
+    build_gm_context,
+    build_gm_knowledge_retrieval,
+)
 from rpg.services.llm import get_llm_client
 
 
@@ -53,6 +57,68 @@ ACTIVE_GM_STATES = {
     GameMasterExecutionState.WAITING_EXTERNAL,
     GameMasterExecutionState.DRAFT,
 }
+
+
+_PREEXISTING_EXACT_FACT_PATTERNS = (
+    re.compile(
+        r"\b(?:ul\.?|al\.?|aleja|plac|pl\.?|street|st\.?|road|rd\.?|"
+        r"улиц\w*|ул\.?|проспект\w*|пр-т|переул\w*|пер\.?)\s+"
+        r"[A-Za-zА-Яа-яЁёÀ-ž'’.-]+(?:\s+[A-Za-zА-Яа-яЁёÀ-ž'’.-]+){0,5}\s+"
+        r"\d+[A-Za-zА-Яа-я]?(?:[/-]\d+)?",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(r"(?<!\w)\+?\d[\d\s()\-]{7,}\d(?!\w)"),
+    re.compile(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b"),
+    re.compile(
+        r"\b(?:парол\w*|код\w*|номер\s+дела|регистрацион\w*\s+номер|"
+        r"case\s*(?:no\.?|number)?)\s*[:#№-]?\s*"
+        r"[A-ZА-Я0-9][A-ZА-Я0-9._/-]{3,}\b",
+        flags=re.IGNORECASE,
+    ),
+)
+
+
+def _normalize_fact_literal(text: str) -> str:
+    normalized = (text or "").casefold().replace("ё", "е")
+    normalized = re.sub(r"[\s,;:()]+", " ", normalized)
+    return normalized.strip(" .")
+
+
+def _validate_existing_source_exact_literals(
+    response: GameMasterResponse,
+    *,
+    scene: Scene,
+) -> None:
+    """Reject machine-detectable exact facts invented during an existing-source lookup.
+
+    Prompt rules cover the general semantic case. This conservative hard guard catches
+    the most damaging structured literals (addresses, phones, dates, codes) before they
+    cross the publication/canon boundary.
+    """
+    retrieval = build_gm_knowledge_retrieval(scene=scene)
+    if not retrieval:
+        return
+
+    corpus = _normalize_fact_literal(build_gm_authoritative_fact_corpus(scene=scene))
+    response_text = "\n".join(
+        [
+            response.public,
+            *[
+                str(item.get("content", "") or "")
+                for item in response.private
+            ],
+        ]
+    )
+    for pattern in _PREEXISTING_EXACT_FACT_PATTERNS:
+        for match in pattern.finditer(response_text):
+            literal = match.group(0).strip()
+            normalized = _normalize_fact_literal(literal)
+            if normalized and normalized not in corpus:
+                raise ValidationError(
+                    "GM response introduced an unsupported exact datum while resolving "
+                    f"an existing-source lookup: {literal!r}. Add it to authoritative "
+                    "lore/memory/history first or answer that the datum is unavailable."
+                )
 
 
 def gm_response_contract() -> str:
@@ -591,6 +657,7 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
         scene_transition=scene_transition,
     )
     _validate_gm_response(response, scene=scene)
+    _validate_existing_source_exact_literals(response, scene=scene)
     return response
 
 
