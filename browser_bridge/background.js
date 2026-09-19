@@ -47,7 +47,7 @@ function normalizeUrl(url) {
 function supportedExternalHost(url) {
   try {
     const host = new URL(url).hostname.toLowerCase();
-    return ["chatgpt.com", "claude.ai", "gemini.google.com"].includes(host);
+    return ["chatgpt.com", "claude.ai", "gemini.google.com", "chat.deepseek.com"].includes(host);
   } catch {
     return false;
   }
@@ -124,7 +124,7 @@ async function startJob(message, sender) {
   }
   if (!supportedExternalHost(message.chatUrl)) {
     throw new Error(
-      "Unsupported external chat host. Supported: ChatGPT, Claude, Gemini."
+      "Unsupported external chat host. Supported: ChatGPT, Claude, Gemini, DeepSeek."
     );
   }
 
