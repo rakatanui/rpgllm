@@ -93,6 +93,15 @@ def start_turn(
                     list(existing.messages.order_by("created_at")),
                 )
 
+        if TurnExecution.objects.filter(
+            turn__scene=locked_scene,
+            state=ExecutionState.WAITING_EXTERNAL,
+        ).exists():
+            raise ValidationError(
+                "This scene already has a manual-chat execution waiting for a pasted "
+                "response. Complete it before starting another model turn."
+            )
+
         if private_to_player is not None:
             _ensure_scene_participant(locked_scene, private_to_player)
             mode = TurnMode.MANUAL
