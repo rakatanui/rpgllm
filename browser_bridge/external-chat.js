@@ -323,3 +323,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return false;
 });
+
+
+chrome.runtime.sendMessage({ type: "MRAZ_EXTERNAL_READY" }).catch(() => {});
