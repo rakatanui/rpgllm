@@ -2095,6 +2095,51 @@ def test_human_access_can_be_revoked_enabled_and_regenerated():
 
 
 @pytest.mark.django_db
+def test_old_scene_token_cannot_expose_later_episode():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    old_scene = make_scene(
+        campaign,
+        name="Old",
+        mode=TurnMode.MANUAL,
+        participants=[human],
+    )
+    old_token = _human_token(old_scene, human)
+
+    later_scene = make_scene(
+        campaign,
+        name="Later secret episode",
+        mode=TurnMode.MANUAL,
+        participants=[human],
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=later_scene,
+        author_type=AuthorType.GM,
+        content="FUTURE_PRIVATE_SECRET",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=human,
+    )
+
+    search_response = Client().get(
+        reverse("human_episode_search", kwargs={"access_token": old_token})
+    )
+    search_html = search_response.content.decode()
+    assert "Later secret episode" not in search_html
+
+    detail_response = Client().get(
+        reverse(
+            "human_episode_detail",
+            kwargs={
+                "access_token": old_token,
+                "episode_id": later_scene.pk,
+            },
+        )
+    )
+    assert detail_response.status_code == 404
+
+
+@pytest.mark.django_db
 def test_old_id_based_human_client_url_is_not_routed():
     campaign = make_campaign()
     human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
