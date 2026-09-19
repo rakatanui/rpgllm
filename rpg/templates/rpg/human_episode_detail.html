@@ -1,0 +1,83 @@
+{% extends "rpg/base.html" %}
+{% load rpg_extras %}
+{% block title %}{{ player.display_name }} · {{ episode.name }}{% endblock %}
+{% block favicon %}
+<link rel="icon" type="image/svg+xml" href="/static/rpg/favicon-player.svg">
+{% endblock %}
+{% block body_class %}human-player-page{% endblock %}
+{% block nav %}{% endblock %}
+{% block meta %}Player client · episode{% endblock %}
+{% block content %}
+<div class="human-history-shell">
+  <div class="human-history-header">
+    <div>
+      <div class="meta">{{ campaign.name }} · {{ player.display_name }}</div>
+      <h2>{{ episode.name }}</h2>
+      {% if episode.description %}
+        <div class="human-episode-description">{{ episode.description }}</div>
+      {% endif %}
+    </div>
+    <div class="toolbar">
+      <a class="btn" href="{% url 'human_episode_search' scene.pk player.pk %}">Episode search</a>
+      <a class="btn" href="{% url 'human_player_client' scene.pk player.pk %}">Current scene</a>
+    </div>
+  </div>
+
+  {% if episode.memory_summary %}
+    <section class="panel human-episode-memory">
+      <h3>Episode summary</h3>
+      <div class="msg-content">{{ episode.memory_summary }}</div>
+    </section>
+  {% endif %}
+
+  <div class="human-feed-grid human-episode-detail-grid">
+    <section class="panel">
+      <h3>Public scene</h3>
+      <div class="human-feed human-history-feed">
+        {% for block in public_blocks %}
+          <div class="round-block {{ block.tone }}">
+            {% for m in block.messages %}
+              <article class="msg {% if m.author_type == 'GM' %}gm{% else %}player{% endif %}">
+                <div class="msg-header">
+                  <strong>
+                    {% if m.author_type == "GM" %}GM
+                    {% elif m.author_player %}{{ m.author_player.display_name }}
+                    {% else %}System{% endif %}
+                  </strong>
+                  {% if m.author_type == "PLAYER" and m.action_type %}
+                    <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
+                  {% endif %}
+                </div>
+                {% if m.action_type != "PASS" %}
+                  <div class="msg-content">{{ m.content|message_format }}</div>
+                {% endif %}
+              </article>
+            {% endfor %}
+          </div>
+        {% empty %}
+          <p class="meta">No public messages in this episode.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>Private with GM</h3>
+      <div class="human-feed human-history-feed">
+        {% for m in private_messages %}
+          <article class="msg {% if m.author_type == 'GM' %}gm{% else %}private{% endif %}">
+            <div class="msg-header">
+              <strong>{% if m.author_type == "GM" %}GM{% else %}{{ player.display_name }}{% endif %}</strong>
+              {% if m.action_type %}<span class="action-tag">[{{ m.action_type }}]</span>{% endif %}
+            </div>
+            {% if m.action_type != "PASS" %}
+              <div class="msg-content">{{ m.content|message_format }}</div>
+            {% endif %}
+          </article>
+        {% empty %}
+          <p class="meta">No private messages in this episode.</p>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

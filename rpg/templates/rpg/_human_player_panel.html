@@ -28,19 +28,12 @@
   </div>
 </section>
 
-{% if scene.description or player.memory_summary %}
+{% if scene.description %}
 <details id="human-notes"
          class="panel human-notes"
          data-human-preserve-open="notes">
-  <summary>Scene / character notes</summary>
-  {% if scene.description %}
-    <h3>Scene</h3>
-    <div class="msg-content">{{ scene.description }}</div>
-  {% endif %}
-  {% if player.memory_summary %}
-    <h3>Your memory</h3>
-    <div class="msg-content">{{ player.memory_summary }}</div>
-  {% endif %}
+  <summary>Scene notes</summary>
+  <div class="msg-content">{{ scene.description }}</div>
 </details>
 {% endif %}
 

@@ -1,15 +1,17 @@
 """Views for MRAZ Master. Business rules live in services."""
+import mimetypes
 import re
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
-from django.http import HttpResponse, HttpResponseBadRequest
+from django.http import FileResponse, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
+from rpg.forms import CharacterImageUploadForm
 from rpg.models import (
     AuthorType,
     Campaign,
@@ -496,14 +498,33 @@ def _human_client_context(scene: Scene, player: Player) -> dict:
     }
 
 
-def human_player_client(request, scene_id, player_id):
-    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = get_object_or_404(
+def _human_player_for_scene(scene: Scene, player_id: int) -> Player:
+    return get_object_or_404(
         Player,
         pk=player_id,
         transport=PlayerTransport.HUMAN,
         scene_participations__scene=scene,
     )
+
+
+def _human_visible_messages(scene: Scene, player: Player):
+    return (
+        Message.objects.filter(scene=scene)
+        .filter(
+            Q(visibility=Visibility.PUBLIC)
+            | Q(
+                visibility=Visibility.PRIVATE_GM_PLAYER,
+                private_player=player,
+            )
+        )
+        .select_related("author_player", "execution", "turn__trigger_message")
+        .order_by("-created_at", "-pk")
+    )
+
+
+def human_player_client(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = _human_player_for_scene(scene, player_id)
     return render(
         request,
         "rpg/human_player.html",
@@ -513,12 +534,7 @@ def human_player_client(request, scene_id, player_id):
 
 def human_player_fragment(request, scene_id, player_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = get_object_or_404(
-        Player,
-        pk=player_id,
-        transport=PlayerTransport.HUMAN,
-        scene_participations__scene=scene,
-    )
+    player = _human_player_for_scene(scene, player_id)
     return render(
         request,
         "rpg/_human_player_panel.html",
@@ -529,12 +545,7 @@ def human_player_fragment(request, scene_id, player_id):
 @require_http_methods(["POST"])
 def submit_human_response(request, scene_id, player_id, execution_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = get_object_or_404(
-        Player,
-        pk=player_id,
-        transport=PlayerTransport.HUMAN,
-        scene_participations__scene=scene,
-    )
+    player = _human_player_for_scene(scene, player_id)
     execution = get_object_or_404(
         TurnExecution.objects.select_related("turn__scene", "player"),
         pk=execution_id,
@@ -570,12 +581,7 @@ def submit_human_response(request, scene_id, player_id, execution_id):
 @require_http_methods(["POST"])
 def human_send_ooc(request, scene_id, player_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
-    player = get_object_or_404(
-        Player,
-        pk=player_id,
-        transport=PlayerTransport.HUMAN,
-        scene_participations__scene=scene,
-    )
+    player = _human_player_for_scene(scene, player_id)
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
     content = (request.POST.get("content") or "").strip()
@@ -597,6 +603,143 @@ def human_send_ooc(request, scene_id, player_id):
             "human_player_client",
             kwargs={"scene_id": scene.pk, "player_id": player.pk},
         )
+    )
+
+
+def human_character_image(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = _human_player_for_scene(scene, player_id)
+    if not player.character_image:
+        return HttpResponse(status=404)
+
+    content_type = mimetypes.guess_type(player.character_image.name)[0] or "application/octet-stream"
+    response = FileResponse(player.character_image.open("rb"), content_type=content_type)
+    response["Cache-Control"] = "private, max-age=300"
+    return response
+
+
+@require_http_methods(["POST"])
+def upload_human_character_image(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = _human_player_for_scene(scene, player_id)
+    form = CharacterImageUploadForm(request.POST, request.FILES)
+    if not form.is_valid():
+        return HttpResponseBadRequest(form.errors.as_text())
+
+    old_name = player.character_image.name if player.character_image else ""
+    player.character_image = form.cleaned_data["image"]
+    player.save(update_fields=["character_image", "updated_at"])
+    if old_name and old_name != player.character_image.name:
+        player.character_image.storage.delete(old_name)
+
+    return redirect(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+        )
+    )
+
+
+@require_http_methods(["POST"])
+def remove_human_character_image(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = _human_player_for_scene(scene, player_id)
+    if player.character_image:
+        storage = player.character_image.storage
+        old_name = player.character_image.name
+        player.character_image = ""
+        player.save(update_fields=["character_image", "updated_at"])
+        storage.delete(old_name)
+
+    return redirect(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+        )
+    )
+
+
+def human_episode_search(request, scene_id, player_id):
+    current_scene = get_object_or_404(
+        Scene.objects.select_related("campaign"),
+        pk=scene_id,
+    )
+    player = _human_player_for_scene(current_scene, player_id)
+    q = (request.GET.get("q") or "").strip()
+
+    episodes = (
+        Scene.objects.filter(
+            campaign=player.campaign,
+            scene_participants__player=player,
+        )
+        .distinct()
+        .order_by("-created_at", "-pk")
+    )
+
+    if q:
+        visible_message_match = Q(messages__content__icontains=q) & (
+            Q(messages__visibility=Visibility.PUBLIC)
+            | Q(
+                messages__visibility=Visibility.PRIVATE_GM_PLAYER,
+                messages__private_player=player,
+            )
+        )
+        episodes = episodes.filter(
+            Q(name__icontains=q)
+            | Q(description__icontains=q)
+            | Q(memory_summary__icontains=q)
+            | visible_message_match
+        ).distinct()
+
+    return render(
+        request,
+        "rpg/human_episode_search.html",
+        {
+            "scene": current_scene,
+            "campaign": current_scene.campaign,
+            "player": player,
+            "episodes": list(episodes[:200]),
+            "q": q,
+        },
+    )
+
+
+def human_episode_detail(request, scene_id, player_id, episode_id):
+    current_scene = get_object_or_404(
+        Scene.objects.select_related("campaign"),
+        pk=scene_id,
+    )
+    player = _human_player_for_scene(current_scene, player_id)
+    episode = get_object_or_404(
+        Scene.objects.select_related("campaign"),
+        pk=episode_id,
+        campaign=player.campaign,
+        scene_participants__player=player,
+    )
+
+    visible_messages = list(_human_visible_messages(episode, player))
+    public_messages = [
+        message
+        for message in visible_messages
+        if message.visibility == Visibility.PUBLIC
+    ]
+    private_messages = [
+        message
+        for message in visible_messages
+        if message.visibility == Visibility.PRIVATE_GM_PLAYER
+    ]
+
+    return render(
+        request,
+        "rpg/human_episode_detail.html",
+        {
+            "scene": current_scene,
+            "campaign": current_scene.campaign,
+            "player": player,
+            "episode": episode,
+            "public_blocks": _public_message_blocks(public_messages),
+            "private_messages": private_messages,
+        },
     )
 
 

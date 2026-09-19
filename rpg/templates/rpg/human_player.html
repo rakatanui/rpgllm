@@ -8,6 +8,7 @@
 {% block meta %}Player client{% endblock %}
 {% block content %}
 <div class="human-player-shell">
+  {% include "rpg/_human_character_card.html" %}
   <div id="human-player-panel"
        hx-get="{% url 'human_player_fragment' scene.pk player.pk %}"
        hx-trigger="every 2s"

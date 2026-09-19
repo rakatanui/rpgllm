@@ -133,6 +133,46 @@
   .human-wait-card .toolbar { margin-top:6px; }
   body.human-player-page .container { max-width:1100px; padding:10px; }
   .human-player-shell { width:100%; }
+  .human-character-card { display:grid; grid-template-columns:220px minmax(0,1fr); gap:16px;
+                          margin-bottom:10px; overflow:visible; }
+  .human-character-portrait-column { min-width:0; }
+  .human-character-portrait { width:100%; aspect-ratio:1 / 1; border:1px solid var(--border);
+                              border-radius:10px; overflow:hidden; background:var(--bg);
+                              display:flex; align-items:center; justify-content:center; }
+  .human-character-portrait img { width:100%; height:100%; object-fit:cover; display:block; }
+  .human-character-portrait-placeholder { font-size:72px; font-weight:bold; color:var(--muted); }
+  .human-character-image-form { display:grid; gap:6px; margin-top:8px; }
+  .human-character-image-form input[type=file] { max-width:100%; font-size:11px; color:var(--muted); }
+  .human-character-image-remove { margin-top:6px; }
+  .human-character-body { min-width:0; }
+  .human-character-heading { display:flex; justify-content:space-between; gap:10px;
+                             align-items:flex-start; margin-bottom:8px; }
+  .human-character-heading h2 { margin:2px 0 0; font-size:22px; }
+  .human-character-summary { white-space:pre-wrap; line-height:1.5; margin-bottom:10px; }
+  .human-character-sections { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+  .human-character-sections details { border:1px solid var(--border); border-radius:7px;
+                                      padding:8px; background:rgba(255,255,255,.02); }
+  .human-character-sections summary { cursor:pointer; color:var(--muted); font-size:12px;
+                                      font-weight:bold; text-transform:uppercase; }
+  .human-character-sections .msg-content { margin-top:7px; }
+  .human-episode-quick-search { display:grid; grid-template-columns:minmax(0,1fr) auto;
+                               gap:8px; margin-top:10px; }
+  .human-history-shell { width:100%; }
+  .human-history-header { display:flex; align-items:flex-start; justify-content:space-between;
+                          gap:12px; margin-bottom:10px; }
+  .human-history-header h2 { margin:3px 0; }
+  .human-history-search-form { display:grid; grid-template-columns:minmax(0,1fr) auto auto;
+                               gap:8px; margin-bottom:10px; }
+  .human-episode-results { overflow:visible; }
+  .human-episode-result { padding:10px 0; border-bottom:1px solid var(--border); }
+  .human-episode-result:last-child { border-bottom:0; }
+  .human-episode-result-title { display:flex; gap:8px; align-items:center; font-weight:bold; margin-bottom:5px; }
+  .human-episode-description { white-space:pre-wrap; line-height:1.45; margin:5px 0; color:var(--text); }
+  .human-episode-summary { white-space:pre-wrap; line-height:1.45; margin:7px 0;
+                           padding:7px 9px; border-left:3px solid var(--accent);
+                           background:rgba(88,166,255,.05); }
+  .human-episode-memory { margin-bottom:10px; }
+  .human-history-feed { max-height:none; }
   .human-status-card { display:flex; justify-content:space-between; gap:12px; align-items:center;
                        margin-bottom:10px; padding:12px 14px; background:var(--panel);
                        border:1px solid var(--border); border-radius:10px; }
@@ -153,6 +193,13 @@
     body.human-player-page .container { padding:8px; }
     body.human-player-page header { padding:8px 10px; }
     .human-status-card { align-items:flex-start; flex-direction:column; }
+    .human-character-card { grid-template-columns:1fr; }
+    .human-character-portrait-column { max-width:280px; width:100%; margin:0 auto; }
+    .human-character-sections { grid-template-columns:1fr; }
+    .human-character-heading { align-items:stretch; flex-direction:column; }
+    .human-episode-quick-search { grid-template-columns:1fr; }
+    .human-history-header { flex-direction:column; }
+    .human-history-search-form { grid-template-columns:1fr; }
     .human-status-copy { justify-content:flex-start; }
     .human-feed-grid { grid-template-columns:1fr; }
     .human-feed { max-height:none; }

@@ -55,6 +55,8 @@ services:
         condition: service_healthy
       litellm:
         condition: service_healthy
+    volumes:
+      - media_data:/app/media
     ports:
       - "127.0.0.100:80:8000"
     healthcheck:
@@ -85,3 +87,4 @@ services:
 
 volumes:
   pgdata:
+  media_data:

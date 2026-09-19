@@ -168,20 +168,57 @@ class PlayerAdmin(admin.ModelAdmin):
     )
     list_filter = ("campaign", "transport", "manual_chat_context_mode", "status")
     search_fields = ("display_name",)
-    fields = (
-        "campaign",
-        "display_name",
-        "character_prompt",
-        "memory_summary",
-        "transport",
-        "model_config",
-        "fallback_model_config",
-        "manual_chat_label",
-        "manual_chat_url",
-        "manual_chat_context_mode",
-        "manual_chat_initialized",
-        "pending_nudge",
-        "status",
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "campaign",
+                    "display_name",
+                    "transport",
+                    "status",
+                )
+            },
+        ),
+        (
+            "Player-facing character card",
+            {
+                "fields": (
+                    "character_image",
+                    "character_summary",
+                    "characteristics",
+                    "abilities",
+                    "memory_summary",
+                ),
+                "description": (
+                    "Shown to a HUMAN player in the client. Memory summary is also "
+                    "part of the player's private long-term context."
+                ),
+            },
+        ),
+        (
+            "Model character context",
+            {
+                "fields": ("character_prompt", "pending_nudge"),
+                "description": (
+                    "character_prompt is authoritative model-facing character context. "
+                    "It is not exposed verbatim in the HUMAN client."
+                ),
+            },
+        ),
+        (
+            "Model / transport",
+            {
+                "fields": (
+                    "model_config",
+                    "fallback_model_config",
+                    "manual_chat_label",
+                    "manual_chat_url",
+                    "manual_chat_context_mode",
+                    "manual_chat_initialized",
+                )
+            },
+        ),
     )
 
 

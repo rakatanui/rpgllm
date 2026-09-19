@@ -190,6 +190,27 @@ def test_compact_memories_are_always_in_system_prompt():
 
 
 @pytest.mark.django_db
+def test_character_card_fields_are_part_of_model_character_context():
+    camp = make_campaign()
+    player = make_player(
+        camp,
+        "Lucien",
+        character_prompt="Authoritative model-facing identity.",
+        character_summary="French antiquarian and reluctant occult investigator.",
+        characteristics="Resolve 5\nAgility 3",
+        abilities="Reads warding sigils\nSpeaks Latin",
+    )
+    scene = make_scene(camp, participants=[player])
+
+    ctx = build_player_context(player=player, scene=scene)
+
+    assert "Authoritative model-facing identity." in ctx.system_prompt
+    assert "French antiquarian and reluctant occult investigator." in ctx.system_prompt
+    assert "Resolve 5" in ctx.system_prompt
+    assert "Reads warding sigils" in ctx.system_prompt
+
+
+@pytest.mark.django_db
 @override_settings(CONTEXT_HISTORY_MAX_CHARS=220)
 def test_history_budget_keeps_newest_contiguous_visible_tail():
     camp = make_campaign()
