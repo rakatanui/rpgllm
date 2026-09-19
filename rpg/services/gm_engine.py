@@ -33,7 +33,7 @@ from rpg.models import (
 )
 from rpg.services import turn_engine
 from rpg.services.context_builder import get_scene_lineage
-from rpg.services.gm_context import build_gm_context
+from rpg.services.gm_context import build_gm_context, build_gm_knowledge_retrieval
 from rpg.services.llm import get_llm_client
 
 
@@ -44,6 +44,7 @@ class GameMasterResponse:
     public: str
     private: list[dict]
     turn_targets: list[int]
+    scene_transition: dict | None = None
 
 
 ACTIVE_GM_STATES = {
@@ -58,12 +59,14 @@ def gm_response_contract() -> str:
     return (
         'Return ONLY one JSON object: '
         '{"action":"TURN|NARRATE|WAIT","public":"...",'
-        '"private":[{"player_id":123,"content":"..."}],"turn_targets":[123]}. '
+        '"private":[{"player_id":123,"content":"..."}],"turn_targets":[123],'
+        '"scene_transition":null}. '
         "TURN publishes the GM beat and opens a normal player turn. NARRATE publishes "
         "without calling players. WAIT publishes nothing. Player references must use the "
-        "numeric player_id values from the application context."
+        "numeric player_id values from the application context. scene_transition must be "
+        "null unless movement into a distinct location makes the live Scene label materially "
+        'false; then use {"name":"New scene label"}.'
     )
-
 
 def gm_execution_request(scene: Scene) -> str:
     text = (
@@ -73,7 +76,20 @@ def gm_execution_request(scene: Scene) -> str:
         "The absence of new canon messages since the previous synchronization does not by itself "
         "justify WAIT. Use TURN when this beat should be followed by player action, NARRATE when "
         "the beat should enter canon without immediately opening a player turn, and WAIT only when "
-        "the established fiction specifically requires the GM to take no action at this moment."
+        "the established fiction specifically requires the GM to take no action at this moment.\n\n"
+        "AUTHORITATIVE-SOURCE GUARD: if the player consults or remembers an already-existing "
+        "document, dossier, briefing, phone, correspondence, log, database, memory card, memory, "
+        "prior event, or other established source/object, never invent missing pre-existing content. "
+        "Exact facts such as addresses, names, phone/registration numbers, dates, message contents, "
+        "passwords, codes, case numbers, prior links/events, and existing-object properties require "
+        "support in authoritative application context. If support is absent, say the information is "
+        "unknown/unavailable instead of completing the gap with plausible fiction. This does not "
+        "restrict genuinely new present/future world facts that arise now.\n\n"
+        "NPC CAUSALITY: do not create suspicious, dramatic, or plot-significant NPC behavior merely "
+        "because the player is nearby or because a GM beat is required. Such behavior needs support "
+        "in NPC goals/knowledge, scene state, an ongoing event, or a direct consequence. Ordinary "
+        "background life remains allowed. Do NOT use this constraint as a reason to prefer WAIT when "
+        "there is an immediate observable consequence or a natural beat the player can react to."
     )
 
     participants = list(
@@ -92,6 +108,9 @@ def gm_execution_request(scene: Scene) -> str:
             f"you must use TURN with turn_targets=[{player_id}]. "
             "Use NARRATE only when you intentionally want no immediate player response."
         )
+    retrieval = build_gm_knowledge_retrieval(scene=scene)
+    if retrieval:
+        text += "\n\n" + retrieval
     return text
 
 
@@ -120,6 +139,7 @@ def _normalize_model_gm_response(
         public=response.public,
         private=response.private,
         turn_targets=[participants[0].player_id],
+        scene_transition=response.scene_transition,
     )
     _validate_gm_response(normalized, scene=scene)
     return normalized
