@@ -60,7 +60,7 @@
   {% endif %}
 
   <form method="post"
-        action="{% url 'submit_human_response' scene.pk player.pk waiting_execution.pk %}"
+        action="{% url 'submit_human_response' access_token waiting_execution.pk %}"
         class="human-action-form">
     {% csrf_token %}
     <div class="human-action-toolbar">
@@ -148,7 +148,7 @@
     </div>
 
     {% if not scene.is_closed %}
-      <form method="post" action="{% url 'human_send_ooc' scene.pk player.pk %}" class="human-ooc-form">
+      <form method="post" action="{% url 'human_send_ooc' access_token %}" class="human-ooc-form">
         {% csrf_token %}
         <label>OOC to GM</label>
         <textarea id="human-ooc-{{ player.pk }}"
