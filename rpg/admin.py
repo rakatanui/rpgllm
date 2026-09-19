@@ -60,7 +60,7 @@ class SceneInline(admin.TabularInline):
 
 class GameMasterConfigInline(admin.StackedInline):
     model = GameMasterConfig
-    extra = 0
+    extra = 1
     max_num = 1
     fields = (
         "enabled",
