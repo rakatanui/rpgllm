@@ -18,6 +18,9 @@
           <span class="chip">INACTIVE ROUND PLAYER</span>
         {% endif %}
       {% endif %}
+    {% elif gm_active_execution and gm_active_execution.error %}
+      <span class="chip failed">MASTER PAUSED</span>
+      <span class="meta">The GM bridge needs attention on the host machine.</span>
     {% elif gm_active_execution %}
       <span class="chip generating">MASTER THINKING</span>
       <span class="meta">The Game Master is preparing the next beat.</span>
