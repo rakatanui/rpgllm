@@ -28,6 +28,20 @@
   </div>
 </section>
 
+{% if scene.description or player.memory_summary %}
+<details class="panel human-notes">
+  <summary>Scene / character notes</summary>
+  {% if scene.description %}
+    <h3>Scene</h3>
+    <div class="msg-content">{{ scene.description }}</div>
+  {% endif %}
+  {% if player.memory_summary %}
+    <h3>Your memory</h3>
+    <div class="msg-content">{{ player.memory_summary }}</div>
+  {% endif %}
+</details>
+{% endif %}
+
 {% if waiting_execution and not scene.is_closed %}
 <section class="panel human-turn-card">
   <div class="private-panel-header">
@@ -57,7 +71,9 @@
     <div class="human-action-toolbar">
       <label>
         Action
-        <select name="action_type">
+        <select id="human-action-type-{{ waiting_execution.pk }}"
+                name="action_type"
+                hx-preserve>
           {% for action in allowed_actions %}
             <option value="{{ action }}">{{ action }}</option>
           {% endfor %}
