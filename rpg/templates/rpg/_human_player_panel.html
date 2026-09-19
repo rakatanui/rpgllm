@@ -29,7 +29,9 @@
 </section>
 
 {% if scene.description or player.memory_summary %}
-<details class="panel human-notes">
+<details id="human-notes"
+         class="panel human-notes"
+         data-human-preserve-open="notes">
   <summary>Scene / character notes</summary>
   {% if scene.description %}
     <h3>Scene</h3>
@@ -85,7 +87,9 @@
               rows="7"
               hx-preserve
               placeholder="Write your declaration. PASS may be left empty.">{{ waiting_execution.raw_response }}</textarea>
-    <details class="human-private-note">
+    <details id="human-private-note-details-{{ waiting_execution.pk }}"
+             class="human-private-note"
+             data-human-preserve-open="private-note-{{ waiting_execution.pk }}">
       <summary>Private note to GM</summary>
       <textarea id="human-private-note-{{ waiting_execution.pk }}"
                 name="private_to_gm"
@@ -101,7 +105,9 @@
 <div class="human-feed-grid">
   <section class="panel">
     <h3>Public scene</h3>
-    <div class="human-feed">
+    <div id="human-public-feed"
+         class="human-feed"
+         data-human-preserve-scroll="public">
       {% for block in public_blocks %}
         <div class="round-block {{ block.tone }}">
           {% for m in block.messages %}
@@ -130,7 +136,9 @@
 
   <section class="panel">
     <h3>Private with GM</h3>
-    <div class="human-feed">
+    <div id="human-private-feed"
+         class="human-feed"
+         data-human-preserve-scroll="private">
       {% for m in private_messages %}
         <article class="msg {% if m.author_type == 'GM' %}gm{% else %}private{% endif %}">
           <div class="msg-header">

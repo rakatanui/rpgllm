@@ -395,11 +395,13 @@ def test_latest_failed_execution_shows_single_model_retry_button():
 
     assert response.status_code == 200
     html = response.content.decode()
-    assert ">Retry</button>" in html
-    assert reverse(
+    retry_url = reverse(
         "retry_execution",
         kwargs={"scene_id": scene.pk, "execution_id": failed.pk},
-    ) in html
+    )
+    assert f'action="{retry_url}"' in html
+    assert html.count(f'action="{retry_url}"') == 1
+    assert "Retry" in html
     assert "timed out" in html
 
 
@@ -2020,3 +2022,42 @@ def test_human_declaration_hides_model_regen_and_ooc_revision_controls(mock_back
         kwargs={"scene_id": scene.pk, "message_id": message.pk},
     ) not in html
     assert "Versions / restore" in html
+
+
+
+@pytest.mark.django_db
+def test_human_client_preserves_disclosures_and_scroll_across_polling():
+    campaign = make_campaign()
+    human = make_player(
+        campaign,
+        "Живой",
+        transport=PlayerTransport.HUMAN,
+        memory_summary="Помнит важную вещь.",
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[human],
+        description="Длинная сцена.",
+    )
+
+    response = Client().get(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        )
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert 'id="human-notes"' in html
+    assert 'data-human-preserve-open="notes"' in html
+    assert 'id="human-public-feed"' in html
+    assert 'data-human-preserve-scroll="public"' in html
+    assert 'id="human-private-feed"' in html
+    assert 'data-human-preserve-scroll="private"' in html
+    assert "htmx:beforeSwap" in html
+    assert "htmx:afterSwap" in html
+    assert "captureHumanPollingState" in html
+    assert "restoreHumanPollingState" in html
+    assert "bottomGap" in html
