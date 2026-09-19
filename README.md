@@ -379,11 +379,94 @@ start another model turn until the outstanding response is completed. This
 prevents the public scene from advancing underneath a player who still has an
 open execution.
 
-**Important demo-stage limitation:** the HUMAN client currently uses ordinary
-`scene_id/player_id` routes and has no player authentication or access token.
-Its queries are server-side privacy-filtered and never return another player's
-private messages or GM_ONLY messages, but the route itself is not suitable for
-Internet exposure yet. Tokenized player access is the next deployment step.
+HUMAN access is scene-scoped and tokenized. Every `SceneParticipant` owns a
+random UUID bearer token, and the player client is reached only through
+`/play/<token>/`. The URL does not expose or accept a `scene_id` or
+`player_id`; the server resolves both from the token. A token can be revoked,
+re-enabled, or regenerated from the GM player card. Regeneration invalidates the
+old URL immediately.
+
+The bearer URL is a credential: anyone who has it can act as that character in
+that scene. Player pages and protected character images use private/no-store
+responses, player pages emit `Referrer-Policy: no-referrer`, and an older
+scene token cannot be used to browse episodes created after that scene.
+
+## Public HUMAN player access via Cloudflare Tunnel
+
+The repository includes an optional `public-player` Compose profile for
+Internet access. It deliberately does **not** expose the Django service itself.
+
+The path is:
+
+```
+player browser
+  → HTTPS / Cloudflare
+    → cloudflared (outbound-only tunnel)
+      → player-edge nginx
+        → Django
+```
+
+`player-edge` only proxies `/play/` and `/static/`. Every other path,
+including `/`, `/scene/`, `/admin/`, debug pages and health endpoints,
+returns 404. Django also has a second host-level guard:
+when a request arrives on `PUBLIC_PLAYER_HOST`, only those same public
+prefixes are accepted. This keeps the GM workbench local even if the Tunnel is
+accidentally pointed directly at Django later.
+
+Cloudflare recommends remotely-managed tunnels for Docker deployments. Create a
+Tunnel in **Cloudflare Dashboard → Networking → Tunnels**, then create a public
+hostname such as `play.example.com`. Configure that hostname's service as:
+
+```text
+http://player-edge:8080
+```
+
+The service name is resolved inside the Compose network by the `cloudflared`
+container. No host port is published for either `player-edge` or
+`cloudflared`.
+
+Then put the public hostname and Tunnel token in the local `.env`:
+
+```env
+PUBLIC_PLAYER_HOST=play.example.com
+CLOUDFLARE_TUNNEL_TOKEN=eyJ...
+```
+
+`PUBLIC_PLAYER_HOST` is a bare hostname: do not include `https://` or a
+path. It is automatically added to Django's `ALLOWED_HOSTS`, and
+`https://<PUBLIC_PLAYER_HOST>` is automatically added to
+`CSRF_TRUSTED_ORIGINS`.
+
+Start the public profile:
+
+```bash
+docker compose --profile public-player up -d --build
+```
+
+The normal local GM URL remains `http://mraz.local`. Only secret player links
+copied from a HUMAN player card should use the public hostname.
+
+Useful checks:
+
+```bash
+docker compose --profile public-player ps
+docker compose logs --tail=100 cloudflared
+docker compose exec player-edge nginx -t
+```
+
+From the Internet-facing hostname, these must behave differently:
+
+```text
+https://play.example.com/play/<valid-token>/   → player client
+https://play.example.com/admin/                 → 404
+https://play.example.com/scene/1/               → 404
+https://play.example.com/                       → 404
+```
+
+The Tunnel token is an account credential. Keep the real value only in
+`.env`; never commit it. The default Compose stack still runs without
+Cloudflare because both public services are behind the `public-player`
+profile.
 
 ## Manual external-chat transport
 
