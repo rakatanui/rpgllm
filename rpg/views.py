@@ -920,6 +920,9 @@ def publish_model_gm(request, scene_id, execution_id):
         return HttpResponseBadRequest("invalid GM turn target")
     if action != "TURN":
         target_ids = []
+    if action == "WAIT":
+        public_text = ""
+        private_by_player = {}
 
     try:
         gm_engine.publish_gm_execution(
