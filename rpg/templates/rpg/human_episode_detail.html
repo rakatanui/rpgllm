@@ -23,6 +23,13 @@
     </div>
   </div>
 
+  {% if episode.memory_summary %}
+    <section class="panel human-episode-memory">
+      <h3>Episode summary</h3>
+      <div class="msg-content">{{ episode.memory_summary }}</div>
+    </section>
+  {% endif %}
+
   <div class="human-feed-grid human-episode-detail-grid">
     <section class="panel">
       <h3>Public scene</h3>
