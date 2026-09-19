@@ -1721,3 +1721,65 @@ def test_reset_manual_chat_memory_forces_next_bootstrap():
     assert response.status_code == 302
     lucien.refresh_from_db()
     assert lucien.manual_chat_initialized is False
+
+
+
+@pytest.mark.django_db
+def test_manual_chat_paste_box_is_preserved_across_player_polling():
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+
+    response = Client().get(
+        reverse("players_status", kwargs={"scene_id": scene.pk})
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert f'id="external-response-{execution.pk}"' in html
+    assert "hx-preserve" in html
+
+
+@pytest.mark.django_db
+def test_manual_chat_public_reply_hides_api_only_ooc_and_regen_controls():
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Люсьен",
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+    turn_engine.submit_external_response(
+        execution=execution,
+        raw_text='{"action_type":"ACT","public":"Ответ.","private_to_gm":""}',
+    )
+
+    response = Client().get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "Versions / restore" in html
+    assert reverse(
+        "execution_debug",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) in html
+    assert reverse(
+        "regenerate_execution",
+        kwargs={"scene_id": scene.pk, "execution_id": execution.pk},
+    ) not in html
