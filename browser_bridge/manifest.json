@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MRAZ Browser Bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Moves MRAZ MANUAL_CHAT prompts into persistent web chats and returns structured responses.",
   "permissions": [
     "tabs",
@@ -13,7 +13,8 @@
     "http://localhost/*",
     "https://chatgpt.com/*",
     "https://claude.ai/*",
-    "https://gemini.google.com/*"
+    "https://gemini.google.com/*",
+    "https://chat.deepseek.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -34,7 +35,8 @@
       "matches": [
         "https://chatgpt.com/*",
         "https://claude.ai/*",
-        "https://gemini.google.com/*"
+        "https://gemini.google.com/*",
+        "https://chat.deepseek.com/*"
       ],
       "js": [
         "external-chat.js"
