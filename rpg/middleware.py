@@ -11,7 +11,7 @@ class PublicPlayerHostMiddleware:
     hostname still cannot reach the GM workbench or Django Admin.
     """
 
-    ALLOWED_PREFIXES = ("/play/", "/static/")
+    ALLOWED_PREFIXES = ("/play/", "/static/rpg/")
 
     def __init__(self, get_response):
         self.get_response = get_response
