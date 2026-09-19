@@ -422,3 +422,30 @@ def test_manual_gm_chat_does_not_reuse_delta_from_parallel_scene():
     assert parallel_execution.external_is_bootstrap is True
     assert "MRAZ GAME MASTER CHAT BRIDGE · DELTA" not in parallel_execution.external_prompt
     assert "## SYSTEM PROMPT" in parallel_execution.external_prompt
+
+
+
+@pytest.mark.django_db
+def test_gm_wait_publishes_nothing_and_never_starts_a_player_turn():
+    campaign = make_campaign()
+    player = make_player(campaign, "P")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
+    config = GameMasterConfig.objects.create(campaign=campaign, enabled=True)
+    execution = scene.gm_executions.create(
+        config=config,
+        state=GameMasterExecutionState.DRAFT,
+        transport=GameMasterTransport.LITELLM,
+        action=GameMasterAction.WAIT,
+        public_draft="",
+        private_drafts=[],
+        turn_targets=[],
+    )
+
+    gm_engine.publish_gm_execution(execution=execution)
+    execution.refresh_from_db()
+
+    assert execution.state == GameMasterExecutionState.PUBLISHED
+    assert execution.published_turn_id is None
+    assert not Message.objects.filter(scene=scene).exists()
+    assert not scene.turns.exists()
+    assert scene.gm_executions.count() == 1
