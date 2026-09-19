@@ -20,20 +20,22 @@
               <summary title="Действия">⋯</summary>
               <div class="msg-menu-popover">
                 {% if not scene.is_closed and m.author_type == "PLAYER" and m.execution_id and m.execution.state == "COMPLETED" %}
-                  <form method="post"
-                        action="{% url 'ooc_revision' scene.pk m.pk %}"
-                        onsubmit="return prepareOocRevision(this)">
-                    {% csrf_token %}
-                    <input type="hidden" name="comment" value="">
-                    <button type="submit">OOC</button>
-                  </form>
-                  <form method="post"
-                        action="{% url 'regenerate_execution' scene.pk m.execution_id %}"
-                        onsubmit="return confirm('Перегенерировать только ответ {{ m.author_player.display_name|escapejs }}? Текущая версия сохранится в истории.')">
-                    {% csrf_token %}
-                    <input type="hidden" name="message_id" value="{{ m.pk }}">
-                    <button type="submit">Regen</button>
-                  </form>
+                  {% if m.execution.transport != "MANUAL_CHAT" %}
+                    <form method="post"
+                          action="{% url 'ooc_revision' scene.pk m.pk %}"
+                          onsubmit="return prepareOocRevision(this)">
+                      {% csrf_token %}
+                      <input type="hidden" name="comment" value="">
+                      <button type="submit">OOC</button>
+                    </form>
+                    <form method="post"
+                          action="{% url 'regenerate_execution' scene.pk m.execution_id %}"
+                          onsubmit="return confirm('Перегенерировать только ответ {{ m.author_player.display_name|escapejs }}? Текущая версия сохранится в истории.')">
+                      {% csrf_token %}
+                      <input type="hidden" name="message_id" value="{{ m.pk }}">
+                      <button type="submit">Regen</button>
+                    </form>
+                  {% endif %}
                   <a href="{% url 'message_versions' scene.pk m.pk %}">Versions / restore</a>
                 {% endif %}
                 {% if m.execution_id %}
