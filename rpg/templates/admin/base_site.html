@@ -1,11 +1,10 @@
 {% extends "admin/base.html" %}
-{% load static %}
 
 {% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}MRAZ Admin{% endblock %}
 
 {% block extrahead %}
 {{ block.super }}
-<link rel="icon" type="image/svg+xml" href="{% static 'rpg/favicon-admin.svg' %}">
+<link rel="icon" type="image/svg+xml" href="/static/rpg/favicon-admin.svg">
 {% endblock %}
 
 {% block branding %}
