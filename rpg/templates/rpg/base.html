@@ -173,8 +173,18 @@
 
   body.human-player-page .container { max-width:1100px; padding:10px; }
   .human-player-shell { width:100%; }
-  .human-character-card { display:grid; grid-template-columns:220px minmax(0,1fr); gap:16px;
+  .human-character-card { display:grid; grid-template-columns:180px minmax(0,1fr); gap:16px;
                           margin-bottom:10px; overflow:visible; }
+  .human-character-primary-card { align-items:start; }
+  .human-character-reference { margin-top:10px; }
+  .human-character-reference-header { display:flex; justify-content:space-between; gap:10px;
+                                      align-items:flex-start; margin-bottom:8px; }
+  .human-character-reference-header h3 { margin:2px 0 0; }
+  .human-episode-quick-search-top { margin-top:0; margin-bottom:10px; }
+  .human-legacy-portrait-tools { margin-top:10px; border:1px solid var(--border); border-radius:7px;
+                                 padding:8px; background:rgba(255,255,255,.02); }
+  .human-legacy-portrait-tools > summary { cursor:pointer; color:var(--muted); font-size:12px;
+                                           font-weight:bold; text-transform:uppercase; }
   .human-character-portrait-column { min-width:0; }
   .human-character-portrait { width:100%; aspect-ratio:1 / 1; border:1px solid var(--border);
                               border-radius:10px; overflow:hidden; background:var(--bg);
@@ -202,6 +212,7 @@
                                   padding:8px 10px; border-left:3px solid var(--accent);
                                   background:rgba(88,166,255,.05); }
   .human-set-current-appearance { margin:0 0 10px; }
+  .human-set-current-appearance-primary { margin-top:8px; margin-bottom:0; }
   .human-fullbody-reference { margin:0 0 10px; border:1px solid var(--border); border-radius:7px;
                               padding:8px; background:rgba(255,255,255,.02); }
   .human-fullbody-reference > summary { cursor:pointer; color:var(--muted); font-size:12px;
@@ -255,10 +266,16 @@
     body.human-player-page .container { padding:8px; }
     body.human-player-page header { padding:8px 10px; }
     .human-status-card { align-items:flex-start; flex-direction:column; }
-    .human-character-card { grid-template-columns:1fr; }
-    .human-character-portrait-column { max-width:280px; width:100%; margin:0 auto; }
+    .human-character-card { grid-template-columns:112px minmax(0,1fr); gap:10px; padding:10px; }
+    .human-character-portrait-column { max-width:112px; width:100%; margin:0; }
+    .human-character-portrait-placeholder { font-size:42px; }
+    .human-character-heading { margin-bottom:4px; }
+    .human-character-heading h2 { font-size:19px; }
+    .human-appearance-title { margin-top:3px; font-size:13px; }
+    .human-appearance-switcher { margin-top:6px; }
+    .human-appearance-tab { padding:3px 6px; font-size:10px; }
     .human-character-sections { grid-template-columns:1fr; }
-    .human-character-heading { align-items:stretch; flex-direction:column; }
+    .human-character-reference-header { flex-direction:column; }
     .human-episode-quick-search { grid-template-columns:1fr; }
     .human-history-header { flex-direction:column; }
     .human-history-search-form { grid-template-columns:1fr; }
