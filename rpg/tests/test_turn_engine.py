@@ -1968,3 +1968,29 @@ def test_pending_human_execution_blocks_new_turn(mock_backend):
             gm_message_text="second",
             selected_players=[human],
         )
+
+
+
+@pytest.mark.django_db
+def test_human_completed_execution_cannot_regenerate_through_llm(mock_backend):
+    campaign = make_campaign()
+    human = make_player(campaign, "Human", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    turn_engine.submit_human_response(
+        execution=execution,
+        action_type="ACT",
+        public_text="Human answer.",
+    )
+    execution.refresh_from_db()
+
+    with patch("rpg.services.turn_engine.get_llm_client") as get_client:
+        with pytest.raises(RuntimeError, match="Only LiteLLM/API executions"):
+            turn_engine.regenerate_execution(execution)
+
+    get_client.assert_not_called()
