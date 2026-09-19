@@ -156,6 +156,14 @@ class SceneAdmin(admin.ModelAdmin):
     )
 
 
+@admin.register(CharacterAppearance)
+class CharacterAppearanceAdmin(admin.ModelAdmin):
+    list_display = ("name", "player", "is_primary", "order", "updated_at")
+    list_filter = ("player__campaign", "is_primary")
+    search_fields = ("name", "player__display_name", "description")
+    ordering = ("player", "order", "pk")
+
+
 class CharacterAppearanceInline(admin.StackedInline):
     model = CharacterAppearance
     extra = 1
