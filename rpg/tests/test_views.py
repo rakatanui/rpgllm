@@ -2109,7 +2109,17 @@ def test_admin_uses_admin_favicon():
     client = Client()
     client.force_login(admin)
 
-    html = client.get(reverse("admin:index")).content.decode()
+    with override_settings(
+        STORAGES={
+            "default": {
+                "BACKEND": "django.core.files.storage.FileSystemStorage",
+            },
+            "staticfiles": {
+                "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+            },
+        }
+    ):
+        html = client.get(reverse("admin:index")).content.decode()
 
     assert 'href="/static/rpg/favicon-admin.svg"' in html
     assert 'href="/static/rpg/favicon-gm.svg"' not in html
@@ -2203,7 +2213,6 @@ def test_human_can_upload_replace_and_remove_character_portrait(tmp_path):
         )
         assert image_response.status_code == 200
         assert image_response["Content-Type"] == "image/png"
-        image_response.close()
 
         old_name = human.character_image.name
         second = client.post(
@@ -2346,7 +2355,15 @@ def test_human_episode_search_is_participant_and_visibility_scoped():
     assert "Warehouse" not in gm_only_html
 
     outsider_html = client.get(search_url, {"q": "Forbidden Archive"}).content.decode()
-    assert "Forbidden Archive" not in outsider_html
+    outsider_detail_url = reverse(
+        "human_episode_detail",
+        kwargs={
+            "scene_id": current.pk,
+            "player_id": human.pk,
+            "episode_id": outsider_episode.pk,
+        },
+    )
+    assert outsider_detail_url not in outsider_html
 
     all_html = client.get(search_url).content.decode()
     assert "Warehouse" in all_html
