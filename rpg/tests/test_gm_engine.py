@@ -340,3 +340,85 @@ def test_discarding_manual_chat_draft_forces_future_bootstrap():
     gm_engine.discard_gm_execution(execution=execution)
     config.refresh_from_db()
     assert config.manual_chat_initialized is False
+
+
+
+@pytest.mark.django_db
+def test_api_gm_can_auto_publish_when_review_is_disabled():
+    campaign = make_campaign()
+    model = make_model("Auto GM", gateway_model="auto-gm")
+    player = make_player(campaign, "P")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.LITELLM,
+        model_config=model,
+        review_before_publish=False,
+    )
+    client = StaticGMClient(
+        {
+            "action": "NARRATE",
+            "public": "Автоматически опубликованный мастерский beat.",
+            "private": [],
+            "turn_targets": [],
+        }
+    )
+
+    with patch("rpg.services.gm_engine.get_llm_client", return_value=client):
+        execution = gm_engine.start_gm_execution(scene=scene)
+
+    assert execution.state == GameMasterExecutionState.PUBLISHED
+    assert execution.published_turn_id is None
+    assert Message.objects.filter(
+        scene=scene,
+        author_type=AuthorType.GM,
+        visibility=Visibility.PUBLIC,
+        content="Автоматически опубликованный мастерский beat.",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_manual_gm_chat_does_not_reuse_delta_from_parallel_scene():
+    campaign = make_campaign()
+    player = make_player(campaign, "P")
+    first = make_scene(campaign, name="First", mode=TurnMode.MANUAL, participants=[player])
+    parallel = make_scene(
+        campaign,
+        name="Parallel",
+        mode=TurnMode.MANUAL,
+        participants=[player],
+    )
+    config = GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_label="Persistent GM",
+        manual_chat_url="https://example.test/gm",
+    )
+
+    first_execution = gm_engine.start_gm_execution(scene=first)
+    gm_engine.submit_external_gm_response(
+        execution=first_execution,
+        raw_text=json.dumps(
+            {
+                "action": "NARRATE",
+                "public": "Первый канонический beat.",
+                "private": [],
+                "turn_targets": [],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    gm_engine.publish_gm_execution(execution=first_execution)
+    config.refresh_from_db()
+    assert config.manual_chat_initialized is True
+
+    parallel_execution = gm_engine.start_gm_execution(scene=parallel)
+    parallel_execution.refresh_from_db()
+
+    assert parallel_execution.state == GameMasterExecutionState.WAITING_EXTERNAL
+    assert parallel_execution.external_is_bootstrap is True
+    assert "MRAZ GAME MASTER CHAT BRIDGE · DELTA" not in parallel_execution.external_prompt
+    assert "## SYSTEM PROMPT" in parallel_execution.external_prompt
