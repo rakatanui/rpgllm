@@ -1503,6 +1503,9 @@ def undo_latest_public_turn(scene: Scene) -> None:
         # A persistent external chat cannot forget an undone exchange. Force a
         # fresh authoritative bootstrap next time so application canon and chat
         # memory converge again.
+        turn_player_ids = list(
+            latest.executions.values_list("player_id", flat=True)
+        )
         manual_memory_player_ids = list(
             latest.executions.filter(
                 transport=PlayerTransport.MANUAL_CHAT,
@@ -1512,6 +1515,10 @@ def undo_latest_public_turn(scene: Scene) -> None:
         if manual_memory_player_ids:
             Player.objects.filter(pk__in=manual_memory_player_ids).update(
                 manual_chat_initialized=False
+            )
+        if turn_player_ids:
+            Player.objects.filter(pk__in=turn_player_ids).update(
+                status=PlayerStatus.IDLE
             )
 
         Message.objects.filter(turn=latest).delete()
