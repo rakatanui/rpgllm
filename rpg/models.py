@@ -172,6 +172,13 @@ class GameMasterConfig(models.Model):
             "a valid result is published immediately."
         ),
     )
+    auto_continue = models.BooleanField(
+        default=False,
+        help_text=(
+            "After a HUMAN player finishes the current turn, automatically ask the model GM "
+            "for the next beat. For uninterrupted phone play, disable review_before_publish."
+        ),
+    )
     manual_chat_label = models.CharField(max_length=120, blank=True)
     manual_chat_url = models.URLField(max_length=1000, blank=True)
     manual_chat_context_mode = models.CharField(
@@ -182,6 +189,30 @@ class GameMasterConfig(models.Model):
     manual_chat_initialized = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        super().clean()
+        if self.auto_continue and self.review_before_publish:
+            raise ValidationError(
+                {
+                    "review_before_publish": (
+                        "Disable review_before_publish when auto_continue is enabled, "
+                        "otherwise the autonomous HUMAN → GM → HUMAN loop stops at every draft."
+                    )
+                }
+            )
+        if (
+            self.auto_continue
+            and self.transport == GameMasterTransport.MANUAL_CHAT
+            and not (self.manual_chat_url or "").strip()
+        ):
+            raise ValidationError(
+                {
+                    "manual_chat_url": (
+                        "A persistent manual_chat_url is required when auto_continue uses MANUAL_CHAT."
+                    )
+                }
+            )
 
     def __str__(self):
         return f"GM / {self.campaign.name}"
