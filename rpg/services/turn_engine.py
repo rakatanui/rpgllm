@@ -471,6 +471,7 @@ def regenerate_execution(
             locked_execution.save(
                 update_fields=["action_type", "error", "updated_at"]
             )
+            _invalidate_manual_chat_memory_for_scene(scene)
 
         public_message.refresh_from_db()
         return TurnResult(turn, [public_message])
@@ -608,6 +609,7 @@ def revise_execution_ooc(
                 locked_execution.save(
                     update_fields=["action_type", "updated_at"]
                 )
+                _invalidate_manual_chat_memory_for_scene(scene)
 
             private_note = (response.private_to_gm or "").strip()
             status_text = (
@@ -1470,6 +1472,15 @@ def ensure_message_revision(message: Message) -> list[MessageRevision]:
     return list(message.revisions.order_by("revision_index", "pk"))
 
 
+def _invalidate_manual_chat_memory_for_scene(scene: Scene) -> None:
+    """Force persistent external chats to re-bootstrap after retroactive canon edits."""
+    Player.objects.filter(
+        scene_participations__scene=scene,
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    ).update(manual_chat_initialized=False)
+
+
 def restore_message_revision(
     *,
     message: Message,
@@ -1492,6 +1503,7 @@ def restore_message_revision(
             action_type=revision.action_type
         )
         _record_message_revision(locked, reason="RESTORE")
+        _invalidate_manual_chat_memory_for_scene(message.scene)
     return locked
 
 
@@ -1524,16 +1536,7 @@ def undo_latest_public_turn(scene: Scene) -> None:
         turn_player_ids = list(
             latest.executions.values_list("player_id", flat=True)
         )
-        manual_memory_player_ids = list(
-            latest.executions.filter(
-                transport=PlayerTransport.MANUAL_CHAT,
-                external_context_mode=ManualChatContextMode.CHAT_MEMORY,
-            ).values_list("player_id", flat=True)
-        )
-        if manual_memory_player_ids:
-            Player.objects.filter(pk__in=manual_memory_player_ids).update(
-                manual_chat_initialized=False
-            )
+        _invalidate_manual_chat_memory_for_scene(locked_scene)
         if turn_player_ids:
             Player.objects.filter(pk__in=turn_player_ids).update(
                 status=PlayerStatus.IDLE
