@@ -9,7 +9,7 @@
            data-mraz-bridge-execution="{{ gm_execution.pk }}"
            data-mraz-bridge-chat-url="{{ gm_execution.external_chat_url }}"
            data-mraz-bridge-label="{{ gm_execution.external_chat_label|default:'Model GM' }}"
-           {% if gm_config and gm_config.auto_continue %}
+           {% if gm_config and gm_config.auto_continue and not gm_execution.error %}
              data-mraz-bridge-autostart="1"
            {% endif %}
          {% endif %}>
