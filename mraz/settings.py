@@ -27,6 +27,19 @@ CSRF_TRUSTED_ORIGINS = [
     if o.strip()
 ]
 
+PUBLIC_PLAYER_HOST = os.environ.get("PUBLIC_PLAYER_HOST", "").strip().lower()
+if PUBLIC_PLAYER_HOST:
+    if "://" in PUBLIC_PLAYER_HOST or "/" in PUBLIC_PLAYER_HOST:
+        raise RuntimeError("PUBLIC_PLAYER_HOST must be a bare hostname, without scheme or path")
+    if PUBLIC_PLAYER_HOST not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(PUBLIC_PLAYER_HOST)
+    public_player_origin = f"https://{PUBLIC_PLAYER_HOST}"
+    if public_player_origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(public_player_origin)
+
+# Cloudflare Tunnel terminates TLS before forwarding to the local player edge.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # SECURITY: never allow "*" in ALLOWED_HOSTS in any normal deployment.
 if "*" in ALLOWED_HOSTS:
     raise RuntimeError("ALLOWED_HOSTS must not contain '*'")
@@ -44,6 +57,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "rpg.middleware.PublicPlayerHostMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
