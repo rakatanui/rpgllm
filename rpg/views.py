@@ -315,6 +315,10 @@ def scene_view(request, scene_id):
         else None
     )
     unread_private_player_ids = _unread_private_player_ids(scene)
+    human_access_by_player, human_client_url_by_player = _human_access_ui_context(
+        request,
+        scene,
+    )
     public_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
         .select_related("author_player", "execution")
@@ -421,6 +425,8 @@ def scene_view(request, scene_id):
             "round_ready": round_ready,
             "active_round_player": active_round_player,
             "unread_private_player_ids": unread_private_player_ids,
+            "human_access_by_player": human_access_by_player,
+            "human_client_url_by_player": human_client_url_by_player,
             "active_round_player_id": _active_round_player_id(scene),
             "previous_scenes": list(
                 scene.previous_scenes.order_by("created_at", "pk")
@@ -470,6 +476,10 @@ def scene_view_fragment(request, scene):
 def players_status(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     players = _scene_players(scene)
+    human_access_by_player, human_client_url_by_player = _human_access_ui_context(
+        request,
+        scene,
+    )
     return render(
         request,
         "rpg/_players.html",
@@ -477,6 +487,8 @@ def players_status(request, scene_id):
             "scene": scene,
             "players": players,
             "unread_private_player_ids": _unread_private_player_ids(scene),
+            "human_access_by_player": human_access_by_player,
+            "human_client_url_by_player": human_client_url_by_player,
             "active_round_player_id": _active_round_player_id(scene),
             "failed_execution_by_player": _failed_execution_by_player(scene),
             "waiting_external_by_player": _waiting_external_by_player(scene),
