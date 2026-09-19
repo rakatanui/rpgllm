@@ -1637,3 +1637,28 @@ def test_retroactive_public_regen_invalidates_persistent_manual_chat_memory(mock
 
     manual.refresh_from_db()
     assert manual.manual_chat_initialized is False
+
+
+
+@pytest.mark.django_db
+def test_manual_chat_private_turn_explains_private_delivery(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.FULL,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Скажи это только мастеру.",
+        selected_players=[lucien],
+        private_to_player=lucien,
+    )
+    execution = result.turn.executions.get(player=lucien)
+
+    assert execution.state == ExecutionState.WAITING_EXTERNAL
+    assert "# PRIVATE GM↔PLAYER TURN" in execution.external_prompt
+    assert "NOT broadcast to the other scene participants" in execution.external_prompt
