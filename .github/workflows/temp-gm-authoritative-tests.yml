@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/gm-authoritative-retrieval
+  pull_request:
+    branches:
+      - main
 
 jobs:
   test:
