@@ -808,6 +808,20 @@ def _manual_delta_constraints(execution: TurnExecution, *, out_of_turn: bool) ->
     ]
     if scene.dialogue_language.strip():
         lines.append(f"Default spoken language: {scene.dialogue_language.strip()}")
+    if scene.description.strip():
+        lines.append("Current scene description:\n" + scene.description.strip())
+    if scene.campaign.shared_memory.strip():
+        lines.append(
+            "Current shared campaign memory:\n"
+            + scene.campaign.shared_memory.strip()
+        )
+    if execution.player.memory_summary.strip():
+        lines.append(
+            "Current private long-term memory:\n"
+            + execution.player.memory_summary.strip()
+        )
+    if scene.memory_summary.strip():
+        lines.append("Current scene memory:\n" + scene.memory_summary.strip())
 
     if turn.mode == TurnMode.ROUND and not turn.is_private:
         if out_of_turn:
