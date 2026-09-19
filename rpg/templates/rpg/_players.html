@@ -82,7 +82,10 @@
               action="{% url 'submit_external_response' scene.pk waiting.pk %}"
               class="external-response-form">
           {% csrf_token %}
-          <textarea name="response" rows="6"
+          <textarea id="external-response-{{ waiting.pk }}"
+                    name="response"
+                    rows="6"
+                    hx-preserve
                     placeholder="Paste the external chat response here...">{{ waiting.raw_response }}</textarea>
           <button class="btn btn-primary" type="submit">Accept pasted response</button>
         </form>
