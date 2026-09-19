@@ -2,6 +2,8 @@
 from unittest.mock import patch
 
 import pytest
+from django.contrib.auth import get_user_model
+from django.contrib.staticfiles import finders
 from django.test import Client
 from django.urls import reverse
 
@@ -2061,3 +2063,58 @@ def test_human_client_preserves_disclosures_and_scroll_across_polling():
     assert "captureHumanPollingState" in html
     assert "restoreHumanPollingState" in html
     assert "bottomGap" in html
+
+
+
+@pytest.mark.django_db
+def test_master_scene_uses_gm_favicon():
+    campaign = make_campaign()
+    player = make_player(campaign, "Игрок")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
+
+    html = Client().get(reverse("scene", kwargs={"scene_id": scene.pk})).content.decode()
+
+    assert 'href="/static/rpg/favicon-gm.svg"' in html
+    assert 'href="/static/rpg/favicon-player.svg"' not in html
+    assert 'href="/static/rpg/favicon-admin.svg"' not in html
+
+
+@pytest.mark.django_db
+def test_human_client_uses_player_favicon():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    html = Client().get(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": human.pk},
+        )
+    ).content.decode()
+
+    assert 'href="/static/rpg/favicon-player.svg"' in html
+    assert 'href="/static/rpg/favicon-gm.svg"' not in html
+    assert 'href="/static/rpg/favicon-admin.svg"' not in html
+
+
+@pytest.mark.django_db
+def test_admin_uses_admin_favicon():
+    admin = get_user_model().objects.create_superuser(
+        username="favicon-admin",
+        email="favicon@example.test",
+        password="test-password",
+    )
+    client = Client()
+    client.force_login(admin)
+
+    html = client.get(reverse("admin:index")).content.decode()
+
+    assert 'href="/static/rpg/favicon-admin.svg"' in html
+    assert 'href="/static/rpg/favicon-gm.svg"' not in html
+    assert 'href="/static/rpg/favicon-player.svg"' not in html
+
+
+def test_favicon_static_assets_are_discoverable():
+    assert finders.find("rpg/favicon-gm.svg")
+    assert finders.find("rpg/favicon-player.svg")
+    assert finders.find("rpg/favicon-admin.svg")
