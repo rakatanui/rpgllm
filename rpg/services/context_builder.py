@@ -141,6 +141,22 @@ def build_player_context(
             "Abilities:\n" + player.abilities.strip()
         )
 
+    participation = (
+        SceneParticipant.objects.filter(scene=scene, player=player)
+        .select_related("current_appearance")
+        .first()
+    )
+    current_appearance = participation.current_appearance if participation else None
+    if current_appearance is None:
+        current_appearance = player.appearances.filter(is_primary=True).first()
+    if current_appearance is None:
+        current_appearance = player.appearances.order_by("order", "pk").first()
+    if current_appearance is not None:
+        appearance_text = f"Current appearance: {current_appearance.name}"
+        if current_appearance.description.strip():
+            appearance_text += "\n" + current_appearance.description.strip()
+        character_parts.append(appearance_text)
+
     parts.append("\n\n".join(character_parts))
 
     if player.memory_summary.strip():
