@@ -28,7 +28,14 @@ class ModelConfigAdmin(admin.ModelAdmin):
 class PlayerInline(admin.TabularInline):
     model = Player
     extra = 1
-    fields = ("display_name", "character_prompt", "model_config", "fallback_model_config", "status")
+    fields = (
+        "display_name",
+        "character_prompt",
+        "transport",
+        "model_config",
+        "fallback_model_config",
+        "status",
+    )
     readonly_fields = ("status",)
     show_change_link = True
 
@@ -150,16 +157,29 @@ class SceneAdmin(admin.ModelAdmin):
 
 @admin.register(Player)
 class PlayerAdmin(admin.ModelAdmin):
-    list_display = ("display_name", "campaign", "model_config", "status", "created_at")
-    list_filter = ("campaign", "status")
+    list_display = (
+        "display_name",
+        "campaign",
+        "transport",
+        "model_config",
+        "manual_chat_context_mode",
+        "status",
+        "created_at",
+    )
+    list_filter = ("campaign", "transport", "manual_chat_context_mode", "status")
     search_fields = ("display_name",)
     fields = (
         "campaign",
         "display_name",
         "character_prompt",
         "memory_summary",
+        "transport",
         "model_config",
         "fallback_model_config",
+        "manual_chat_label",
+        "manual_chat_url",
+        "manual_chat_context_mode",
+        "manual_chat_initialized",
         "pending_nudge",
         "status",
     )
