@@ -54,9 +54,9 @@
   .round-order-row select { min-width:140px; }
   .round-position { color:var(--muted); }
   .round-warning { margin-top:8px; color:var(--err); font-size:12px; }
-  .grid3 { display:grid; grid-template-columns: 230px minmax(0, 1fr) minmax(440px, .9fr); gap:12px;
+  .grid3 { display:grid; grid-template-columns: 310px minmax(0, 1fr) minmax(440px, .9fr); gap:12px;
            flex:1 1 auto; min-height:0; height:auto; overflow:hidden; transition:grid-template-columns .16s ease; }
-  .grid3.private-collapsed { grid-template-columns:230px minmax(0, 1fr) 58px; }
+  .grid3.private-collapsed { grid-template-columns:310px minmax(0, 1fr) 58px; }
   .private-panel.collapsed { overflow:hidden; padding:8px; }
   .private-panel.collapsed .private-panel-body { display:none; }
   .private-panel.collapsed .private-panel-title-text { display:none; }
@@ -120,6 +120,11 @@
   .btn-small { padding:3px 7px; font-size:11px; }
   .retry-row { display:flex; gap:5px; flex-wrap:wrap; align-items:center; margin-top:6px; }
   .nudge-form { margin-top:6px; }
+  .external-wait-card { margin-top:8px; padding:7px; border:1px solid rgba(240,136,62,.55);
+                        border-radius:7px; background:rgba(240,136,62,.06); }
+  .external-wait-card > summary { cursor:pointer; color:#ffc38f; font-size:12px; font-weight:bold; }
+  .external-prompt { min-height:150px; margin:7px 0; font-size:11px; line-height:1.35; }
+  .external-response-form textarea { min-height:120px; margin:4px 0 7px; font-size:12px; }
   .public-filter { display:grid; grid-template-columns:minmax(120px,1fr) 140px 150px;
                    gap:6px; margin-bottom:8px; }
   .close-review { border:1px solid var(--private); border-radius:8px; padding:10px;
@@ -222,6 +227,7 @@
           background:var(--bg); border:1px solid var(--border); color:var(--muted); }
   .chip.idle { color:var(--muted); }
   .chip.generating { color:var(--accent); border-color:var(--accent); }
+  .chip.waiting_external { color:var(--private); border-color:var(--private); }
   .chip.error { color:var(--err); border-color:var(--err); }
   .player-row { padding:6px 8px; border-radius:6px; margin-bottom:6px; background:var(--bg); }
   .player-row.active { outline:2px solid var(--accent); }
@@ -342,6 +348,40 @@ function maybeAutoOpenPrivate({ initial = false } = {}) {
   if (playerId === null || !privateAutoOpenEnabled()) return;
   togglePrivatePanel(true);
   window.dispatchEvent(new CustomEvent("open-private", { detail: { playerId } }));
+}
+
+async function copyElementText(elementId, button) {
+  const element = document.getElementById(elementId);
+  if (!element) return;
+  const text = "value" in element ? element.value : element.innerText;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const helper = document.createElement("textarea");
+      helper.value = text;
+      helper.setAttribute("readonly", "");
+      helper.style.position = "fixed";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.select();
+      const copied = document.execCommand("copy");
+      helper.remove();
+      if (!copied) throw new Error("copy command failed");
+    }
+    if (button) {
+      const previous = button.textContent;
+      button.textContent = "✓ copied";
+      window.setTimeout(() => { button.textContent = previous; }, 900);
+    }
+  } catch (error) {
+    console.warn("Failed to copy text", error);
+    if (button) {
+      const previous = button.textContent;
+      button.textContent = "!";
+      window.setTimeout(() => { button.textContent = previous; }, 900);
+    }
+  }
 }
 
 async function copyMessage(button) {
