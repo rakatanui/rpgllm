@@ -146,6 +146,43 @@ def get_latest_gm_execution(scene: Scene) -> GameMasterExecution | None:
     )
 
 
+def maybe_start_auto_gm(*, scene: Scene) -> GameMasterExecution | None:
+    """Start the next GM beat after a completed public HUMAN turn when enabled.
+
+    This helper is intentionally best-effort: a player's accepted move must stay
+    accepted even if the automatic GM continuation cannot start because another
+    turn/execution appeared concurrently or the scene/configuration changed.
+    """
+    scene = Scene.objects.select_related("campaign").get(pk=scene.pk)
+    config = (
+        GameMasterConfig.objects.filter(campaign=scene.campaign)
+        .select_related("model_config", "fallback_model_config")
+        .first()
+    )
+    if (
+        scene.is_closed
+        or config is None
+        or not config.enabled
+        or not config.auto_continue
+        or config.review_before_publish
+    ):
+        return None
+    if (
+        config.transport == GameMasterTransport.MANUAL_CHAT
+        and not (config.manual_chat_url or "").strip()
+    ):
+        return None
+    if scene.turns.filter(state=TurnState.RUNNING).exists():
+        return None
+    if get_active_gm_execution(scene) is not None:
+        return None
+
+    try:
+        return start_gm_execution(scene=scene)
+    except ValidationError:
+        return None
+
+
 def start_gm_execution(*, scene: Scene) -> GameMasterExecution:
     scene = Scene.objects.select_related("campaign").get(pk=scene.pk)
     if scene.is_closed:
