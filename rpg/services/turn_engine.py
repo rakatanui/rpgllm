@@ -971,8 +971,6 @@ def submit_external_response(
     raw_text: str,
 ) -> TurnResult:
     raw = (raw_text or "").strip()
-    if not raw:
-        raise ValidationError("External response cannot be empty.")
 
     execution = (
         TurnExecution.objects.select_related("turn__scene__campaign", "player")
@@ -988,6 +986,13 @@ def submit_external_response(
         raise ValidationError("Execution is not a manual-chat execution.")
     if execution.state != ExecutionState.WAITING_EXTERNAL:
         raise ValidationError("Execution is not waiting for an external response.")
+    if not raw:
+        TurnExecution.objects.filter(pk=execution.pk).update(
+            error="External response cannot be empty.",
+            raw_response="",
+        )
+        _set_player_status(player, PlayerStatus.WAITING_EXTERNAL)
+        raise ValidationError("External response cannot be empty.")
 
     out_of_turn = (
         turn.mode == TurnMode.ROUND
