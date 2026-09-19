@@ -40,6 +40,7 @@ class ExecutionState(models.TextChoices):
     PENDING = "PENDING", "Pending"
     RUNNING = "RUNNING", "Running"
     WAITING_EXTERNAL = "WAITING_EXTERNAL", "Waiting for external chat"
+    WAITING_HUMAN = "WAITING_HUMAN", "Waiting for human player"
     COMPLETED = "COMPLETED", "Completed"
     FAILED = "FAILED", "Failed"
     INVALID = "INVALID", "Invalid response"
@@ -49,12 +50,14 @@ class PlayerStatus(models.TextChoices):
     IDLE = "idle", "Idle"
     GENERATING = "generating", "Generating"
     WAITING_EXTERNAL = "waiting_external", "Waiting for external chat"
+    WAITING_HUMAN = "waiting_human", "Waiting for human player"
     ERROR = "error", "Error"
 
 
 class PlayerTransport(models.TextChoices):
     LITELLM = "LITELLM", "LiteLLM / API"
     MANUAL_CHAT = "MANUAL_CHAT", "Manual external chat"
+    HUMAN = "HUMAN", "Human player"
 
 
 class ManualChatContextMode(models.TextChoices):

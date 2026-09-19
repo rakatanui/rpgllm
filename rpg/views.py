@@ -203,6 +203,18 @@ def _waiting_external_by_player(scene):
     return {execution.player_id: execution for execution in waiting}
 
 
+def _waiting_human_by_player(scene):
+    latest_turn = scene.turns.order_by("-created_at", "-pk").first()
+    if latest_turn is None:
+        return {}
+    waiting = (
+        latest_turn.executions.filter(state=ExecutionState.WAITING_HUMAN)
+        .select_related("player", "turn")
+        .order_by("order_index", "pk")
+    )
+    return {execution.player_id: execution for execution in waiting}
+
+
 def _unread_private_player_ids(scene):
     return list(
         Message.objects.filter(
@@ -305,6 +317,7 @@ def scene_view(request, scene_id):
     public_blocks = _public_message_blocks(public_messages)
     failed_execution_by_player = _failed_execution_by_player(scene)
     waiting_external_by_player = _waiting_external_by_player(scene)
+    waiting_human_by_player = _waiting_human_by_player(scene)
     saoot_candidates = _saoot_candidates(scene)
     gm_only_messages = list(
         Message.objects.filter(scene=scene, visibility=Visibility.GM_ONLY)
@@ -360,6 +373,7 @@ def scene_view(request, scene_id):
             "player_color_by_id": player_color_by_id,
             "failed_execution_by_player": failed_execution_by_player,
             "waiting_external_by_player": waiting_external_by_player,
+            "waiting_human_by_player": waiting_human_by_player,
             "saoot_candidates": saoot_candidates,
             "gm_only_messages": gm_only_messages,
             "player_private": player_private,
@@ -428,7 +442,161 @@ def players_status(request, scene_id):
             "active_round_player_id": _active_round_player_id(scene),
             "failed_execution_by_player": _failed_execution_by_player(scene),
             "waiting_external_by_player": _waiting_external_by_player(scene),
+            "waiting_human_by_player": _waiting_human_by_player(scene),
         },
+    )
+
+
+def _human_client_context(scene: Scene, player: Player) -> dict:
+    public_messages = list(
+        Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
+        .select_related("author_player", "execution")
+        .order_by("-created_at", "-pk")
+    )
+    private_messages = list(
+        Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PRIVATE_GM_PLAYER,
+            private_player=player,
+        )
+        .select_related("author_player", "execution", "turn__trigger_message")
+        .order_by("-created_at", "-pk")
+    )
+    waiting = (
+        TurnExecution.objects.filter(
+            turn__scene=scene,
+            player=player,
+            transport=PlayerTransport.HUMAN,
+            state=ExecutionState.WAITING_HUMAN,
+        )
+        .select_related("turn__trigger_message", "player")
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    allowed_actions = (
+        turn_engine.allowed_human_actions(waiting)
+        if waiting is not None
+        else []
+    )
+    is_active_round = (
+        scene.mode == TurnMode.ROUND
+        and _active_round_player_id(scene) == player.pk
+    )
+    return {
+        "scene": scene,
+        "campaign": scene.campaign,
+        "player": player,
+        "public_messages": public_messages,
+        "public_blocks": _public_message_blocks(public_messages),
+        "private_messages": private_messages,
+        "player_color": _player_color_classes(_scene_players(scene)).get(player.pk, ""),
+        "waiting_execution": waiting,
+        "allowed_actions": allowed_actions,
+        "is_active_round": is_active_round,
+    }
+
+
+def human_player_client(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = get_object_or_404(
+        Player,
+        pk=player_id,
+        transport=PlayerTransport.HUMAN,
+        scene_participations__scene=scene,
+    )
+    return render(
+        request,
+        "rpg/human_player.html",
+        _human_client_context(scene, player),
+    )
+
+
+def human_player_fragment(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = get_object_or_404(
+        Player,
+        pk=player_id,
+        transport=PlayerTransport.HUMAN,
+        scene_participations__scene=scene,
+    )
+    return render(
+        request,
+        "rpg/_human_player_panel.html",
+        _human_client_context(scene, player),
+    )
+
+
+@require_http_methods(["POST"])
+def submit_human_response(request, scene_id, player_id, execution_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = get_object_or_404(
+        Player,
+        pk=player_id,
+        transport=PlayerTransport.HUMAN,
+        scene_participations__scene=scene,
+    )
+    execution = get_object_or_404(
+        TurnExecution.objects.select_related("turn__scene", "player"),
+        pk=execution_id,
+        player=player,
+        turn__scene=scene,
+        transport=PlayerTransport.HUMAN,
+    )
+    try:
+        turn_engine.submit_human_response(
+            execution=execution,
+            action_type=request.POST.get("action_type") or "",
+            public_text=request.POST.get("content") or "",
+            private_to_gm=request.POST.get("private_to_gm") or "",
+        )
+    except ValidationError:
+        # Keep the player on the client page; the execution stores the rejection
+        # and the polling panel displays it above the preserved draft.
+        return redirect(
+            reverse(
+                "human_player_client",
+                kwargs={"scene_id": scene.pk, "player_id": player.pk},
+            )
+        )
+
+    return redirect(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+        )
+    )
+
+
+@require_http_methods(["POST"])
+def human_send_ooc(request, scene_id, player_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    player = get_object_or_404(
+        Player,
+        pk=player_id,
+        transport=PlayerTransport.HUMAN,
+        scene_participations__scene=scene,
+    )
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
+    content = (request.POST.get("content") or "").strip()
+    if not content:
+        return HttpResponseBadRequest("empty OOC content")
+
+    Message.objects.create(
+        campaign=scene.campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=player,
+        content=f"[OOC PLAYER]\n{content}",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=player,
+        gm_unread=True,
+    )
+    return redirect(
+        reverse(
+            "human_player_client",
+            kwargs={"scene_id": scene.pk, "player_id": player.pk},
+        )
     )
 
 
@@ -760,6 +928,8 @@ def set_player_nudge(request, scene_id, player_id):
     )
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
+    if player.transport == PlayerTransport.HUMAN:
+        return HttpResponseBadRequest("Nudge is for model players, not HUMAN transport")
     player.pending_nudge = (request.POST.get("content") or "").strip()
     player.save(update_fields=["pending_nudge", "updated_at"])
     return redirect(reverse("scene", kwargs={"scene_id": scene.pk}))

@@ -1,0 +1,28 @@
+{% extends "rpg/base.html" %}
+{% block title %}{{ player.display_name }} · {{ scene.name }}{% endblock %}
+{% block body_class %}human-player-page{% endblock %}
+{% block nav %}{% endblock %}
+{% block meta %}Player client{% endblock %}
+{% block content %}
+<div class="human-player-shell">
+  <div id="human-player-panel"
+       hx-get="{% url 'human_player_fragment' scene.pk player.pk %}"
+       hx-trigger="every 2s"
+       hx-swap="innerHTML">
+    {% include "rpg/_human_player_panel.html" %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey && event.key === "Enter") {
+    const actionForm = event.target?.closest?.(".human-action-form");
+    if (actionForm) {
+      event.preventDefault();
+      actionForm.requestSubmit();
+    }
+  }
+});
+</script>
+{% endblock %}

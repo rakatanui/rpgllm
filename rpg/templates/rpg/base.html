@@ -125,6 +125,37 @@
   .external-wait-card > summary { cursor:pointer; color:#ffc38f; font-size:12px; font-weight:bold; }
   .external-prompt { min-height:150px; margin:7px 0; font-size:11px; line-height:1.35; }
   .external-response-form textarea { min-height:120px; margin:4px 0 7px; font-size:12px; }
+  .human-wait-card { margin-top:8px; padding:8px; border:1px solid rgba(63,185,80,.55);
+                     border-radius:7px; background:rgba(63,185,80,.06); }
+  .human-wait-card .toolbar { margin-top:6px; }
+  body.human-player-page .container { max-width:1100px; padding:10px; }
+  .human-player-shell { width:100%; }
+  .human-status-card { display:flex; justify-content:space-between; gap:12px; align-items:center;
+                       margin-bottom:10px; padding:12px 14px; background:var(--panel);
+                       border:1px solid var(--border); border-radius:10px; }
+  .human-status-card h2 { margin:3px 0 0; font-size:20px; }
+  .human-status-copy { display:flex; gap:7px; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
+  .human-turn-card { margin-bottom:10px; border-color:rgba(63,185,80,.45); }
+  .human-action-toolbar { display:flex; gap:10px; margin-bottom:8px; }
+  .human-action-toolbar label { min-width:190px; }
+  .human-action-form > textarea { min-height:150px; font-size:15px; line-height:1.5; }
+  .human-private-note { margin:8px 0; color:var(--muted); }
+  .human-private-note textarea { margin-top:7px; }
+  .human-submit { width:100%; padding:10px 14px; font-size:15px; }
+  .human-feed-grid { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(300px,.8fr); gap:10px; }
+  .human-feed { max-height:56vh; overflow:auto; }
+  .human-ooc-form { margin-top:12px; padding-top:10px; border-top:1px solid var(--border); }
+  .human-ooc-form textarea { min-height:90px; margin:5px 0 7px; }
+  @media (max-width: 760px) {
+    body.human-player-page .container { padding:8px; }
+    body.human-player-page header { padding:8px 10px; }
+    .human-status-card { align-items:flex-start; flex-direction:column; }
+    .human-status-copy { justify-content:flex-start; }
+    .human-feed-grid { grid-template-columns:1fr; }
+    .human-feed { max-height:none; }
+    .human-action-form > textarea { min-height:180px; }
+    .human-status-card h2 { font-size:18px; }
+  }
   .public-filter { display:grid; grid-template-columns:minmax(120px,1fr) 140px 150px;
                    gap:6px; margin-bottom:8px; }
   .close-review { border:1px solid var(--private); border-radius:8px; padding:10px;
@@ -228,6 +259,7 @@
   .chip.idle { color:var(--muted); }
   .chip.generating { color:var(--accent); border-color:var(--accent); }
   .chip.waiting_external { color:var(--private); border-color:var(--private); }
+  .chip.waiting_human { color:var(--ok); border-color:var(--ok); }
   .chip.error { color:var(--err); border-color:var(--err); }
   .player-row { padding:6px 8px; border-radius:6px; margin-bottom:6px; background:var(--bg); }
   .player-row.active { outline:2px solid var(--accent); }
@@ -244,10 +276,12 @@
 <body class="{% block body_class %}{% endblock %}">
 <header>
   <h1>MRAZ Master</h1>
+  {% block nav %}
   <nav>
     <a href="/">Home</a>
     <a href="/admin/">Admin</a>
   </nav>
+  {% endblock %}
   <div style="margin-left:auto" class="meta">{% block meta %}{% endblock %}</div>
 </header>
 <div class="container">

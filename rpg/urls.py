@@ -6,6 +6,26 @@ from . import views
 urlpatterns = [
     path("", views.campaigns, name="campaigns"),
     path("scene/<int:scene_id>/", views.scene_view, name="scene"),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/",
+        views.human_player_client,
+        name="human_player_client",
+    ),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/fragment/",
+        views.human_player_fragment,
+        name="human_player_fragment",
+    ),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/execution/<int:execution_id>/submit/",
+        views.submit_human_response,
+        name="submit_human_response",
+    ),
+    path(
+        "scene/<int:scene_id>/human/<int:player_id>/ooc/",
+        views.human_send_ooc,
+        name="human_send_ooc",
+    ),
     path("scene/<int:scene_id>/history-search/", views.search_history, name="search_history"),
     path("scene/<int:scene_id>/send/", views.send_gm_message, name="send_gm_message"),
     path("scene/<int:scene_id>/silence/", views.silent_turn, name="silent_turn"),

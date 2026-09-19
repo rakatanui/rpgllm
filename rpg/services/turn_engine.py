@@ -99,11 +99,14 @@ def start_turn(
 
         if TurnExecution.objects.filter(
             turn__scene=locked_scene,
-            state=ExecutionState.WAITING_EXTERNAL,
+            state__in=[
+                ExecutionState.WAITING_EXTERNAL,
+                ExecutionState.WAITING_HUMAN,
+            ],
         ).exists():
             raise ValidationError(
-                "This scene already has a manual-chat execution waiting for a pasted "
-                "response. Complete it before starting another model turn."
+                "This scene already has an unfinished external/human execution. "
+                "Complete it before starting another turn."
             )
 
         if private_to_player is not None:
@@ -168,7 +171,11 @@ def start_turn(
 
         executions = []
         for index, player in enumerate(targets):
-            nudge = (player.pending_nudge or "").strip()
+            nudge = (
+                (player.pending_nudge or "").strip()
+                if player.transport != PlayerTransport.HUMAN
+                else ""
+            )
             execution = TurnExecution.objects.create(
                 turn=turn,
                 player=player,
@@ -234,10 +241,15 @@ def start_turn(
         for execution in executions
         if execution.transport == PlayerTransport.MANUAL_CHAT
     ]
+    human_executions = [
+        execution
+        for execution in executions
+        if execution.transport == PlayerTransport.HUMAN
+    ]
     provider_executions = [
         execution
         for execution in executions
-        if execution.transport != PlayerTransport.MANUAL_CHAT
+        if execution.transport == PlayerTransport.LITELLM
     ]
 
     for execution in manual_executions:
@@ -252,6 +264,9 @@ def start_turn(
             )
         except Exception as exc:
             _mark_execution_error(execution, exc)
+
+    for execution in human_executions:
+        _prepare_human_execution(execution)
 
     if provider_executions:
         client = get_llm_client()
@@ -420,6 +435,9 @@ def retry_execution(
             out_of_turn=out_of_turn,
         )
         message = None
+    elif execution.transport == PlayerTransport.HUMAN:
+        _prepare_human_execution(execution)
+        message = None
     else:
         message = _run_execution(
             execution=execution,
@@ -464,9 +482,9 @@ def regenerate_execution(
         raise RuntimeError("Only public executions can be regenerated here")
     if execution.state != ExecutionState.COMPLETED:
         raise RuntimeError("Only a COMPLETED execution can be regenerated")
-    if execution.transport == PlayerTransport.MANUAL_CHAT:
+    if execution.transport != PlayerTransport.LITELLM:
         raise RuntimeError(
-            "Manual-chat executions are regenerated in the external chat, not through LiteLLM."
+            "Only LiteLLM/API executions can be regenerated through the model backend."
         )
 
     public_message = (
@@ -601,9 +619,9 @@ def revise_execution_ooc(
         raise RuntimeError("OOC feedback requires a public player execution message")
     if execution.state != ExecutionState.COMPLETED:
         raise RuntimeError("OOC feedback requires a completed player execution")
-    if execution.transport == PlayerTransport.MANUAL_CHAT:
+    if execution.transport != PlayerTransport.LITELLM:
         raise RuntimeError(
-            "Manual-chat declarations must be revised in the external chat."
+            "Automatic OOC revision is available only for LiteLLM/API executions."
         )
 
     turn = execution.turn
@@ -1192,6 +1210,136 @@ def submit_external_response(
                     if isinstance(exc, ValidationError)
                     else ValidationError(f"External response rejected: {exc}")
                 )
+
+    if rejection is not None:
+        raise rejection
+
+    turn = Turn.objects.get(pk=execution.turn_id)
+    _refresh_turn_state(turn)
+    turn.refresh_from_db()
+    if (
+        turn.mode == TurnMode.ROUND
+        and not turn.is_private
+        and turn.state == TurnState.COMPLETED
+    ):
+        _advance_round_once(turn)
+        turn.refresh_from_db()
+    return TurnResult(turn, [message] if message is not None else [])
+
+
+def _prepare_human_execution(execution: TurnExecution) -> None:
+    execution.refresh_from_db()
+    TurnExecution.objects.filter(pk=execution.pk).update(
+        state=ExecutionState.WAITING_HUMAN,
+        error="",
+        raw_response="",
+        latency_ms=None,
+        model_used="human",
+    )
+    execution.state = ExecutionState.WAITING_HUMAN
+    _set_player_status(execution.player, PlayerStatus.WAITING_HUMAN)
+
+
+def allowed_human_actions(execution: TurnExecution) -> list[str]:
+    execution = TurnExecution.objects.select_related("turn").get(pk=execution.pk)
+    turn = execution.turn
+    if turn.is_private or turn.mode != TurnMode.ROUND:
+        return ["ACT", "PASS"]
+    out_of_turn = execution.player_id != turn.active_player_id_snapshot
+    return ["PASS", "ACT_OUT_OF_TURN"] if out_of_turn else ["ACT", "PASS"]
+
+
+def submit_human_response(
+    *,
+    execution: TurnExecution,
+    action_type: str,
+    public_text: str,
+    private_to_gm: str = "",
+) -> TurnResult:
+    action = (action_type or "").strip().upper()
+    public = (public_text or "").strip()
+    private = (private_to_gm or "").strip()
+    rejection: ValidationError | None = None
+    message: Message | None = None
+
+    with transaction.atomic():
+        execution = (
+            TurnExecution.objects.select_for_update()
+            .select_related("turn__scene__campaign", "player")
+            .get(pk=execution.pk)
+        )
+        turn = execution.turn
+        scene = turn.scene
+        player = execution.player
+
+        if scene.is_closed:
+            raise ValidationError("Cannot submit a response into a closed scene.")
+        if execution.transport != PlayerTransport.HUMAN:
+            raise ValidationError("Execution is not a human-player execution.")
+        if execution.state != ExecutionState.WAITING_HUMAN:
+            raise ValidationError("Execution is not waiting for a human response.")
+
+        allowed = allowed_human_actions(execution)
+        if action not in allowed:
+            rejection = ValidationError(
+                f"Action {action or '(empty)'} is not allowed here. Allowed: {allowed}"
+            )
+        else:
+            response = LLMResponse(
+                raw_text=public,
+                action_type=action,
+                public=public,
+                private_to_gm=private,
+            )
+            out_of_turn = (
+                turn.mode == TurnMode.ROUND
+                and execution.player_id != turn.active_player_id_snapshot
+            )
+            try:
+                _validate_action(
+                    turn=turn,
+                    out_of_turn=out_of_turn,
+                    response=response,
+                )
+                _validate_response_discipline(
+                    turn=turn,
+                    out_of_turn=out_of_turn,
+                    response=response,
+                )
+                _require_public_body(response)
+                message = _persist_player_response(
+                    execution=execution,
+                    response=response,
+                )
+                execution.state = ExecutionState.COMPLETED
+                execution.action_type = action
+                execution.error = ""
+                execution.raw_response = public
+                execution.save(
+                    update_fields=[
+                        "state",
+                        "action_type",
+                        "error",
+                        "raw_response",
+                        "updated_at",
+                    ]
+                )
+                _set_player_status(player, PlayerStatus.IDLE)
+            except Exception as exc:
+                rejection = (
+                    exc
+                    if isinstance(exc, ValidationError)
+                    else ValidationError(str(exc))
+                )
+
+        if rejection is not None:
+            execution.state = ExecutionState.WAITING_HUMAN
+            execution.error = str(rejection)
+            execution.raw_response = public
+            execution.save(
+                update_fields=["state", "error", "raw_response", "updated_at"]
+            )
+            _set_player_status(player, PlayerStatus.WAITING_HUMAN)
 
     if rejection is not None:
         raise rejection
