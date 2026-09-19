@@ -31,6 +31,7 @@ from rpg.models import (
     Visibility,
 )
 from rpg.services import turn_engine
+from rpg.services.context_builder import get_scene_lineage
 from rpg.services.gm_context import build_gm_context
 from rpg.services.llm import get_llm_client
 
@@ -702,9 +703,13 @@ def _build_manual_chat_prompt(
 def _previous_external_execution(
     execution: GameMasterExecution,
 ) -> GameMasterExecution | None:
+    lineage_ids = [
+        lineage_scene.pk
+        for lineage_scene in get_scene_lineage(execution.scene)
+    ]
     return (
         GameMasterExecution.objects.filter(
-            scene__campaign=execution.scene.campaign,
+            scene_id__in=lineage_ids,
             transport=GameMasterTransport.MANUAL_CHAT,
             state=GameMasterExecutionState.PUBLISHED,
             pk__lt=execution.pk,
