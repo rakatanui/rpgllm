@@ -807,6 +807,7 @@ def human_episode_search(request, access_token):
         Scene.objects.filter(
             campaign=player.campaign,
             scene_participants__player=player,
+            created_at__lte=current_scene.created_at,
         )
         .distinct()
         .order_by("-created_at", "-pk")
@@ -849,6 +850,7 @@ def human_episode_detail(request, access_token, episode_id):
         pk=episode_id,
         campaign=player.campaign,
         scene_participants__player=player,
+        created_at__lte=current_scene.created_at,
     )
 
     visible_messages = list(_human_visible_messages(episode, player))
