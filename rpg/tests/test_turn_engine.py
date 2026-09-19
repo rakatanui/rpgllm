@@ -1523,3 +1523,30 @@ def test_chat_memory_url_change_forces_new_bootstrap(mock_backend):
     assert second_execution.external_is_bootstrap is True
     assert "## SYSTEM PROMPT" in second_execution.external_prompt
     assert second_execution.external_chat_url.endswith("/two")
+
+
+
+@pytest.mark.django_db
+def test_undo_waiting_manual_turn_resets_player_status(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    lucien.refresh_from_db()
+    assert lucien.status == PlayerStatus.WAITING_EXTERNAL
+
+    turn_engine.undo_latest_public_turn(scene)
+
+    lucien.refresh_from_db()
+    assert lucien.status == PlayerStatus.IDLE
+    assert not Turn.objects.filter(pk=result.turn.pk).exists()
