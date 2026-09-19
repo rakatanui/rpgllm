@@ -20,7 +20,7 @@
     <input type="text"
            name="q"
            value="{{ q }}"
-           placeholder="Search episode title, scene description, public history or your private GM channel..."
+           placeholder="Search episode title, scene description, episode summary, public history or your private GM channel..."
            autofocus>
     <button class="btn btn-primary" type="submit">Search</button>
     {% if q %}
@@ -45,6 +45,12 @@
         </div>
         {% if episode.description %}
           <div class="human-episode-description">{{ episode.description|truncatechars:320 }}</div>
+        {% endif %}
+        {% if episode.memory_summary %}
+          <div class="human-episode-summary">
+            <strong>Episode summary:</strong>
+            {{ episode.memory_summary|truncatechars:360 }}
+          </div>
         {% endif %}
         <div class="meta">
           Started {{ episode.created_at|date:"Y-m-d H:i" }}
