@@ -64,6 +64,18 @@ def gm_response_contract() -> str:
     )
 
 
+def gm_execution_request() -> str:
+    return (
+        "## EXECUTION REQUEST\n"
+        "The Game Master has been explicitly invoked to produce the next immediate GM beat now. "
+        "Advance the fiction by one immediate beat from the authoritative current state. "
+        "The absence of new canon messages since the previous synchronization does not by itself "
+        "justify WAIT. Use TURN when this beat should be followed by player action, NARRATE when "
+        "the beat should enter canon without immediately opening a player turn, and WAIT only when "
+        "the established fiction specifically requires the GM to take no action at this moment."
+    )
+
+
 def get_active_gm_execution(scene: Scene) -> GameMasterExecution | None:
     return (
         GameMasterExecution.objects.filter(
@@ -562,7 +574,10 @@ def _run_provider_execution(
     try:
         provider_response = get_llm_client().generate(
             system_prompt=system_prompt,
-            messages=messages,
+            messages=[
+                *messages,
+                {"role": "user", "content": gm_execution_request()},
+            ],
             model=model_config.gateway_model,
             temperature=model_config.temperature,
         )
@@ -658,6 +673,8 @@ def _build_manual_chat_prompt(
             + system_prompt
             + "\n\n## CHAT CONTEXT\n"
             + rendered
+            + "\n\n"
+            + gm_execution_request()
             + "\n\n## RESPONSE CONTRACT\n"
             + gm_response_contract()
         )
@@ -704,6 +721,8 @@ def _build_manual_chat_prompt(
         + "\n\n".join(control)
         + "\n\n## NEW CANON SINCE LAST SYNC\n"
         + updates
+        + "\n\n"
+        + gm_execution_request()
         + "\n\n## RESPONSE CONTRACT\n"
         + gm_response_contract()
     )

@@ -185,6 +185,9 @@ def test_api_gm_creates_review_draft_then_turn_with_private_context():
     assert execution.action == GameMasterAction.TURN
     assert not Message.objects.filter(scene=scene).exists()
     assert client.calls[0]["model"] == "gm-model"
+    assert client.calls[0]["messages"][-1]["role"] == "user"
+    assert "## EXECUTION REQUEST" in client.calls[0]["messages"][-1]["content"]
+    assert "does not by itself justify WAIT" in client.calls[0]["messages"][-1]["content"]
 
     gm_engine.publish_gm_execution(execution=execution)
     execution.refresh_from_db()
@@ -259,6 +262,9 @@ def test_manual_chat_gm_builds_bridge_and_imports_draft():
     execution = gm_engine.start_gm_execution(scene=scene)
     assert execution.state == GameMasterExecutionState.WAITING_EXTERNAL
     assert "MRAZ GAME MASTER CHAT BRIDGE" in execution.external_prompt
+    assert "## EXECUTION REQUEST" in execution.external_prompt
+    assert "explicitly invoked to produce the next immediate GM beat now" in execution.external_prompt
+    assert "does not by itself justify WAIT" in execution.external_prompt
     assert "TURN|NARRATE|WAIT" in execution.external_prompt
     assert execution.external_is_bootstrap is True
 
@@ -534,3 +540,5 @@ def test_manual_gm_chat_uses_delta_inside_scene_lineage():
     assert next_execution.external_is_bootstrap is False
     assert "MRAZ GAME MASTER CHAT BRIDGE · DELTA" in next_execution.external_prompt
     assert "Первый beat." in next_execution.external_prompt
+    assert "## EXECUTION REQUEST" in next_execution.external_prompt
+    assert "does not by itself justify WAIT" in next_execution.external_prompt
