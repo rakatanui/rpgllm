@@ -3,6 +3,7 @@ import mimetypes
 import re
 import uuid
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
@@ -503,13 +504,18 @@ def _human_access_ui_context(scene: Scene) -> tuple[dict, dict]:
             player__transport=PlayerTransport.HUMAN,
         ).select_related("player")
     }
-    urls = {
-        player_id: reverse(
+    public_host = getattr(settings, "PUBLIC_PLAYER_HOST", "")
+    urls = {}
+    for player_id, participation in participations.items():
+        path = reverse(
             "human_player_client",
             kwargs={"access_token": participation.human_access_token},
         )
-        for player_id, participation in participations.items()
-    }
+        urls[player_id] = (
+            f"https://{public_host}{path}"
+            if public_host
+            else path
+        )
     return participations, urls
 
 

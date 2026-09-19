@@ -1,0 +1,39 @@
+server {
+    listen 8080;
+    # Empty PUBLIC_PLAYER_HOST intentionally makes nginx -t fail.
+    server_name ${PUBLIC_PLAYER_HOST};
+    server_tokens off;
+
+    # HUMAN portrait uploads are capped at 5 MB by Django.
+    client_max_body_size 6m;
+
+    # Public player application. Cloudflare normally derives the origin Host
+    # from the service URL, so force the configured public hostname before
+    # forwarding to Django.
+    location ^~ /play/ {
+        proxy_pass http://web:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host ${PUBLIC_PLAYER_HOST};
+        proxy_set_header X-Forwarded-Host ${PUBLIC_PLAYER_HOST};
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 75s;
+    }
+
+    # The player client currently uses WhiteNoise-backed static assets.
+    # Static files contain no campaign/player secrets.
+    location ^~ /static/rpg/ {
+        proxy_pass http://web:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host ${PUBLIC_PLAYER_HOST};
+        proxy_set_header X-Forwarded-Host ${PUBLIC_PLAYER_HOST};
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # Never expose the GM workbench, Django Admin, debug routes, or health
+    # endpoints through the Internet-facing player edge.
+    location / {
+        return 404;
+    }
+}
