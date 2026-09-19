@@ -546,6 +546,19 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
         seen_private.add(player_id)
         private.append({"player_id": player_id, "content": content})
 
+    scene_transition_raw = obj.get("scene_transition", None)
+    scene_transition = None
+    if scene_transition_raw not in (None, {}):
+        if not isinstance(scene_transition_raw, dict):
+            raise ValidationError('GM field "scene_transition" must be null or an object.')
+        name = str(scene_transition_raw.get("name", "") or "").strip()
+        if not name:
+            raise ValidationError('GM scene_transition requires a non-empty "name".')
+        if len(name) > 200:
+            raise ValidationError("GM scene_transition name is too long.")
+        if name != scene.name:
+            scene_transition = {"name": name}
+
     targets_raw = obj.get("turn_targets", [])
     if targets_raw is None:
         targets_raw = []
@@ -564,6 +577,7 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
         public=public,
         private=private,
         turn_targets=targets,
+        scene_transition=scene_transition,
     )
     _validate_gm_response(response, scene=scene)
     return response
@@ -590,9 +604,14 @@ def _validate_gm_response(response: GameMasterResponse, *, scene: Scene) -> None
         )
 
     if response.action == GameMasterAction.WAIT:
-        if response.public or response.private or response.turn_targets:
+        if (
+            response.public
+            or response.private
+            or response.turn_targets
+            or response.scene_transition
+        ):
             raise ValidationError(
-                "WAIT must have empty public, private, and turn_targets fields."
+                "WAIT must have empty public, private, turn_targets, and scene_transition fields."
             )
         return
 
