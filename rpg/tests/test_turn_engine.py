@@ -1578,7 +1578,7 @@ def test_pending_manual_chat_blocks_overlapping_model_turns(mock_backend):
     )
     assert first.turn.executions.get(player=lucien).state == ExecutionState.WAITING_EXTERNAL
 
-    with pytest.raises(ValidationError, match="waiting for a pasted response"):
+    with pytest.raises(ValidationError, match="unfinished external/human"):
         turn_engine.start_turn(
             scene=scene,
             gm_message_text="second",
