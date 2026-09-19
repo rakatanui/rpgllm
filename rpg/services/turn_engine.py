@@ -1009,82 +1009,102 @@ def submit_external_response(
     raw_text: str,
 ) -> TurnResult:
     raw = (raw_text or "").strip()
+    rejection: ValidationError | None = None
+    message: Message | None = None
 
-    execution = (
-        TurnExecution.objects.select_related("turn__scene__campaign", "player")
-        .get(pk=execution.pk)
-    )
-    turn = execution.turn
-    scene = turn.scene
-    player = execution.player
+    with transaction.atomic():
+        execution = (
+            TurnExecution.objects.select_for_update()
+            .select_related("turn__scene__campaign", "player")
+            .get(pk=execution.pk)
+        )
+        turn = execution.turn
+        scene = turn.scene
+        player = execution.player
 
-    if scene.is_closed:
-        raise ValidationError("Cannot import an external response into a closed scene.")
-    if execution.transport != PlayerTransport.MANUAL_CHAT:
-        raise ValidationError("Execution is not a manual-chat execution.")
-    if execution.state != ExecutionState.WAITING_EXTERNAL:
-        raise ValidationError("Execution is not waiting for an external response.")
-    if not raw:
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            error="External response cannot be empty.",
-            raw_response="",
-        )
-        _set_player_status(player, PlayerStatus.WAITING_EXTERNAL)
-        raise ValidationError("External response cannot be empty.")
+        if scene.is_closed:
+            raise ValidationError("Cannot import an external response into a closed scene.")
+        if execution.transport != PlayerTransport.MANUAL_CHAT:
+            raise ValidationError("Execution is not a manual-chat execution.")
+        if execution.state != ExecutionState.WAITING_EXTERNAL:
+            raise ValidationError("Execution is not waiting for an external response.")
 
-    out_of_turn = (
-        turn.mode == TurnMode.ROUND
-        and execution.player_id != turn.active_player_id_snapshot
-    )
+        if not raw:
+            execution.error = "External response cannot be empty."
+            execution.raw_response = ""
+            execution.save(update_fields=["error", "raw_response", "updated_at"])
+            _set_player_status(player, PlayerStatus.WAITING_EXTERNAL)
+            rejection = ValidationError("External response cannot be empty.")
+        else:
+            out_of_turn = (
+                turn.mode == TurnMode.ROUND
+                and execution.player_id != turn.active_player_id_snapshot
+            )
+            try:
+                response = parse_structured_response(raw)
+                _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
+                _validate_response_discipline(
+                    turn=turn,
+                    out_of_turn=out_of_turn,
+                    response=response,
+                )
+                _require_public_body(response)
 
-    try:
-        response = parse_structured_response(raw)
-        _validate_action(turn=turn, out_of_turn=out_of_turn, response=response)
-        _validate_response_discipline(
-            turn=turn,
-            out_of_turn=out_of_turn,
-            response=response,
-        )
-        _require_public_body(response)
+                message = _persist_player_response(
+                    execution=execution,
+                    response=response,
+                )
+                created_ids = list(
+                    Message.objects.filter(execution=execution)
+                    .order_by("created_at", "pk")
+                    .values_list("pk", flat=True)
+                )
+                synced_ids = list(dict.fromkeys([
+                    *execution.history_message_ids,
+                    *created_ids,
+                ]))
+                execution.state = ExecutionState.COMPLETED
+                execution.action_type = response.action_type
+                execution.error = ""
+                execution.raw_response = raw
+                execution.external_synced_message_ids = synced_ids
+                execution.save(
+                    update_fields=[
+                        "state",
+                        "action_type",
+                        "error",
+                        "raw_response",
+                        "external_synced_message_ids",
+                        "updated_at",
+                    ]
+                )
+                if (
+                    execution.external_context_mode == ManualChatContextMode.CHAT_MEMORY
+                    and execution.external_is_bootstrap
+                ):
+                    Player.objects.filter(pk=player.pk).update(
+                        manual_chat_initialized=True
+                    )
+                    player.manual_chat_initialized = True
+                _set_player_status(player, PlayerStatus.IDLE)
+            except Exception as exc:
+                execution.state = ExecutionState.WAITING_EXTERNAL
+                execution.error = str(exc)
+                execution.raw_response = raw
+                execution.save(
+                    update_fields=["state", "error", "raw_response", "updated_at"]
+                )
+                _set_player_status(player, PlayerStatus.WAITING_EXTERNAL)
+                rejection = (
+                    exc
+                    if isinstance(exc, ValidationError)
+                    else ValidationError(f"External response rejected: {exc}")
+                )
 
-        message = _persist_player_response(
-            execution=execution,
-            response=response,
-        )
-        created_ids = list(
-            Message.objects.filter(execution=execution)
-            .order_by("created_at", "pk")
-            .values_list("pk", flat=True)
-        )
-        synced_ids = list(dict.fromkeys([
-            *execution.history_message_ids,
-            *created_ids,
-        ]))
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            state=ExecutionState.COMPLETED,
-            action_type=response.action_type,
-            error="",
-            raw_response=raw,
-            external_synced_message_ids=synced_ids,
-        )
-        if (
-            execution.external_context_mode == ManualChatContextMode.CHAT_MEMORY
-            and execution.external_is_bootstrap
-        ):
-            Player.objects.filter(pk=player.pk).update(manual_chat_initialized=True)
-            player.manual_chat_initialized = True
-        _set_player_status(player, PlayerStatus.IDLE)
-    except Exception as exc:
-        TurnExecution.objects.filter(pk=execution.pk).update(
-            state=ExecutionState.WAITING_EXTERNAL,
-            error=str(exc),
-            raw_response=raw,
-        )
-        _set_player_status(player, PlayerStatus.WAITING_EXTERNAL)
-        if isinstance(exc, ValidationError):
-            raise
-        raise ValidationError(f"External response rejected: {exc}") from exc
+    if rejection is not None:
+        raise rejection
 
+    turn = Turn.objects.get(pk=execution.turn_id)
     _refresh_turn_state(turn)
     turn.refresh_from_db()
     if (
@@ -1094,7 +1114,7 @@ def submit_external_response(
     ):
         _advance_round_once(turn)
         turn.refresh_from_db()
-    return TurnResult(turn, [message])
+    return TurnResult(turn, [message] if message is not None else [])
 
 
 def _provider_generate(client, *, system_prompt, messages, model, temperature):
