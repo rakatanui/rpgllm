@@ -2429,6 +2429,43 @@ def test_human_client_renders_character_card_and_episode_search():
 
 
 @pytest.mark.django_db
+def test_human_client_puts_gameplay_before_reference_and_collapses_character_sections():
+    campaign = make_campaign()
+    human = make_player(
+        campaign,
+        "Живой",
+        transport=PlayerTransport.HUMAN,
+        characteristics="Сила 2",
+        abilities="Видит следы магии",
+        memory_summary="Помнит старый вокзал.",
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    html = Client().get(
+        _human_url("human_player_client", scene, human)
+    ).content.decode()
+
+    primary_index = html.index("human-character-primary-card")
+    gameplay_index = html.index('id="human-player-panel"')
+    reference_index = html.index("human-character-reference")
+
+    assert primary_index < gameplay_index < reference_index
+    assert not re.search(
+        r"<details[^>]*\bopen\b[^>]*>\s*<summary>Characteristics</summary>",
+        html,
+    )
+    assert not re.search(
+        r"<details[^>]*\bopen\b[^>]*>\s*<summary>Abilities</summary>",
+        html,
+    )
+    assert not re.search(
+        r"<details[^>]*\bopen\b[^>]*>\s*<summary>Memory summary</summary>",
+        html,
+    )
+    assert "grid-template-columns:112px minmax(0,1fr)" in html
+
+
+@pytest.mark.django_db
 def test_human_can_upload_replace_and_remove_character_portrait(tmp_path):
     campaign = make_campaign()
     human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
