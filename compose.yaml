@@ -92,21 +92,12 @@ services:
     environment:
       PUBLIC_PLAYER_HOST: ${PUBLIC_PLAYER_HOST:-}
       # Only substitute our deployment variable; leave nginx variables intact.
-      NGINX_ENVSUBST_FILTER: ^PUBLIC_PLAYER_HOST$
+      NGINX_ENVSUBST_FILTER: ^PUBLIC_PLAYER_HOST
     depends_on:
       web:
         condition: service_healthy
     volumes:
       - ./deploy/player-edge.nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
-    command:
-      - /bin/sh
-      - -c
-      - |
-        test -n "${PUBLIC_PLAYER_HOST:-}" || {
-          echo "PUBLIC_PLAYER_HOST is required for the public-player profile" >&2
-          exit 1
-        }
-        exec nginx -g 'daemon off;'
     healthcheck:
       test: ["CMD", "nginx", "-t"]
       interval: 10s
