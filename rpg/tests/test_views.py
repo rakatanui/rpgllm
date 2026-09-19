@@ -1632,6 +1632,11 @@ def test_manual_chat_player_card_shows_copy_open_and_paste_controls():
     assert "Copy prompt" in html
     assert "Open chat" in html
     assert "https://chatgpt.com/c/example" in html
+    assert "Send via browser bridge" in html
+    assert 'data-mraz-bridge-kind="player"' in html
+    assert f'data-mraz-bridge-execution="{execution.pk}"' in html
+    assert "data-mraz-bridge-prompt" in html
+    assert "data-mraz-bridge-response-form" in html
     assert "Accept pasted response" in html
     assert reverse(
         "submit_external_response",
