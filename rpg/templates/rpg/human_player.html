@@ -1,5 +1,9 @@
 {% extends "rpg/base.html" %}
+{% load static %}
 {% block title %}{{ player.display_name }} · {{ scene.name }}{% endblock %}
+{% block favicon %}
+<link rel="icon" type="image/svg+xml" href="{% static 'rpg/favicon-player.svg' %}">
+{% endblock %}
 {% block body_class %}human-player-page{% endblock %}
 {% block nav %}{% endblock %}
 {% block meta %}Player client{% endblock %}
