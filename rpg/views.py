@@ -590,6 +590,7 @@ def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
         if waiting is not None
         else []
     )
+    active_gm_execution = gm_engine.get_active_gm_execution(scene)
     is_active_round = (
         scene.mode == TurnMode.ROUND
         and _active_round_player_id(scene) == player.pk
@@ -606,6 +607,7 @@ def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
         "private_messages": private_messages,
         "player_color": _player_color_classes(_scene_players(scene)).get(player.pk, ""),
         "waiting_execution": waiting,
+        "gm_active_execution": active_gm_execution,
         "allowed_actions": allowed_actions,
         "is_active_round": is_active_round,
         "access_token": participation.human_access_token if participation else None,
@@ -658,12 +660,17 @@ def submit_human_response(request, access_token, execution_id):
         transport=PlayerTransport.HUMAN,
     )
     try:
-        turn_engine.submit_human_response(
+        result = turn_engine.submit_human_response(
             execution=execution,
             action_type=request.POST.get("action_type") or "",
             public_text=request.POST.get("content") or "",
             private_to_gm=request.POST.get("private_to_gm") or "",
         )
+        if (
+            result.turn.state == TurnState.COMPLETED
+            and not result.turn.is_private
+        ):
+            gm_engine.maybe_start_auto_gm(scene=scene)
     except ValidationError:
         # Keep the player on the client page; the execution stores the rejection
         # and the polling panel displays it above the preserved draft.
