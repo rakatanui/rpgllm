@@ -1451,3 +1451,35 @@ def test_pending_manual_chat_blocks_overlapping_model_turns(mock_backend):
         )
 
     assert scene.turns.count() == 1
+
+
+
+@pytest.mark.django_db
+def test_undo_manual_chat_memory_turn_forces_fresh_bootstrap(mock_backend):
+    campaign = make_campaign()
+    lucien = make_player(
+        campaign,
+        "Lucien",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[lucien])
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[lucien],
+    )
+    execution = result.turn.executions.get(player=lucien)
+    turn_engine.submit_external_response(
+        execution=execution,
+        raw_text='{"action_type":"ACT","public":"Done.","private_to_gm":""}',
+    )
+
+    lucien.refresh_from_db()
+    assert lucien.manual_chat_initialized is True
+
+    turn_engine.undo_latest_public_turn(scene)
+
+    lucien.refresh_from_db()
+    assert lucien.manual_chat_initialized is False
