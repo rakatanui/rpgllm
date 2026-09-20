@@ -132,14 +132,23 @@ def _latest_player_knowledge_lookup(scene: Scene) -> Message | None:
 
 
 def _retrieval_terms(text: str) -> list[str]:
-    terms: list[str] = []
+    raw_terms: list[str] = []
     seen: set[str] = set()
     for token in _RETRIEVAL_TOKEN_RE.findall((text or "").lower()):
         if token in _RETRIEVAL_STOPWORDS or token in seen:
             continue
         seen.add(token)
-        terms.append(token)
-    return terms
+        raw_terms.append(token)
+
+    # Prefer entity/content words over generic lookup verbs and source nouns so
+    # "ищет адрес Астара" finds Astar material rather than every address-like entry.
+    specific = [
+        token
+        for token in raw_terms
+        if not any(stem in token for stem in _KNOWLEDGE_LOOKUP_VERB_STEMS)
+        and not any(stem in token for stem in _KNOWLEDGE_SOURCE_STEMS)
+    ]
+    return specific or raw_terms
 
 
 def _retrieval_score(text: str, terms: list[str]) -> int:
