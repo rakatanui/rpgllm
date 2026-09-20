@@ -454,6 +454,11 @@ def test_model_gm_scene_transition_updates_live_scene_label_and_keeps_turn_open(
     player_execution = execution.published_turn.executions.get(player=human)
     assert player_execution.state == ExecutionState.WAITING_HUMAN
 
+    config = GameMasterConfig.objects.get(campaign=campaign)
+    refreshed_context = build_gm_context(scene=scene, config=config)
+    assert "Scene: Гданьск - Машина у кафе" in refreshed_context.system_prompt
+    assert "Scene: Гданьск - Кафе\n" not in refreshed_context.system_prompt
+
 
 @pytest.mark.django_db
 def test_wait_cannot_hide_a_scene_transition():
@@ -676,6 +681,61 @@ def test_api_gm_can_auto_publish_when_review_is_disabled():
         visibility=Visibility.PUBLIC,
         content="Автоматически опубликованный мастерский beat.",
     ).exists()
+
+
+@pytest.mark.django_db
+def test_manual_chat_delta_repeats_focused_authoritative_retrieval():
+    campaign = make_campaign()
+    player = make_player(campaign, "Баальтаз")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
+    config = GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_label="Persistent GM",
+        manual_chat_url="https://example.test/gm",
+    )
+
+    first = gm_engine.start_gm_execution(scene=scene)
+    gm_engine.submit_external_gm_response(
+        execution=first,
+        raw_text=json.dumps(
+            {
+                "action": "NARRATE",
+                "public": "Баальтаз остаётся у стола.",
+                "private": [],
+                "turn_targets": [],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    gm_engine.publish_gm_execution(execution=first)
+
+    LoreEntry.objects.create(
+        campaign=campaign,
+        title="Нехеш / Мацей Войда",
+        category="Target dossier",
+        content="В досье указан адрес: ul. Na Zaspę 19, Gdańsk.",
+        enabled=True,
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=player,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content="Баальтаз открывает досье Нехеша и проверяет его адрес.",
+    )
+
+    second = gm_engine.start_gm_execution(scene=scene)
+
+    assert second.external_is_bootstrap is False
+    assert "MRAZ GAME MASTER CHAT BRIDGE · DELTA" in second.external_prompt
+    assert "AUTHORITATIVE KNOWLEDGE RETRIEVAL" in second.external_prompt
+    assert "Lore: Нехеш / Мацей Войда" in second.external_prompt
+    assert "ul. Na Zaspę 19, Gdańsk" in second.external_prompt
 
 
 @pytest.mark.django_db
