@@ -167,6 +167,13 @@
           {% endif %}
         </div>
 
+        {% if gm_execution.scene_transition.name %}
+          <div class="turn-banner">
+            Scene transition on publish:
+            <strong>{{ scene.name }}</strong> → <strong>{{ gm_execution.scene_transition.name }}</strong>
+          </div>
+        {% endif %}
+
         <label>Public GM beat</label>
         <textarea name="public"
                   rows="8"

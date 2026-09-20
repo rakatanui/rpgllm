@@ -33,7 +33,11 @@ from rpg.models import (
 )
 from rpg.services import turn_engine
 from rpg.services.context_builder import get_scene_lineage
-from rpg.services.gm_context import build_gm_context
+from rpg.services.gm_context import (
+    build_gm_authoritative_fact_corpus,
+    build_gm_context,
+    build_gm_knowledge_retrieval,
+)
 from rpg.services.llm import get_llm_client
 
 
@@ -44,6 +48,7 @@ class GameMasterResponse:
     public: str
     private: list[dict]
     turn_targets: list[int]
+    scene_transition: dict | None = None
 
 
 ACTIVE_GM_STATES = {
@@ -54,16 +59,81 @@ ACTIVE_GM_STATES = {
 }
 
 
+_PREEXISTING_EXACT_FACT_PATTERNS = (
+    re.compile(
+        r"\b(?:ul\.?|al\.?|aleja|plac|pl\.?|street|st\.?|road|rd\.?|"
+        r"улиц\w*|ул\.?|проспект\w*|пр-т|переул\w*|пер\.?)\s+"
+        r"[A-Za-zА-Яа-яЁёÀ-ž'’.-]+(?:\s+[A-Za-zА-Яа-яЁёÀ-ž'’.-]+){0,5}\s+"
+        r"\d+[A-Za-zА-Яа-я]?(?:[/-]\d+)?",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(r"(?<!\w)\+?\d[\d\s()\-]{7,}\d(?!\w)"),
+    re.compile(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b"),
+    re.compile(
+        r"\b(?:парол\w*|код\w*|номер\s+дела|регистрацион\w*\s+номер|"
+        r"case\s*(?:no\.?|number)?)\s*[:#№-]?\s*"
+        r"[A-ZА-Я0-9][A-ZА-Я0-9._/-]{3,}\b",
+        flags=re.IGNORECASE,
+    ),
+)
+
+
+def _normalize_fact_literal(text: str) -> str:
+    normalized = (text or "").casefold().replace("ё", "е")
+    normalized = re.sub(r"[\s,;:()]+", " ", normalized)
+    return normalized.strip(" .")
+
+
+def _validate_existing_source_exact_literals(
+    response: GameMasterResponse,
+    *,
+    scene: Scene,
+) -> None:
+    """Reject machine-detectable exact facts invented during an existing-source lookup.
+
+    Prompt rules cover the general semantic case. This conservative hard guard catches
+    the most damaging structured literals (addresses, phones, dates, codes) before they
+    cross the publication/canon boundary.
+    """
+    retrieval = build_gm_knowledge_retrieval(scene=scene)
+    if not retrieval:
+        return
+
+    corpus = _normalize_fact_literal(build_gm_authoritative_fact_corpus(scene=scene))
+    padded_corpus = f" {corpus} "
+    response_text = "\n".join(
+        [
+            response.public,
+            *[
+                str(item.get("content", "") or "")
+                for item in response.private
+            ],
+        ]
+    )
+    for pattern in _PREEXISTING_EXACT_FACT_PATTERNS:
+        for match in pattern.finditer(response_text):
+            literal = match.group(0).strip()
+            normalized = _normalize_fact_literal(literal)
+            if normalized and f" {normalized} " not in padded_corpus:
+                raise ValidationError(
+                    "GM response introduced an unsupported exact datum while resolving "
+                    f"an existing-source lookup: {literal!r}. Add it to authoritative "
+                    "lore/memory/history first or answer that the datum is unavailable."
+                )
+
+
 def gm_response_contract() -> str:
     return (
         'Return ONLY one JSON object: '
         '{"action":"TURN|NARRATE|WAIT","public":"...",'
-        '"private":[{"player_id":123,"content":"..."}],"turn_targets":[123]}. '
+        '"private":[{"player_id":123,"content":"..."}],"turn_targets":[123],'
+        '"scene_transition":null}. '
         "TURN publishes the GM beat and opens a normal player turn. NARRATE publishes "
         "without calling players. WAIT publishes nothing. Player references must use the "
-        "numeric player_id values from the application context."
+        "numeric player_id values from the application context. scene_transition must be "
+        "null unless movement into a distinct location makes the live Scene label materially "
+        'false; then use {"name":"New scene label"}.'
     )
-
 
 def gm_execution_request(scene: Scene) -> str:
     text = (
@@ -73,7 +143,20 @@ def gm_execution_request(scene: Scene) -> str:
         "The absence of new canon messages since the previous synchronization does not by itself "
         "justify WAIT. Use TURN when this beat should be followed by player action, NARRATE when "
         "the beat should enter canon without immediately opening a player turn, and WAIT only when "
-        "the established fiction specifically requires the GM to take no action at this moment."
+        "the established fiction specifically requires the GM to take no action at this moment.\n\n"
+        "AUTHORITATIVE-SOURCE GUARD: if the player consults or remembers an already-existing "
+        "document, dossier, briefing, phone, correspondence, log, database, memory card, memory, "
+        "prior event, or other established source/object, never invent missing pre-existing content. "
+        "Exact facts such as addresses, names, phone/registration numbers, dates, message contents, "
+        "passwords, codes, case numbers, prior links/events, and existing-object properties require "
+        "support in authoritative application context. If support is absent, say the information is "
+        "unknown/unavailable instead of completing the gap with plausible fiction. This does not "
+        "restrict genuinely new present/future world facts that arise now.\n\n"
+        "NPC CAUSALITY: do not create suspicious, dramatic, or plot-significant NPC behavior merely "
+        "because the player is nearby or because a GM beat is required. Such behavior needs support "
+        "in NPC goals/knowledge, scene state, an ongoing event, or a direct consequence. Ordinary "
+        "background life remains allowed. Do NOT use this constraint as a reason to prefer WAIT when "
+        "there is an immediate observable consequence or a natural beat the player can react to."
     )
 
     participants = list(
@@ -92,6 +175,9 @@ def gm_execution_request(scene: Scene) -> str:
             f"you must use TURN with turn_targets=[{player_id}]. "
             "Use NARRATE only when you intentionally want no immediate player response."
         )
+    retrieval = build_gm_knowledge_retrieval(scene=scene)
+    if retrieval:
+        text += "\n\n" + retrieval
     return text
 
 
@@ -120,6 +206,7 @@ def _normalize_model_gm_response(
         public=response.public,
         private=response.private,
         turn_targets=[participants[0].player_id],
+        scene_transition=response.scene_transition,
     )
     _validate_gm_response(normalized, scene=scene)
     return normalized
@@ -322,6 +409,7 @@ def submit_external_gm_response(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "raw_response",
                 "external_synced_message_ids",
@@ -387,6 +475,7 @@ def publish_gm_execution(
         locked.public_draft = response.public
         locked.private_drafts = response.private
         locked.turn_targets = response.turn_targets
+        locked.scene_transition = response.scene_transition or {}
         locked.error = ""
         locked.save(
             update_fields=[
@@ -395,18 +484,30 @@ def publish_gm_execution(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "updated_at",
             ]
         )
 
     published_turn = None
+    original_scene_name = scene.name
+    transitioned = False
     try:
         private_map = {
             int(item["player_id"]): item["content"]
             for item in response.private
             if item.get("content", "").strip()
         }
+
+        if response.scene_transition:
+            new_name = response.scene_transition["name"]
+            Scene.objects.filter(pk=scene.pk).update(
+                name=new_name,
+                updated_at=timezone.now(),
+            )
+            scene.name = new_name
+            transitioned = True
 
         if response.action == GameMasterAction.TURN:
             selected_players = _players_from_ids(scene, response.turn_targets)
@@ -443,6 +544,12 @@ def publish_gm_execution(
             raise ValidationError(f"Unsupported GM action: {response.action}")
 
     except Exception as exc:
+        if transitioned:
+            Scene.objects.filter(pk=scene.pk).update(
+                name=original_scene_name,
+                updated_at=timezone.now(),
+            )
+            scene.name = original_scene_name
         GameMasterExecution.objects.filter(pk=execution.pk).update(
             state=GameMasterExecutionState.DRAFT,
             error=str(exc),
@@ -526,6 +633,19 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
         seen_private.add(player_id)
         private.append({"player_id": player_id, "content": content})
 
+    scene_transition_raw = obj.get("scene_transition", None)
+    scene_transition = None
+    if scene_transition_raw not in (None, {}):
+        if not isinstance(scene_transition_raw, dict):
+            raise ValidationError('GM field "scene_transition" must be null or an object.')
+        name = str(scene_transition_raw.get("name", "") or "").strip()
+        if not name:
+            raise ValidationError('GM scene_transition requires a non-empty "name".')
+        if len(name) > 200:
+            raise ValidationError("GM scene_transition name is too long.")
+        if name != scene.name:
+            scene_transition = {"name": name}
+
     targets_raw = obj.get("turn_targets", [])
     if targets_raw is None:
         targets_raw = []
@@ -544,8 +664,10 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
         public=public,
         private=private,
         turn_targets=targets,
+        scene_transition=scene_transition,
     )
     _validate_gm_response(response, scene=scene)
+    _validate_existing_source_exact_literals(response, scene=scene)
     return response
 
 
@@ -570,9 +692,14 @@ def _validate_gm_response(response: GameMasterResponse, *, scene: Scene) -> None
         )
 
     if response.action == GameMasterAction.WAIT:
-        if response.public or response.private or response.turn_targets:
+        if (
+            response.public
+            or response.private
+            or response.turn_targets
+            or response.scene_transition
+        ):
             raise ValidationError(
-                "WAIT must have empty public, private, and turn_targets fields."
+                "WAIT must have empty public, private, turn_targets, and scene_transition fields."
             )
         return
 
@@ -621,6 +748,7 @@ def _response_from_execution(
         turn_targets=list(
             turn_target_ids if turn_target_ids is not None else execution.turn_targets or []
         ),
+        scene_transition=(execution.scene_transition or None),
     )
 
 
@@ -633,6 +761,7 @@ def _apply_response_to_execution(
     execution.public_draft = response.public
     execution.private_drafts = response.private
     execution.turn_targets = response.turn_targets
+    execution.scene_transition = response.scene_transition or {}
     execution.error = ""
     execution.raw_response = response.raw_text
 
@@ -688,6 +817,7 @@ def _run_provider_execution(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "raw_response",
                 "latency_ms",
