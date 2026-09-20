@@ -1,5 +1,6 @@
 """View-level tests for scene message relationships."""
 import base64
+import re
 from unittest.mock import patch
 
 import pytest
