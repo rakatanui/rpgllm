@@ -194,6 +194,34 @@ def test_existing_source_lookup_retrieves_matching_lore_exact_fact():
 
 
 @pytest.mark.django_db
+def test_existing_source_retrieval_does_not_stick_after_gm_has_answered():
+    campaign = make_campaign()
+    human = make_player(campaign, "Баальтаз", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content="Открывает досье и проверяет адрес Нехеша.",
+    )
+
+    assert "AUTHORITATIVE KNOWLEDGE RETRIEVAL" in gm_engine.gm_execution_request(scene)
+
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        visibility=Visibility.PUBLIC,
+        content="В доступном досье адрес не указан.",
+    )
+
+    assert "AUTHORITATIVE KNOWLEDGE RETRIEVAL" not in gm_engine.gm_execution_request(scene)
+
+
+@pytest.mark.django_db
 def test_gm_prompt_requires_causal_support_for_plot_significant_npc_actions():
     campaign = make_campaign()
     human = make_player(campaign, "Human", transport=PlayerTransport.HUMAN)
