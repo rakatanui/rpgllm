@@ -100,6 +100,7 @@ def _validate_existing_source_exact_literals(
         return
 
     corpus = _normalize_fact_literal(build_gm_authoritative_fact_corpus(scene=scene))
+    padded_corpus = f" {corpus} "
     response_text = "\n".join(
         [
             response.public,
@@ -113,7 +114,7 @@ def _validate_existing_source_exact_literals(
         for match in pattern.finditer(response_text):
             literal = match.group(0).strip()
             normalized = _normalize_fact_literal(literal)
-            if normalized and normalized not in corpus:
+            if normalized and f" {normalized} " not in padded_corpus:
                 raise ValidationError(
                     "GM response introduced an unsupported exact datum while resolving "
                     f"an existing-source lookup: {literal!r}. Add it to authoritative "
