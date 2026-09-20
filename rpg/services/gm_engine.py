@@ -490,12 +490,23 @@ def publish_gm_execution(
         )
 
     published_turn = None
+    original_scene_name = scene.name
+    transitioned = False
     try:
         private_map = {
             int(item["player_id"]): item["content"]
             for item in response.private
             if item.get("content", "").strip()
         }
+
+        if response.scene_transition:
+            new_name = response.scene_transition["name"]
+            Scene.objects.filter(pk=scene.pk).update(
+                name=new_name,
+                updated_at=timezone.now(),
+            )
+            scene.name = new_name
+            transitioned = True
 
         if response.action == GameMasterAction.TURN:
             selected_players = _players_from_ids(scene, response.turn_targets)
@@ -531,15 +542,13 @@ def publish_gm_execution(
         elif response.action != GameMasterAction.WAIT:
             raise ValidationError(f"Unsupported GM action: {response.action}")
 
-        if response.scene_transition:
-            new_name = response.scene_transition["name"]
+    except Exception as exc:
+        if transitioned:
             Scene.objects.filter(pk=scene.pk).update(
-                name=new_name,
+                name=original_scene_name,
                 updated_at=timezone.now(),
             )
-            scene.name = new_name
-
-    except Exception as exc:
+            scene.name = original_scene_name
         GameMasterExecution.objects.filter(pk=execution.pk).update(
             state=GameMasterExecutionState.DRAFT,
             error=str(exc),
