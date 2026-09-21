@@ -95,6 +95,12 @@
 {% block scripts %}
 <script>
 const humanClientStoragePrefix = "mraz.human." + window.location.pathname;
+const humanPlayerId = Number("{{ player.pk }}");
+const humanTurnStorageKey = "mraz.human.turn." + humanPlayerId;
+const humanTurnSignalChannel =
+  "BroadcastChannel" in window ? new BroadcastChannel("mraz-human-turns-v1") : null;
+const humanBaseTitle = document.title;
+let humanLastTurnSignalExecution = 0;
 const humanSwapState = new Map();
 const humanFieldState = new Map();
 const humanDetailsState = new Map();
@@ -141,7 +147,30 @@ function humanSetWorkspace(name) {
     workspace.setAttribute("aria-hidden", active ? "false" : "true");
   });
 
-  document.querySelectorAll("[data-human-workspace-target]").forEach((button) => {
+  if (humanTurnSignalChannel) {
+  humanTurnSignalChannel.addEventListener("message", (event) => {
+    humanHandleTurnSignal(event.data);
+  });
+}
+
+window.addEventListener("storage", (event) => {
+  if (event.key !== humanTurnStorageKey || !event.newValue) return;
+  try {
+    humanHandleTurnSignal(JSON.parse(event.newValue));
+  } catch (error) {
+    console.warn("Could not parse human turn signal", error);
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) humanPollAll(true);
+});
+
+window.addEventListener("focus", () => {
+  humanPollAll(true);
+});
+
+document.querySelectorAll("[data-human-workspace-target]").forEach((button) => {
     const active = button.dataset.humanWorkspaceTarget === name;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", active ? "true" : "false");
@@ -370,26 +399,78 @@ function humanRestoreRegion(regionId) {
   if (regionId === "human-scene-live") humanUpdateWaitingWorkspace();
 }
 
+function humanCurrentWaitingExecutionId() {
+  return Number(
+    document.getElementById("human-scene-live")?.dataset.waitingExecutionId || 0
+  );
+}
+
 function humanUpdateWaitingWorkspace() {
-  const marker = document.getElementById("human-scene-live")?.dataset.waitingWorkspace || "";
+  const live = document.getElementById("human-scene-live");
+  const marker = live?.dataset.waitingWorkspace || "";
+  const waitingExecutionId = Number(live?.dataset.waitingExecutionId || 0);
+
   document.querySelectorAll("[data-human-workspace-target]").forEach((button) => {
     button.classList.toggle(
       "needs-response",
       Boolean(marker) && button.dataset.humanWorkspaceTarget === marker
     );
   });
+
+  document.title = marker
+    ? "● YOUR TURN · " + humanBaseTitle
+    : humanBaseTitle;
+
+  if (waitingExecutionId) {
+    humanLastTurnSignalExecution = Math.max(
+      humanLastTurnSignalExecution,
+      waitingExecutionId
+    );
+  }
 }
 
-function humanPollRegion(id, eventName) {
+function humanPollRegion(id, eventName, force = false) {
   const region = document.getElementById(id);
-  if (!region || humanPollInFlight.has(id) || humanRegionIsEditing(region)) return;
+  if (
+    !region ||
+    humanPollInFlight.has(id) ||
+    (!force && humanRegionIsEditing(region))
+  ) {
+    return;
+  }
   humanPollInFlight.add(id);
   htmx.trigger(region, eventName);
 }
 
-function humanPollAll() {
-  humanPollRegion("human-scene-live", "human-scene-poll");
-  humanPollRegion("human-private-live", "human-private-poll");
+function humanPollAll(force = false) {
+  humanPollRegion("human-scene-live", "human-scene-poll", force);
+  humanPollRegion("human-private-live", "human-private-poll", force);
+}
+
+function humanHandleTurnSignal(payload) {
+  if (!payload || payload.type !== "human-turn") return;
+  if (Number(payload.playerId || 0) !== humanPlayerId) return;
+
+  const executionId = Number(payload.executionId || 0);
+  if (!executionId) return;
+
+  const currentExecutionId = humanCurrentWaitingExecutionId();
+  if (
+    executionId === currentExecutionId &&
+    executionId <= humanLastTurnSignalExecution
+  ) {
+    humanUpdateWaitingWorkspace();
+    return;
+  }
+
+  humanLastTurnSignalExecution = executionId;
+  document.title = "● TURN UPDATE · " + humanBaseTitle;
+
+  if (window.htmx) {
+    humanPollAll(true);
+  } else {
+    window.location.reload();
+  }
 }
 
 document.querySelectorAll("[data-human-workspace-target]").forEach((button) => {
@@ -470,6 +551,16 @@ const initialWorkspace =
   sessionStorage.getItem(humanClientStoragePrefix + ".workspace") || "scene";
 humanSetWorkspace(initialWorkspace);
 humanUpdateWaitingWorkspace();
-window.setInterval(humanPollAll, 2000);
+
+try {
+  const storedTurnSignal = localStorage.getItem(humanTurnStorageKey);
+  if (storedTurnSignal) {
+    humanHandleTurnSignal(JSON.parse(storedTurnSignal));
+  }
+} catch (error) {
+  console.warn("Could not restore human turn signal", error);
+}
+
+window.setInterval(() => humanPollAll(false), 2000);
 </script>
 {% endblock %}
