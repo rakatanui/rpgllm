@@ -431,7 +431,7 @@ def test_model_gm_narrate_becomes_turn_for_single_human_in_manual_scene():
 
 
 @pytest.mark.django_db
-def test_model_gm_scene_transition_updates_live_scene_label_and_keeps_turn_open():
+def test_model_gm_scene_transition_updates_live_scene_state_and_keeps_turn_open():
     campaign = make_campaign()
     model = make_model("Transition GM", gateway_model="transition-gm")
     human = make_player(
@@ -444,6 +444,8 @@ def test_model_gm_scene_transition_updates_live_scene_label_and_keeps_turn_open(
         name="Гданьск - Кафе",
         mode=TurnMode.MANUAL,
         participants=[human],
+        description="Баальтаз сидит в кафе у окна.",
+        memory_summary="Текущая сцена происходит внутри кафе.",
     )
     GameMasterConfig.objects.create(
         campaign=campaign,
@@ -452,13 +454,24 @@ def test_model_gm_scene_transition_updates_live_scene_label_and_keeps_turn_open(
         model_config=model,
         review_before_publish=False,
     )
+    transition = {
+        "name": "Гданьск - Машина у кафе",
+        "description": (
+            "Баальтаз находится в припаркованной машине у кафе; двери закрыты, "
+            "уличный шум приглушён."
+        ),
+        "memory": (
+            "Баальтаз покинул кафе и сел в машину у здания. "
+            "Разговор в кафе остаётся в истории, но текущее место действия — автомобиль."
+        ),
+    }
     client = StaticGMClient(
         {
             "action": "TURN",
             "public": "Баальтаз закрывает дверь автомобиля. Салон отсекает шум улицы.",
             "private": [],
             "turn_targets": [human.pk],
-            "scene_transition": {"name": "Гданьск - Машина у кафе"},
+            "scene_transition": transition,
         }
     )
 
@@ -469,8 +482,10 @@ def test_model_gm_scene_transition_updates_live_scene_label_and_keeps_turn_open(
     scene.refresh_from_db()
 
     assert execution.state == GameMasterExecutionState.PUBLISHED
-    assert execution.scene_transition == {"name": "Гданьск - Машина у кафе"}
-    assert scene.name == "Гданьск - Машина у кафе"
+    assert execution.scene_transition == transition
+    assert scene.name == transition["name"]
+    assert scene.description == transition["description"]
+    assert scene.memory_summary == transition["memory"]
     assert execution.action == GameMasterAction.TURN
     assert execution.published_turn_id is not None
     player_execution = execution.published_turn.executions.get(player=human)
@@ -479,7 +494,9 @@ def test_model_gm_scene_transition_updates_live_scene_label_and_keeps_turn_open(
     config = GameMasterConfig.objects.get(campaign=campaign)
     refreshed_context = build_gm_context(scene=scene, config=config)
     assert "Scene: Гданьск - Машина у кафе" in refreshed_context.system_prompt
-    assert "Scene: Гданьск - Кафе\n" not in refreshed_context.system_prompt
+    assert transition["description"] in refreshed_context.system_prompt
+    assert transition["memory"] in refreshed_context.system_prompt
+    assert "Баальтаз сидит в кафе у окна." not in refreshed_context.system_prompt
 
 
 @pytest.mark.django_db
@@ -496,7 +513,11 @@ def test_wait_cannot_hide_a_scene_transition():
                     "public": "",
                     "private": [],
                     "turn_targets": [],
-                    "scene_transition": {"name": "Elsewhere"},
+                    "scene_transition": {
+                        "name": "Elsewhere",
+                        "description": "The current situation is elsewhere.",
+                        "memory": "The scene moved elsewhere.",
+                    },
                 }
             ),
             scene=scene,
@@ -991,3 +1012,131 @@ def test_gm_fillable_permission_does_not_spill_into_unrelated_lookup():
             ),
             scene=scene,
         )
+
+
+@pytest.mark.django_db
+def test_operational_weather_lookup_is_automatically_fillable_without_explicit_tag():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(
+        campaign,
+        name="Halcyon - в полёте",
+        mode=TurnMode.MANUAL,
+        participants=[human],
+        description="Halcyon следует по плановому маршруту после вылета.",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content=(
+            "Нед открывает текущую метеосводку, сверяет ветер, давление "
+            "и прогноз на следующий участок маршрута."
+        ),
+    )
+
+    request = gm_engine.gm_execution_request(scene)
+
+    assert "Detected information action category: USE_OPERATIONAL_DATA" in request
+    assert "AUTO OPERATIONAL SOURCE" in request
+    assert "GM_FILLABLE DELEGATION ACTIVE" in request
+
+    parsed = gm_engine.parse_gm_response(
+        json.dumps(
+            {
+                "action": "NARRATE",
+                "public": (
+                    "В текущей сводке указано давление 1008 гПа; "
+                    "ветер северо-восточный, около 12 узлов."
+                ),
+                "private": [],
+                "turn_targets": [],
+            },
+            ensure_ascii=False,
+        ),
+        scene=scene,
+    )
+    assert "1008 гПа" in parsed.public
+
+
+@pytest.mark.django_db
+def test_plain_professional_navigation_work_does_not_trigger_source_guard():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[human],
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content=(
+            "Нед ведёт счисление, контролирует курс и скорость и рассчитывает "
+            "очередную поправку на снос."
+        ),
+    )
+
+    request = gm_engine.gm_execution_request(scene)
+
+    assert "AUTHORITATIVE KNOWLEDGE RETRIEVAL" not in request
+
+
+@pytest.mark.django_db
+def test_gm_context_marks_player_world_claims_as_declarations_not_confirmed_results():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content="Мы ушли с курса ровно на два процента.",
+    )
+    config = GameMasterConfig.objects.create(campaign=campaign, enabled=True)
+
+    context = build_gm_context(scene=scene, config=config)
+    history = "\n".join(item["content"] for item in context.messages)
+
+    assert "# PLAYER DECLARATIONS VS OBJECTIVE WORLD STATE" in context.system_prompt
+    assert "PLAYER_ASSERTED_WORLD_STATE" in context.system_prompt
+    assert "PLAYER DECLARATION; external-world claims are not objective GM confirmation" in history
+
+
+@pytest.mark.django_db
+def test_gm_context_uses_human_player_as_control_label_not_species_transport():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    config = GameMasterConfig.objects.create(campaign=campaign, enabled=True)
+
+    context = build_gm_context(scene=scene, config=config)
+
+    assert "Control: HUMAN_PLAYER" in context.system_prompt
+    assert "Transport: HUMAN" not in context.system_prompt
+
+
+@pytest.mark.django_db
+def test_gm_context_contains_routine_pacing_and_professional_guidance():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    config = GameMasterConfig.objects.create(campaign=campaign, enabled=True)
+
+    context = build_gm_context(scene=scene, config=config)
+
+    assert "# PACING AND MEANINGFUL CHANGE" in context.system_prompt
+    assert "Do not play every minute of stable repetitive work" in context.system_prompt
+    assert "# NPC CONVERSATION ENDING" in context.system_prompt
+    assert "# PROFESSIONAL COMPETENCE AND TECHNICAL WORK" in context.system_prompt
+    assert "# PARALLEL CHARACTER LINES" in context.system_prompt
