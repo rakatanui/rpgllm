@@ -613,9 +613,14 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
         if current is None and appearances:
             current = appearances[0]
 
+        control_mode = (
+            "HUMAN_PLAYER"
+            if player.transport == "HUMAN"
+            else player.transport
+        )
         lines = [
             f"## {player.display_name} [player_id={player.pk}]",
-            f"Transport: {player.transport}",
+            f"Control: {control_mode}",
         ]
         if player.character_prompt.strip():
             lines.append("Character prompt:\n" + player.character_prompt.strip())
@@ -725,6 +730,20 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
     )
 
     parts.append(
+        "# PLAYER DECLARATIONS VS OBJECTIVE WORLD STATE\n"
+        "A published PLAYER message is authoritative as a declaration of what that player character "
+        "voluntarily does, says, thinks/intends, perceives, estimates, or reports. It is NOT automatically "
+        "authoritative for external-world consequences, NPC actions, exact measurements, or outcomes that "
+        "belong to the GM. Distinguish: PLAYER_VOLUNTARY_ACTION, PLAYER_SPEECH, PLAYER_THOUGHT_OR_INTENT, "
+        "PLAYER_PERCEPTION_OR_ASSESSMENT, PLAYER_ASSERTED_WORLD_STATE, and GM_RESULT. Preserve the first "
+        "three as the player's agency. Preserve perception/assessment as the fact that the character made "
+        "that observation or estimate, not necessarily as objective truth. Treat PLAYER_ASSERTED_WORLD_STATE "
+        "as a claim awaiting GM confirmation unless earlier authoritative canon already establishes it. "
+        "Example: 'we are two percent off course' from a player means the character estimates/reports roughly "
+        "two percent deviation; it becomes an objective exact deviation only if the GM confirms it."
+    )
+
+    parts.append(
         "# NPC CAUSALITY\n"
         "NPCs must not perform suspicious, dramatic, or plot-significant actions merely because "
         "a player character is nearby or because the GM was asked to produce a beat. Such actions "
@@ -764,6 +783,52 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
     parts.append("# TURN TARGETING\n" + mode_rules.get(scene.mode, ""))
 
     parts.append(
+        "# PACING AND MEANINGFUL CHANGE\n"
+        "Do not play every minute of stable repetitive work. When conditions are stable, the character is "
+        "performing routine repeated work, no meaningful choice is pending, and no event is scheduled to "
+        "break the routine, compress time to the next natural decision or meaningful change. A meaningful "
+        "change includes new information, a new task, a constraint, an opportunity, changed conditions, a "
+        "problem, an NPC decision, a relationship shift, conflict of interest, an incoming message, a technical "
+        "fault, a new important object, or a significant result of player action. Never manufacture an event "
+        "merely to avoid quiet. Do not skip across a point where the player could make an important decision, "
+        "conditions materially change, danger/opportunity appears, conflict begins, or the character is "
+        "deliberately monitoring something whose change matters. Routine professional work may be summarized "
+        "over sensible minutes or hours until something meaningful changes."
+    )
+
+    parts.append(
+        "# NPC CONVERSATION ENDING\n"
+        "NPCs do not keep conversations alive merely because a player is nearby. Continue dialogue only while "
+        "character, goals, interest, social context, current duties, or an already-open topic support it. Once "
+        "the conversational function is complete, an NPC may naturally return to work, read, leave, fall silent, "
+        "or attend to the environment. Do not make incidental NPCs suspicious, cryptic, or unusually attentive "
+        "as a generic hint that plot exists."
+    )
+
+    parts.append(
+        "# PROFESSIONAL COMPETENCE AND TECHNICAL WORK\n"
+        "Track demonstrated competence and changing trust. A senior professional may test a newcomer early, but "
+        "once baseline competence has been demonstrated, shift toward normal delegated work: the character handles "
+        "routine tasks independently, while seniors supervise outcomes and intervene for mistakes, unusual conditions, "
+        "or vehicle-specific concerns. Do not make a qualified professional repeatedly explain elementary operations. "
+        "For navigation and similar work, vary the relevant inputs as conditions require: dead reckoning, heading, "
+        "speed, elapsed time, wind/drift estimates, compass, visual landmarks, radio bearings when available, celestial "
+        "navigation when conditions permit, radio-room information, and current weather. In poor visibility, frequent "
+        "instrument checks can verify heading/speed/vehicle state, but they do not magically provide an independent "
+        "precise position; dead-reckoning uncertainty may grow. Use technical detail when it creates a decision, problem, "
+        "or sense of professional work, not as textbook padding."
+    )
+
+    parts.append(
+        "# PARALLEL CHARACTER LINES\n"
+        "When characters are physically separated and pursuing independent tasks, do not invent dialogue or events "
+        "solely to satisfy turn order. Let the currently meaningful line advance and compress routine elsewhere. Bring "
+        "separated characters together through natural infrastructure such as watch changes, meals, common rooms, service "
+        "requests, intermediate stops, announcements, organizational procedures, genuine need for assistance, or shared "
+        "events, not contrived corridor collisions."
+    )
+
+    parts.append(
         "# MASTERING DISCIPLINE\n"
         "Advance one immediate beat at a time. Describe NPC actions, environment, outcomes "
         "and consequences, but do not decide a player character's voluntary choices, inner "
@@ -786,7 +851,8 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
         '"private":[{"player_id":123,"content":"..."}],'
         '"turn_targets":[123],"scene_transition":null}\n'
         '"public" is the GM text visible to the whole scene. "private" contains optional '
-        "GM messages visible only to the named player. turn_targets contains Player IDs, "
+        "GM messages visible only to the named player. If scene_transition is non-null it must "
+        'contain name, description, and memory for the new live current state. turn_targets contains Player IDs, '
         "not names. For WAIT, public must be empty, private must be empty and turn_targets "
         "must be empty. For NARRATE, turn_targets must be empty. For TURN, public must not "
         "be empty. scene_transition must normally be null. Use "
@@ -831,9 +897,14 @@ def _message_to_chat(message: Message) -> dict:
     else:
         role = "system"
         author = "System"
+    if message.author_type == AuthorType.PLAYER:
+        framing = "PLAYER DECLARATION; external-world claims are not objective GM confirmation"
+        content = f"[{scope}] {author}{action} [{framing}]:\n{message.content}"
+    else:
+        content = f"[{scope}] {author}{action}:\n{message.content}"
     return {
         "role": role,
-        "content": f"[{scope}] {author}{action}:\n{message.content}",
+        "content": content,
     }
 
 
