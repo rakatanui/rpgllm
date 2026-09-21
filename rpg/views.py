@@ -977,7 +977,11 @@ def human_episode_detail(request, access_token, episode_id):
         created_at__lte=current_scene.created_at,
     )
 
-    visible_messages = list(_human_visible_messages(episode, player))
+    visible_messages = [
+        message
+        for message in _human_visible_messages(episode, player)
+        if _human_message_has_visible_content(message)
+    ]
     public_messages = [
         message
         for message in visible_messages
