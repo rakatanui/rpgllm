@@ -1,4 +1,5 @@
 """Views for MRAZ Master. Business rules live in services."""
+import io
 import mimetypes
 import re
 import uuid
@@ -13,6 +14,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+
+import qrcode
 
 from rpg.forms import CharacterImageUploadForm
 from rpg.models import (
@@ -759,6 +762,40 @@ def _human_visible_messages(scene: Scene, player: Player):
         .select_related("author_player", "execution", "turn__trigger_message")
         .order_by("-created_at", "-pk")
     )
+
+
+def _human_client_share_url(request, access_token) -> str:
+    path = reverse(
+        "human_player_client",
+        kwargs={"access_token": access_token},
+    )
+    public_host = getattr(settings, "PUBLIC_PLAYER_HOST", "").strip()
+    if public_host:
+        return f"https://{public_host}{path}"
+    return request.build_absolute_uri(path)
+
+
+def human_player_qr(request, access_token):
+    scene, player, _ = _human_access_for_token(access_token)
+    target_url = _human_client_share_url(request, access_token)
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=5,
+        border=3,
+    )
+    qr.add_data(target_url)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    response = HttpResponse(buffer.getvalue(), content_type="image/png")
+    response["Content-Disposition"] = (
+        f'inline; filename="mraz-player-{player.pk}-qr.png"'
+    )
+    return _secure_human_response(response)
 
 
 def human_player_client(request, access_token):
