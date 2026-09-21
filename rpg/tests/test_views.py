@@ -15,6 +15,7 @@ from rpg.models import (
     CharacterAppearance,
     ExecutionState,
     GameMasterConfig,
+    GameMasterExecution,
     GameMasterExecutionState,
     GameMasterTransport,
     LoreEntry,
@@ -3146,3 +3147,47 @@ def test_human_submit_as_last_round_response_auto_continues_to_manual_chat_gm():
     gm_execution = scene.gm_executions.get()
     assert gm_execution.state == GameMasterExecutionState.WAITING_EXTERNAL
     assert gm_execution.external_chat_url == "https://chatgpt.com/c/test-gm"
+
+
+@pytest.mark.django_db
+def test_gm_model_status_and_panel_reflect_new_waiting_external_execution():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    config = GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_initialized=True,
+    )
+    execution = GameMasterExecution.objects.create(
+        scene=scene,
+        config=config,
+        state=GameMasterExecutionState.WAITING_EXTERNAL,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        external_prompt="DELTA",
+        external_chat_label="ChatGPT GM",
+        external_chat_url="https://chatgpt.com/c/test-gm",
+        external_is_bootstrap=False,
+    )
+    client = Client()
+
+    status = client.get(
+        reverse("gm_model_status", kwargs={"scene_id": scene.pk})
+    )
+    panel = client.get(
+        reverse("gm_model_panel", kwargs={"scene_id": scene.pk})
+    )
+
+    assert status.status_code == 200
+    assert status.json()["execution_id"] == execution.pk
+    assert status.json()["state"] == GameMasterExecutionState.WAITING_EXTERNAL
+    assert panel.status_code == 200
+    html = panel.content.decode()
+    assert f'data-mraz-bridge-execution="{execution.pk}"' in html
+    assert 'data-mraz-bridge-autostart="1"' in html

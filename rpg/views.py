@@ -474,6 +474,70 @@ def scene_view_fragment(request, scene):
     )
 
 
+def gm_model_panel(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    players = _scene_players(scene)
+    gm_config = (
+        GameMasterConfig.objects.filter(campaign=scene.campaign)
+        .select_related("model_config", "fallback_model_config")
+        .first()
+    )
+    gm_active_execution = gm_engine.get_active_gm_execution(scene)
+    gm_latest_execution = gm_engine.get_latest_gm_execution(scene)
+    gm_execution = gm_active_execution or gm_latest_execution
+
+    gm_private_drafts = {}
+    gm_target_ids = set()
+    if gm_execution is not None:
+        gm_private_drafts = {
+            int(item.get("player_id")): str(item.get("content", ""))
+            for item in (gm_execution.private_drafts or [])
+            if item.get("player_id") is not None
+        }
+        gm_target_ids = {
+            int(player_id)
+            for player_id in (gm_execution.turn_targets or [])
+        }
+
+    return render(
+        request,
+        "rpg/_gm_model_panel.html",
+        {
+            "scene": scene,
+            "campaign": scene.campaign,
+            "players": players,
+            "gm_config": gm_config,
+            "gm_execution": gm_execution,
+            "gm_active_execution": gm_active_execution,
+            "gm_private_drafts": gm_private_drafts,
+            "gm_target_ids": gm_target_ids,
+            "gm_actions": [
+                ("TURN", "TURN · publish + call players"),
+                ("NARRATE", "NARRATE · publish only"),
+                ("WAIT", "WAIT · publish nothing"),
+            ],
+        },
+    )
+
+
+def gm_model_status(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    gm_execution = (
+        gm_engine.get_active_gm_execution(scene)
+        or gm_engine.get_latest_gm_execution(scene)
+    )
+    return JsonResponse(
+        {
+            "execution_id": gm_execution.pk if gm_execution else 0,
+            "state": gm_execution.state if gm_execution else "",
+            "has_error": bool(gm_execution and gm_execution.error),
+            "is_bootstrap": bool(
+                gm_execution and gm_execution.external_is_bootstrap
+            ),
+        }
+    )
+
+
 def players_status(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     players = _scene_players(scene)
@@ -721,25 +785,18 @@ def human_player_status(request, access_token):
         .values_list("pk", flat=True)
         .first()
     )
-    public_latest_id = (
-        Message.objects.filter(
-            scene=scene,
-            visibility=Visibility.PUBLIC,
-        )
-        .order_by("-pk")
-        .values_list("pk", flat=True)
-        .first()
+    public_messages, _, _ = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel="public",
     )
-    private_latest_id = (
-        Message.objects.filter(
-            scene=scene,
-            visibility=Visibility.PRIVATE_GM_PLAYER,
-            private_player=player,
-        )
-        .order_by("-pk")
-        .values_list("pk", flat=True)
-        .first()
+    private_messages, _, _ = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel="private",
     )
+    public_latest_id = public_messages[0].pk if public_messages else None
+    private_latest_id = private_messages[0].pk if private_messages else None
     gm_execution = gm_engine.get_active_gm_execution(scene)
 
     response = JsonResponse(

@@ -121,7 +121,13 @@
 </div>
 {% endif %}
 
-{% include "rpg/_gm_model_panel.html" %}
+<div id="gm-model-live"
+     data-gm-execution-id="{{ gm_execution.pk|default:'0' }}"
+     data-gm-execution-state="{{ gm_execution.state|default:'' }}"
+     data-gm-execution-error="{% if gm_execution.error %}1{% else %}0{% endif %}"
+     data-gm-execution-bootstrap="{% if gm_execution.external_is_bootstrap %}1{% else %}0{% endif %}">
+  {% include "rpg/_gm_model_panel.html" %}
+</div>
 
 {% if not scene.is_closed %}
 <form id="composer"
@@ -328,6 +334,84 @@
 
 {% block scripts %}
 <script>
+const gmModelStatusUrl = "{% url 'gm_model_status' scene.pk %}";
+const gmModelPanelUrl = "{% url 'gm_model_panel' scene.pk %}";
+let gmModelStatusInFlight = false;
+let gmModelRefreshInFlight = false;
+
+function gmModelDomSignature() {
+  const host = document.getElementById("gm-model-live");
+  if (!host) return "";
+  return [
+    host.dataset.gmExecutionId || "0",
+    host.dataset.gmExecutionState || "",
+    host.dataset.gmExecutionError || "0",
+    host.dataset.gmExecutionBootstrap || "0",
+  ].join(":");
+}
+
+function gmModelStatusSignature(status) {
+  return [
+    String(status.execution_id || 0),
+    status.state || "",
+    status.has_error ? "1" : "0",
+    status.is_bootstrap ? "1" : "0",
+  ].join(":");
+}
+
+async function refreshGmModelPanel(status) {
+  if (gmModelRefreshInFlight) return;
+  gmModelRefreshInFlight = true;
+  try {
+    const response = await fetch(gmModelPanelUrl, {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    if (!response.ok) return;
+
+    const html = await response.text();
+    const host = document.getElementById("gm-model-live");
+    if (!host) return;
+
+    host.innerHTML = html;
+    host.dataset.gmExecutionId = String(status.execution_id || 0);
+    host.dataset.gmExecutionState = status.state || "";
+    host.dataset.gmExecutionError = status.has_error ? "1" : "0";
+    host.dataset.gmExecutionBootstrap = status.is_bootstrap ? "1" : "0";
+
+    if (window.htmx) htmx.process(host);
+    document.dispatchEvent(new CustomEvent("mraz:gm-panel-updated"));
+  } catch (error) {
+    console.warn("Failed to refresh GM model panel", error);
+  } finally {
+    gmModelRefreshInFlight = false;
+  }
+}
+
+async function pollGmModelStatus() {
+  if (gmModelStatusInFlight) return;
+  gmModelStatusInFlight = true;
+  try {
+    const response = await fetch(gmModelStatusUrl, {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    if (!response.ok) return;
+    const status = await response.json();
+    if (gmModelStatusSignature(status) !== gmModelDomSignature()) {
+      await refreshGmModelPanel(status);
+    }
+  } catch (error) {
+    console.warn("Failed to poll GM model status", error);
+  } finally {
+    gmModelStatusInFlight = false;
+  }
+}
+
 function handleModeChange(select) {
   const roundSetup = document.getElementById("round-setup");
   const sendButton = document.getElementById("gm-send-button");
@@ -480,6 +564,9 @@ async function markPrivateRead(form, playerId) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  window.setInterval(pollGmModelStatus, 1000);
+  pollGmModelStatus();
+
   const auto = document.getElementById("private-autoopen");
   if (auto) auto.checked = privateAutoOpenEnabled();
   if (localStorage.getItem("mraz.private.collapsed") === "1") togglePrivatePanel(false);
