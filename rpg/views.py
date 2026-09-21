@@ -1363,9 +1363,13 @@ def silent_turn(request, scene_id):
                     "ROUND mode requires a confirmed player order before Silence."
                 )
             selected_players = []
-        elif not selected_players:
+        elif scene.mode == TurnMode.MANUAL and len(selected_players) != 1:
             return HttpResponseBadRequest(
-                f"{scene.mode} Silence requires selecting at least one player."
+                "MANUAL Silence requires selecting exactly one player."
+            )
+        elif scene.mode == TurnMode.SOFT_ROUND and not selected_players:
+            return HttpResponseBadRequest(
+                "SOFT_ROUND Silence requires selecting at least one player."
             )
 
         turn_engine.start_silent_turn(
