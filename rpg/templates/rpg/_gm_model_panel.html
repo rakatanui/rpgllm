@@ -9,7 +9,7 @@
            data-mraz-bridge-execution="{{ gm_execution.pk }}"
            data-mraz-bridge-chat-url="{{ gm_execution.external_chat_url }}"
            data-mraz-bridge-label="{{ gm_execution.external_chat_label|default:'Model GM' }}"
-           {% if gm_config and gm_config.auto_continue and not gm_execution.error %}
+           {% if gm_config and gm_config.auto_continue and not gm_execution.error and not gm_execution.external_is_bootstrap %}
              data-mraz-bridge-autostart="1"
            {% endif %}
          {% endif %}>
@@ -62,6 +62,13 @@
 
       {% if gm_execution.error %}
         <div class="execution-error">{{ gm_execution.error }}</div>
+      {% endif %}
+
+      {% if gm_execution.external_is_bootstrap %}
+        <div class="turn-banner">
+          BOOTSTRAP is intentionally not auto-sent by the browser bridge.
+          Copy it into the persistent GM chat manually, then import the response here.
+        </div>
       {% endif %}
 
       <label>Prompt for external GM chat</label>

@@ -2,6 +2,7 @@ const BRIDGE_BUTTON_SELECTOR = ".mraz-browser-bridge-button";
 const STATUS_SELECTOR = ".mraz-browser-bridge-status";
 const AUTOPLAY_SELECTOR = '[data-mraz-gm-autoplay="1"]';
 const AUTOSTART_CARD_SELECTOR = '[data-mraz-bridge-card][data-mraz-bridge-autostart="1"]';
+const MAX_BRIDGE_PROMPT_CHARS = 30000;
 
 function setBridgeReady() {
   document.documentElement.dataset.mrazBrowserBridge = "ready";
@@ -79,6 +80,21 @@ async function startBridge(button) {
     : promptElement.textContent || "";
   if (!prompt.trim()) {
     setStatus(card, "Prompt is empty.", "error");
+    return;
+  }
+
+  if (prompt.length > MAX_BRIDGE_PROMPT_CHARS) {
+    trace("bridge-prompt-too-large", {
+      kind: card.dataset.mrazBridgeKind || "",
+      execution: card.dataset.mrazBridgeExecution || "",
+      promptLength: prompt.length,
+      limit: MAX_BRIDGE_PROMPT_CHARS,
+    });
+    setStatus(
+      card,
+      "Prompt is too large for automatic browser insertion. Use Copy prompt and paste it manually.",
+      "error"
+    );
     return;
   }
 

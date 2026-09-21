@@ -15,7 +15,8 @@ async function refreshLogs() {
   const logs = Array.isArray(result.logs) ? result.logs : [];
   logBox.value = logs.map(formatEntry).join("\n");
   logBox.scrollTop = logBox.scrollHeight;
-  status.textContent = logs.length + " events";
+  const version = chrome.runtime.getManifest().version;
+  status.textContent = "v" + version + " · " + logs.length + " events";
 }
 
 document.getElementById("refresh").addEventListener("click", refreshLogs);
