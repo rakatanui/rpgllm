@@ -1049,7 +1049,7 @@ def test_operational_weather_lookup_is_automatically_fillable_without_explicit_t
             {
                 "action": "NARRATE",
                 "public": (
-                    "В текущей сводке указано давление 1008 гПа; "
+                    "В текущей сводке от 26.12.1932 указано давление 1008 гПа; "
                     "ветер северо-восточный, около 12 узлов."
                 ),
                 "private": [],
@@ -1059,6 +1059,7 @@ def test_operational_weather_lookup_is_automatically_fillable_without_explicit_t
         ),
         scene=scene,
     )
+    assert "26.12.1932" in parsed.public
     assert "1008 гПа" in parsed.public
 
 
@@ -1176,6 +1177,39 @@ def test_player_asserted_exact_world_fact_does_not_satisfy_fixed_source_guard():
                 {
                     "action": "NARRATE",
                     "public": "В досье действительно указан адрес ul. Szeroka 99.",
+                    "private": [],
+                    "turn_targets": [],
+                },
+                ensure_ascii=False,
+            ),
+            scene=scene,
+        )
+
+
+@pytest.mark.django_db
+def test_automatic_operational_fillable_does_not_authorize_unrelated_exact_address():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content="Нед открывает текущую метеосводку и проверяет прогноз по маршруту.",
+    )
+
+    with pytest.raises(ValidationError, match="unsupported exact datum"):
+        gm_engine.parse_gm_response(
+            json.dumps(
+                {
+                    "action": "NARRATE",
+                    "public": (
+                        "Сводка обещает умеренный ветер. Заодно в ней почему-то "
+                        "указан домашний адрес диспетчера: ul. Szeroka 99."
+                    ),
                     "private": [],
                     "turn_targets": [],
                 },
