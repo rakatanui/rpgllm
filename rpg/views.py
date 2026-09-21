@@ -538,6 +538,70 @@ def _secure_human_response(response):
     return response
 
 
+HUMAN_FEED_PAGE_SIZE = 60
+_HUMAN_EMPTY_MESSAGE_MARKERS = {"none", "null", "undefined"}
+
+
+def _human_message_has_visible_content(message: Message) -> bool:
+    if (message.action_type or "").strip().upper() == "PASS":
+        return True
+    content = (message.content or "").strip()
+    return bool(content and content.casefold() not in _HUMAN_EMPTY_MESSAGE_MARKERS)
+
+
+def _human_channel_page(
+    *,
+    scene: Scene,
+    player: Player,
+    channel: str,
+    before_id: int | None = None,
+) -> tuple[list[Message], bool, int | None]:
+    if channel == "public":
+        query = Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PUBLIC,
+        ).select_related("author_player", "execution")
+    elif channel == "private":
+        query = Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PRIVATE_GM_PLAYER,
+            private_player=player,
+        ).select_related("author_player", "execution", "turn__trigger_message")
+    else:
+        raise ValueError(f"Unsupported human feed channel: {channel}")
+
+    if before_id is not None:
+        query = query.filter(pk__lt=before_id)
+
+    query = query.order_by("-created_at", "-pk")
+
+    # Fetch a little extra so legacy empty/None-like rows can be discarded without
+    # shrinking an ordinary page. The next cursor remains an explicit message id,
+    # and older history is always appended below the newest-first live window.
+    raw = list(query[: HUMAN_FEED_PAGE_SIZE * 2 + 1])
+    visible = [message for message in raw if _human_message_has_visible_content(message)]
+    page = visible[:HUMAN_FEED_PAGE_SIZE]
+
+    next_before = page[-1].pk if page else None
+    has_older = bool(
+        next_before
+        and Message.objects.filter(
+            scene=scene,
+            pk__lt=next_before,
+        )
+        .filter(
+            Q(visibility=Visibility.PUBLIC)
+            if channel == "public"
+            else Q(
+                visibility=Visibility.PRIVATE_GM_PLAYER,
+                private_player=player,
+            )
+        )
+        .exists()
+    )
+    return page, has_older, next_before
+
+
 def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
     appearances = list(player.appearances.all().order_by("order", "pk"))
     participation = (
@@ -561,20 +625,17 @@ def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
                 display_appearance,
             )
 
-    public_messages = list(
-        Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
-        .select_related("author_player", "execution")
-        .order_by("-created_at", "-pk")
+    public_messages, public_has_older, public_next_before = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel="public",
     )
-    private_messages = list(
-        Message.objects.filter(
-            scene=scene,
-            visibility=Visibility.PRIVATE_GM_PLAYER,
-            private_player=player,
-        )
-        .select_related("author_player", "execution", "turn__trigger_message")
-        .order_by("-created_at", "-pk")
+    private_messages, private_has_older, private_next_before = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel="private",
     )
+
     waiting = (
         TurnExecution.objects.filter(
             turn__scene=scene,
@@ -605,7 +666,13 @@ def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
         "display_appearance": display_appearance,
         "public_messages": public_messages,
         "public_blocks": _public_message_blocks(public_messages),
+        "public_latest_id": public_messages[0].pk if public_messages else None,
+        "public_has_older": public_has_older,
+        "public_next_before": public_next_before,
         "private_messages": private_messages,
+        "private_latest_id": private_messages[0].pk if private_messages else None,
+        "private_has_older": private_has_older,
+        "private_next_before": private_next_before,
         "player_color": _player_color_classes(_scene_players(scene)).get(player.pk, ""),
         "waiting_execution": waiting,
         "gm_active_execution": active_gm_execution,
@@ -642,11 +709,53 @@ def human_player_client(request, access_token):
 
 def human_player_fragment(request, access_token):
     scene, player, _ = _human_access_for_token(access_token)
+    workspace = (request.GET.get("workspace") or "scene").strip().lower()
+    template_by_workspace = {
+        "scene": "rpg/_human_player_panel.html",
+        "private": "rpg/_human_private_panel.html",
+    }
+    template_name = template_by_workspace.get(workspace)
+    if template_name is None:
+        return HttpResponseBadRequest("invalid human workspace")
+
     response = render(
         request,
-        "rpg/_human_player_panel.html",
+        template_name,
         _human_client_context(scene, player, request),
     )
+    return _secure_human_response(response)
+
+
+def human_feed_page(request, access_token, channel):
+    scene, player, _ = _human_access_for_token(access_token)
+    channel = (channel or "").strip().lower()
+    if channel not in {"public", "private"}:
+        return HttpResponseBadRequest("invalid human feed channel")
+
+    raw_before = (request.GET.get("before") or "").strip()
+    if not raw_before.isdigit():
+        return HttpResponseBadRequest("missing or invalid history cursor")
+
+    messages, has_older, next_before = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel=channel,
+        before_id=int(raw_before),
+    )
+    context = {
+        "scene": scene,
+        "player": player,
+        "access_token": access_token,
+        "channel": channel,
+        "has_older": has_older,
+        "next_before": next_before,
+    }
+    if channel == "public":
+        context["public_blocks"] = _public_message_blocks(messages)
+    else:
+        context["private_messages"] = messages
+
+    response = render(request, "rpg/_human_feed_page.html", context)
     return _secure_human_response(response)
 
 
@@ -868,7 +977,11 @@ def human_episode_detail(request, access_token, episode_id):
         created_at__lte=current_scene.created_at,
     )
 
-    visible_messages = list(_human_visible_messages(episode, player))
+    visible_messages = [
+        message
+        for message in _human_visible_messages(episode, player)
+        if _human_message_has_visible_content(message)
+    ]
     public_messages = [
         message
         for message in visible_messages

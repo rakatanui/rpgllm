@@ -2,20 +2,20 @@
   <div class="human-character-reference-header">
     <div>
       <div class="meta">Character reference</div>
-      <h3>Notes and abilities</h3>
+      <h3>Notes, abilities and history</h3>
     </div>
-    <a class="btn btn-small"
-       href="{% url 'human_episode_search' access_token %}">Search episodes</a>
   </div>
 
   <form method="get"
         action="{% url 'human_episode_search' access_token %}"
         class="human-episode-quick-search human-episode-quick-search-top">
-    <input type="text"
+    <label class="sr-only" for="human-reference-search">Search visible history</label>
+    <input id="human-reference-search"
+           type="text"
            name="q"
-           placeholder="Search scenes and your visible history..."
-           aria-label="Search character episodes">
-    <button class="btn" type="submit">Search history</button>
+           placeholder="Search visible history..."
+           aria-label="Search visible history">
+    <button class="btn" type="submit">Search</button>
   </form>
 
   {% if display_appearance and display_appearance.description %}
@@ -23,7 +23,7 @@
   {% endif %}
 
   {% if display_appearance and display_appearance.fullbody_image %}
-    <details class="human-fullbody-reference">
+    <details class="human-reference-accordion human-fullbody-reference">
       <summary>Full-body reference</summary>
       <a href="{% url 'human_appearance_image' access_token display_appearance.pk 'fullbody' %}"
          target="_blank"
@@ -45,7 +45,7 @@
   {% endif %}
 
   <div class="human-character-sections">
-    <details>
+    <details class="human-reference-accordion">
       <summary>Characteristics</summary>
       {% if player.characteristics %}
         <div class="msg-content">{{ player.characteristics }}</div>
@@ -54,7 +54,7 @@
       {% endif %}
     </details>
 
-    <details>
+    <details class="human-reference-accordion">
       <summary>Abilities</summary>
       {% if player.abilities %}
         <div class="msg-content">{{ player.abilities }}</div>
@@ -63,7 +63,7 @@
       {% endif %}
     </details>
 
-    <details>
+    <details class="human-reference-accordion">
       <summary>Memory summary</summary>
       {% if player.memory_summary %}
         <div class="msg-content">{{ player.memory_summary }}</div>
@@ -74,7 +74,7 @@
   </div>
 
   {% if not appearances %}
-    <details class="human-legacy-portrait-tools">
+    <details class="human-reference-accordion human-legacy-portrait-tools">
       <summary>Portrait settings</summary>
       <form method="post"
             enctype="multipart/form-data"
