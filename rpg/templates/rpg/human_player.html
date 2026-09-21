@@ -170,7 +170,9 @@ function humanShowNewMessages(channel, count) {
   const indicator = humanNewIndicator(channel);
   if (indicator) {
     const n = Math.max(1, Number(count) || 1);
-    indicator.textContent = n === 1 ? "↑ New message" : "↑ " + n + " new messages";
+    const total = Number(indicator.dataset.count || 0) + n;
+    indicator.dataset.count = String(total);
+    indicator.textContent = total === 1 ? "↑ New message" : "↑ " + total + " new messages";
     indicator.hidden = false;
   }
   const tab = document.querySelector(
@@ -181,7 +183,10 @@ function humanShowNewMessages(channel, count) {
 
 function humanClearNewMessages(channel) {
   const indicator = humanNewIndicator(channel);
-  if (indicator) indicator.hidden = true;
+  if (indicator) {
+    indicator.hidden = true;
+    indicator.dataset.count = "0";
+  }
   const tab = document.querySelector(
     '[data-human-workspace-target="' + humanChannelWorkspace(channel) + '"]'
   );
