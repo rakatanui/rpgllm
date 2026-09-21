@@ -1287,3 +1287,17 @@ def test_scene_transition_requires_new_description_and_memory():
             ),
             scene=scene,
         )
+
+
+@pytest.mark.django_db
+def test_gm_execution_request_repeats_new_policy_for_persistent_delta_chat():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    request = gm_engine.gm_execution_request(scene)
+
+    assert "PLAYER DECLARATION SEMANTICS" in request
+    assert "PACING: do not simulate every minute" in request
+    assert "PROFESSIONAL COMPETENCE" in request
+    assert "SCENE TRANSITION LIFECYCLE" in request
