@@ -5,6 +5,7 @@
      data-latest-message-id="{{ public_latest_id|default:'' }}"
      data-next-before="{{ public_next_before|default:'' }}"
      data-has-older="{{ public_has_older|yesno:'1,0' }}"
+     data-waiting-execution-id="{{ waiting_execution.pk|default:'' }}"
      data-waiting-workspace="{% if waiting_execution %}{% if waiting_execution.turn.is_private %}private{% else %}scene{% endif %}{% endif %}"
      hx-get="{% url 'human_player_fragment' access_token %}?workspace=scene"
      hx-trigger="human-scene-poll"
