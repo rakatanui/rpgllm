@@ -1,0 +1,77 @@
+{% load rpg_extras %}
+<div id="human-private-live"
+     class="human-live-region human-private-live"
+     data-human-live-channel="private"
+     data-latest-message-id="{{ private_latest_id|default:'' }}"
+     hx-get="{% url 'human_player_fragment' access_token %}?workspace=private"
+     hx-trigger="human-private-poll"
+     hx-swap="outerHTML">
+  <div class="human-workspace-tools human-private-tools">
+    <div class="human-private-title">
+      <div>
+        <h3>🔒 Private / GM</h3>
+        <div class="meta">Visible only to you and the Game Master</div>
+      </div>
+      {% if gm_active_execution %}
+        <span class="chip generating">MASTER ACTIVE</span>
+      {% endif %}
+    </div>
+
+    {% if waiting_execution and waiting_execution.turn.is_private and not scene.is_closed %}
+      <section class="human-turn-card human-composer-card human-private-reply-card">
+        <div class="human-composer-heading">
+          <h3>Private reply</h3>
+          <span class="meta">Turn #{{ waiting_execution.turn_id }}</span>
+        </div>
+        {% if waiting_execution.error %}
+          <div class="execution-error">Not accepted: {{ waiting_execution.error }}</div>
+        {% endif %}
+        <form method="post"
+              action="{% url 'submit_human_response' access_token waiting_execution.pk %}"
+              class="human-action-form">
+          {% csrf_token %}
+          <div class="human-action-toolbar">
+            <label>
+              Action
+              <select id="human-private-action-type-{{ waiting_execution.pk }}"
+                      name="action_type">
+                {% for action in allowed_actions %}
+                  <option value="{{ action }}">{{ action }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+          <textarea id="human-private-action-{{ waiting_execution.pk }}"
+                    name="content"
+                    rows="4"
+                    placeholder="Write your private response.">{{ waiting_execution.raw_response }}</textarea>
+          <button class="btn btn-primary human-submit" type="submit">Send private reply</button>
+        </form>
+      </section>
+    {% endif %}
+
+    {% if not scene.is_closed %}
+      <form method="post"
+            action="{% url 'human_send_ooc' access_token %}"
+            class="human-ooc-form human-ooc-composer">
+        {% csrf_token %}
+        <label for="human-ooc-{{ player.pk }}">OOC to GM</label>
+        <div class="human-ooc-composer-row">
+          <textarea id="human-ooc-{{ player.pk }}"
+                    name="content"
+                    rows="2"
+                    placeholder="Meta question or note to the GM."></textarea>
+          <button class="btn" type="submit">Send OOC</button>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+
+  <div class="human-feed-heading human-private-feed-heading">
+    <h3>Private history</h3>
+    <span class="meta">Newest first · older history below</span>
+  </div>
+  <div class="human-live-messages" data-human-live-messages="private">
+    {% include "rpg/_human_private_messages.html" %}
+  </div>
+</div>
