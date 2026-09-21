@@ -17,7 +17,7 @@
 
   <div class="human-character-body">
     <div class="human-character-heading">
-      <div>
+      <div class="human-character-identity">
         <div class="meta">Character</div>
         <h2>{{ player.display_name }}</h2>
         {% if display_appearance %}
@@ -28,6 +28,14 @@
             {% endif %}
           </div>
         {% endif %}
+      </div>
+
+      <div class="human-client-qr" title="Scan to open this player client on a phone">
+        <img src="{% url 'human_player_qr' access_token %}"
+             alt="QR code for {{ player.display_name }} player client"
+             width="88"
+             height="88">
+        <span>Open on phone</span>
       </div>
     </div>
 
