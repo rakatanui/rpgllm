@@ -1042,7 +1042,7 @@ def test_operational_weather_lookup_is_automatically_fillable_without_explicit_t
 
     assert "Detected information action category: USE_OPERATIONAL_DATA" in request
     assert "AUTO OPERATIONAL SOURCE" in request
-    assert "GM_FILLABLE DELEGATION ACTIVE" in request
+    assert "AUTOMATIC GM_FILLABLE OPERATIONAL SCOPE ACTIVE" in request
 
     parsed = gm_engine.parse_gm_response(
         json.dumps(
