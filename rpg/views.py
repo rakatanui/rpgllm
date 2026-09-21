@@ -1304,10 +1304,15 @@ def submit_external_response(request, scene_id, execution_id):
     )
     raw = request.POST.get("response") or ""
     try:
-        turn_engine.submit_external_response(
+        result = turn_engine.submit_external_response(
             execution=execution,
             raw_text=raw,
         )
+        if (
+            result.turn.state == TurnState.COMPLETED
+            and not result.turn.is_private
+        ):
+            gm_engine.maybe_start_auto_gm(scene=scene)
     except ValidationError:
         # The service stores the rejection reason on the execution. Redirect back
         # so polling/UI shows it next to the same paste box instead of replacing
