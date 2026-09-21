@@ -2065,3 +2065,32 @@ def test_player_context_marks_external_world_values_as_assessments_until_gm_conf
     assert "# PLAYER AGENCY AND WORLD-STATE CLAIMS" in context.system_prompt
     assert "do not convert an uncertain assessment" in context.system_prompt
     assert "Нед оценивает снос примерно в два процента" in context.system_prompt
+
+
+@pytest.mark.django_db
+def test_manual_chat_delta_repeats_player_agency_and_routine_pacing_rules():
+    camp = make_campaign()
+    player = make_player(camp, "Виктория", transport=PlayerTransport.MANUAL_CHAT)
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[player])
+    turn = Turn.objects.create(
+        scene=scene,
+        mode=TurnMode.MANUAL,
+        state=TurnState.RUNNING,
+        participants=[player.pk],
+    )
+    execution = TurnExecution.objects.create(
+        turn=turn,
+        player=player,
+        order_index=0,
+        state=ExecutionState.WAITING_EXTERNAL,
+        transport=PlayerTransport.MANUAL_CHAT,
+    )
+
+    constraints = turn_engine._manual_delta_constraints(
+        execution,
+        out_of_turn=False,
+    )
+
+    assert "PLAYER AGENCY / WORLD STATE" in constraints
+    assert "External-world claims" in constraints
+    assert "ROUTINE PACING" in constraints
