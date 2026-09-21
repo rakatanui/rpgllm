@@ -1,0 +1,27 @@
+name: Temporary HUMAN UI tests
+
+on:
+  push:
+    branches:
+      - ui/human-long-session-workspaces
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DB_ENGINE: sqlite
+      SECRET_KEY: test-secret-key
+      DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Django checks
+        run: python manage.py check
+      - name: Relevant tests
+        run: pytest rpg/tests/test_views.py rpg/tests/test_gm_engine.py
