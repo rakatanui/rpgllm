@@ -22,6 +22,11 @@ urlpatterns = [
         name="human_player_status",
     ),
     path(
+        "play/<uuid:access_token>/qr.png",
+        views.human_player_qr,
+        name="human_player_qr",
+    ),
+    path(
         "play/<uuid:access_token>/history/<str:channel>/",
         views.human_feed_page,
         name="human_feed_page",
