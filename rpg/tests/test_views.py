@@ -1724,6 +1724,77 @@ def test_manual_chat_submit_auto_continues_to_manual_chat_gm():
 
 
 @pytest.mark.django_db
+def test_all_pass_round_does_not_auto_continue_to_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    ai_player = make_player(
+        campaign,
+        "Виктория",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_label="ChatGPT Player",
+        manual_chat_url="https://chatgpt.com/c/test-player",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[human, ai_player],
+    )
+    scene.round_order = [human.pk, ai_player.pk]
+    scene.active_player_index = 0
+    scene.save(update_fields=["round_order", "active_player_index", "updated_at"])
+
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Ваш ход.",
+    )
+    human_execution = result.turn.executions.get(player=human)
+    ai_execution = result.turn.executions.get(player=ai_player)
+    client = Client()
+
+    human_response = client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=human_execution.pk,
+        ),
+        {"action_type": "PASS", "content": ""},
+    )
+    assert human_response.status_code == 302
+    assert not scene.gm_executions.exists()
+
+    ai_response = client.post(
+        reverse(
+            "submit_external_response",
+            kwargs={"scene_id": scene.pk, "execution_id": ai_execution.pk},
+        ),
+        {
+            "response": (
+                '{"action_type":"PASS","public":"Виктория пропускает ход.",'
+                '"private_to_gm":""}'
+            )
+        },
+    )
+
+    assert ai_response.status_code == 302
+    result.turn.refresh_from_db()
+    assert result.turn.state == TurnState.COMPLETED
+    assert not scene.gm_executions.exists()
+
+
+@pytest.mark.django_db
 def test_external_response_view_imports_valid_paste():
     campaign = make_campaign()
     lucien = make_player(
