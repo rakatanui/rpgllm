@@ -138,8 +138,10 @@ def gm_response_contract() -> str:
         "TURN publishes the GM beat and opens a normal player turn. NARRATE publishes "
         "without calling players. WAIT publishes nothing. Player references must use the "
         "numeric player_id values from the application context. scene_transition must be "
-        "null unless movement into a distinct location makes the live Scene label materially "
-        'false; then use {"name":"New scene label"}.'
+        "null unless movement or a materially changed situation makes the live Scene label/state "
+        'false; then use {"name":"New scene label","description":"concise current-state description",'
+        '"memory":"compact durable scene memory after the transition"}. description and memory are "
+        "required on a transition so stale pre-transition state is not kept as CURRENT SCENE."
     )
 
 def gm_execution_request(scene: Scene) -> str:
@@ -163,6 +165,10 @@ def gm_execution_request(scene: Scene) -> str:
         "Keep the invention inside that tagged subject/source, preserve all established constraints, "
         "and treat anything you publish as fixed canon from then on. This does not restrict genuinely "
         "new present/future world facts that arise now.\n\n"
+        "SCENE TRANSITION LIFECYCLE: when scene_transition is necessary, do not change only the label. "
+        "Return a concise new current-state description and a durable memory summary in the transition "
+        "object. The old scene description may remain in history, but it must not continue to describe "
+        "the live CURRENT SCENE after the transition.\n\n"
         "NPC CAUSALITY: do not create suspicious, dramatic, or plot-significant NPC behavior merely "
         "because the player is nearby or because a GM beat is required. Such behavior needs support "
         "in NPC goals/knowledge, scene state, an ongoing event, or a direct consequence. Ordinary "
@@ -544,7 +550,11 @@ def publish_gm_execution(
         )
 
     published_turn = None
-    original_scene_name = scene.name
+    original_scene_state = {
+        "name": scene.name,
+        "description": scene.description,
+        "memory_summary": scene.memory_summary,
+    }
     transitioned = False
     try:
         private_map = {
@@ -555,11 +565,17 @@ def publish_gm_execution(
 
         if response.scene_transition:
             new_name = response.scene_transition["name"]
+            new_description = response.scene_transition["description"]
+            new_memory = response.scene_transition["memory"]
             Scene.objects.filter(pk=scene.pk).update(
                 name=new_name,
+                description=new_description,
+                memory_summary=new_memory,
                 updated_at=timezone.now(),
             )
             scene.name = new_name
+            scene.description = new_description
+            scene.memory_summary = new_memory
             transitioned = True
 
         if response.action == GameMasterAction.TURN:
@@ -599,10 +615,14 @@ def publish_gm_execution(
     except Exception as exc:
         if transitioned:
             Scene.objects.filter(pk=scene.pk).update(
-                name=original_scene_name,
+                name=original_scene_state["name"],
+                description=original_scene_state["description"],
+                memory_summary=original_scene_state["memory_summary"],
                 updated_at=timezone.now(),
             )
-            scene.name = original_scene_name
+            scene.name = original_scene_state["name"]
+            scene.description = original_scene_state["description"]
+            scene.memory_summary = original_scene_state["memory_summary"]
         GameMasterExecution.objects.filter(pk=execution.pk).update(
             state=GameMasterExecutionState.DRAFT,
             error=str(exc),
@@ -692,12 +712,26 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
         if not isinstance(scene_transition_raw, dict):
             raise ValidationError('GM field "scene_transition" must be null or an object.')
         name = str(scene_transition_raw.get("name", "") or "").strip()
+        description = str(scene_transition_raw.get("description", "") or "").strip()
+        memory = str(scene_transition_raw.get("memory", "") or "").strip()
         if not name:
             raise ValidationError('GM scene_transition requires a non-empty "name".')
         if len(name) > 200:
             raise ValidationError("GM scene_transition name is too long.")
-        if name != scene.name:
-            scene_transition = {"name": name}
+        if not description:
+            raise ValidationError(
+                'GM scene_transition requires a concise non-empty "description" of the new current state.'
+            )
+        if not memory:
+            raise ValidationError(
+                'GM scene_transition requires a non-empty "memory" summary for durable scene state.'
+            )
+        if name != scene.name or description != scene.description or memory != scene.memory_summary:
+            scene_transition = {
+                "name": name,
+                "description": description,
+                "memory": memory,
+            }
 
     targets_raw = obj.get("turn_targets", [])
     if targets_raw is None:
