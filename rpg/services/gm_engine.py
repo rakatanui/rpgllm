@@ -791,6 +791,27 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
 
 
 def _validate_gm_response(response: GameMasterResponse, *, scene: Scene) -> None:
+    if response.scene_transition:
+        transition_name = str(response.scene_transition.get("name", "") or "").strip()
+        transition_description = str(
+            response.scene_transition.get("description", "") or ""
+        ).strip()
+        transition_memory = str(
+            response.scene_transition.get("memory", "") or ""
+        ).strip()
+        if not transition_name:
+            raise ValidationError('GM scene_transition requires a non-empty "name".')
+        if len(transition_name) > 200:
+            raise ValidationError("GM scene_transition name is too long.")
+        if not transition_description:
+            raise ValidationError(
+                'GM scene_transition requires a concise non-empty "description" of the new current state.'
+            )
+        if not transition_memory:
+            raise ValidationError(
+                'GM scene_transition requires a non-empty "memory" summary for durable scene state.'
+            )
+
     if response.action not in {
         GameMasterAction.TURN,
         GameMasterAction.NARRATE,
