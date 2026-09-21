@@ -47,7 +47,9 @@ def test_browser_bridge_keeps_results_until_source_acknowledges_import():
     assert 'job.state = "result-ready"' in background
     assert "MRAZ_SOURCE_READY" in background
     assert "response && response.accepted" in background
-    assert "form.requestSubmit()" in source
+    assert 'fetch(form.action' in source
+    assert "new FormData(form)" in source
+    assert "bridge-import-http-complete" in source
     assert "data-mraz-bridge-card" in source
 
 
@@ -83,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.1"
+    assert manifest["version"] == "0.4.2"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -107,3 +109,16 @@ def test_browser_bridge_guards_oversized_prompts_before_external_navigation():
     assert "too large for automatic browser insertion" in source
     assert "service-worker-started" in background
     assert "getManifest().version" in popup
+
+
+def test_browser_bridge_validates_structured_response_before_import():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert "structuredResponseStatus" in external
+    assert "missing-gm-action" in external
+    assert "missing-player-action" in external
+    assert "response-contract-invalid" in external
+    assert "waitForFreshResponse(adapter, beforeTexts, message.jobId)" in external
+    assert "human-waiting" in source
+    assert "human-submit" in source
