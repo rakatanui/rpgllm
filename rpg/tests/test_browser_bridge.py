@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.3"
+    assert manifest["version"] == "0.4.4"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -136,3 +136,23 @@ def test_browser_bridge_pauses_failed_result_instead_of_autoretrying():
     assert "bridge-import-server-state" in source
     assert "sameExecutionStillWaiting" in source
     assert "Automatic retry is paused" in source
+
+
+def test_browser_bridge_auto_repairs_invalid_structured_responses():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert "structuredJsonCandidates" in external
+    assert "response-auto-repair" in external
+    assert "repair-send-clicked" in external
+    assert "MRAZ_INVALID_STRUCTURED_RESPONSE" in external
+    assert "preview: candidate.text.slice(0, 240)" in external
+
+
+def test_manual_chat_player_delta_cards_autostart_bridge():
+    players_template = (
+        ROOT / "rpg" / "templates" / "rpg" / "_players.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'data-mraz-bridge-kind="player"' in players_template
+    assert 'data-mraz-bridge-autostart="1"' in players_template
+    assert "not waiting.external_is_bootstrap" in players_template
