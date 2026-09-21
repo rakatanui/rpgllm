@@ -110,7 +110,8 @@ async function sendJobToExternalTab(job) {
       return true;
     }
   } catch {
-    // The content script may not exist yet because navigation is still loading.
+    // The content script may not exist yet because navigation is still loading,
+    // or an already-open tab may still have an invalidated pre-reload script.
   }
   return false;
 }
@@ -148,6 +149,7 @@ async function startJob(message, sender) {
   }
 
   let target = await findExistingTargetTab(message.chatUrl);
+  const reusedExistingTab = Boolean(target);
   if (!target) {
     target = await chrome.tabs.create({
       url: message.chatUrl,
@@ -173,7 +175,14 @@ async function startJob(message, sender) {
   await saveJob(job);
 
   if (target.status === "complete") {
-    await sendJobToExternalTab(job);
+    const sent = await sendJobToExternalTab(job);
+    if (!sent && reusedExistingTab) {
+      // A tab that survived an extension Reload still contains the old,
+      // invalidated content-script context. Reload it once so Manifest V3
+      // injects the current external-chat.js, whose MRAZ_EXTERNAL_READY
+      // handshake will pick up this waiting job.
+      await chrome.tabs.reload(target.id);
+    }
   }
   return { accepted: true };
 }
