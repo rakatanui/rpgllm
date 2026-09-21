@@ -57,14 +57,7 @@ function makeJobId(card) {
 
 async function startBridge(button) {
   const card = bridgeCardFromButton(button);
-  if (!card) {
-    trace("bridge-result-card-missing", {
-      jobId: message.jobId || "",
-      kind,
-      execution,
-    });
-    return false;
-  }
+  if (!card) return false;
   if (card.dataset.mrazBridgeJob) return true;
 
   const promptElement = card.querySelector("[data-mraz-bridge-prompt]");
@@ -147,7 +140,14 @@ function submitBridgeResult(message) {
       candidate.dataset.mrazBridgeKind === kind &&
       candidate.dataset.mrazBridgeExecution === execution
   );
-  if (!card) return false;
+  if (!card) {
+    trace("bridge-result-card-missing", {
+      jobId: message.jobId || "",
+      kind,
+      execution,
+    });
+    return false;
+  }
 
   const button = card.querySelector(BRIDGE_BUTTON_SELECTOR);
   if (button) button.disabled = false;
