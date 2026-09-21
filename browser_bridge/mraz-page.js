@@ -18,6 +18,22 @@ function safeRuntimeMessage(message) {
   }
 }
 
+function trace(event, details = {}) {
+  const entry = {
+    component: "mraz-page",
+    event,
+    details: {
+      pageUrl: window.location.href,
+      ...details,
+    },
+  };
+  console.log("[MRAZ Bridge source]", event, entry.details);
+  return safeRuntimeMessage({
+    type: "MRAZ_DEBUG_LOG",
+    ...entry,
+  });
+}
+
 function bridgeCardFromButton(button) {
   return button.closest("[data-mraz-bridge-card]");
 }
@@ -41,7 +57,14 @@ function makeJobId(card) {
 
 async function startBridge(button) {
   const card = bridgeCardFromButton(button);
-  if (!card) return false;
+  if (!card) {
+    trace("bridge-result-card-missing", {
+      jobId: message.jobId || "",
+      kind,
+      execution,
+    });
+    return false;
+  }
   if (card.dataset.mrazBridgeJob) return true;
 
   const promptElement = card.querySelector("[data-mraz-bridge-prompt]");
@@ -68,6 +91,14 @@ async function startBridge(button) {
 
   const jobId = makeJobId(card);
   card.dataset.mrazBridgeJob = jobId;
+  trace("bridge-start", {
+    jobId,
+    kind: card.dataset.mrazBridgeKind || "",
+    execution: card.dataset.mrazBridgeExecution || "",
+    chatUrl,
+    label,
+    promptLength: prompt.length,
+  });
   button.disabled = true;
   setStatus(card, "Opening external chat…", "running");
 
@@ -82,8 +113,17 @@ async function startBridge(button) {
     if (!result || !result.accepted) {
       throw new Error(result && result.error ? result.error : "Bridge rejected the job.");
     }
+    trace("bridge-start-accepted", {
+      jobId,
+      reused: Boolean(result.reused),
+      state: result.state || "",
+    });
     setStatus(card, "Prompt sent. Waiting for model response…", "running");
   } catch (error) {
+    trace("bridge-start-error", {
+      jobId,
+      error: String(error && error.message ? error.message : error),
+    });
     button.disabled = false;
     setStatus(
       card,
@@ -94,6 +134,12 @@ async function startBridge(button) {
 }
 
 function submitBridgeResult(message) {
+  trace("bridge-result-received", {
+    jobId: message.jobId || "",
+    ok: Boolean(message.ok),
+    responseLength: message.response ? message.response.length : 0,
+    error: message.error || "",
+  });
   const [kind, execution] = String(message.jobId || "").split(":", 2);
   const cards = document.querySelectorAll("[data-mraz-bridge-card]");
   const card = Array.from(cards).find(
@@ -124,6 +170,10 @@ function submitBridgeResult(message) {
 
   // Let the extension message acknowledgement return before navigation tears
   // down this content script. The normal Django form remains the authority.
+  trace("bridge-import-submit", {
+    jobId: message.jobId || "",
+    responseLength: response.value.length,
+  });
   window.setTimeout(() => form.requestSubmit(), 0);
   return true;
 }
@@ -146,6 +196,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function autoStartBridgeIfPresent() {
   const card = document.querySelector(AUTOSTART_CARD_SELECTOR);
   if (!card || card.dataset.mrazBridgeJob) return false;
+  trace("autostart-card-found", {
+    kind: card.dataset.mrazBridgeKind || "",
+    execution: card.dataset.mrazBridgeExecution || "",
+    chatUrl: card.dataset.mrazBridgeChatUrl || "",
+  });
   const button = card.querySelector(BRIDGE_BUTTON_SELECTOR);
   if (!button || button.disabled) return false;
   startBridge(button);
@@ -170,6 +225,7 @@ function tickAutoplay() {
 }
 
 setBridgeReady();
+trace("content-script-ready");
 autoStartBridgeIfPresent();
 safeRuntimeMessage({ type: "MRAZ_SOURCE_READY" });
 registerAutoplaySource().then(tickAutoplay).catch(() => {});
