@@ -7,6 +7,17 @@ function setBridgeReady() {
   document.documentElement.dataset.mrazBrowserBridge = "ready";
 }
 
+function safeRuntimeMessage(message) {
+  try {
+    if (!chrome.runtime || !chrome.runtime.id) {
+      return Promise.resolve(null);
+    }
+    return chrome.runtime.sendMessage(message).catch(() => null);
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+
 function bridgeCardFromButton(button) {
   return button.closest("[data-mraz-bridge-card]");
 }
@@ -147,19 +158,19 @@ function autoplayEnabled() {
 
 async function registerAutoplaySource() {
   if (!autoplayEnabled()) return;
-  await chrome.runtime.sendMessage({
+  await safeRuntimeMessage({
     type: "MRAZ_AUTOPLAY_REGISTER",
     sourceUrl: window.location.href,
-  }).catch(() => {});
+  });
 }
 
 function tickAutoplay() {
   if (!autoplayEnabled()) return;
-  chrome.runtime.sendMessage({ type: "MRAZ_AUTOPLAY_TICK" }).catch(() => {});
+  safeRuntimeMessage({ type: "MRAZ_AUTOPLAY_TICK" });
 }
 
 setBridgeReady();
 autoStartBridgeIfPresent();
-chrome.runtime.sendMessage({ type: "MRAZ_SOURCE_READY" }).catch(() => {});
+safeRuntimeMessage({ type: "MRAZ_SOURCE_READY" });
 registerAutoplaySource().then(tickAutoplay).catch(() => {});
 window.setInterval(tickAutoplay, 2500);
