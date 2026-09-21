@@ -1217,3 +1217,51 @@ def test_automatic_operational_fillable_does_not_authorize_unrelated_exact_addre
             ),
             scene=scene,
         )
+
+
+@pytest.mark.django_db
+def test_soft_round_gm_turn_targets_only_meaningful_parallel_line():
+    campaign = make_campaign()
+    ned = make_player(campaign, "Нед")
+    victoria = make_player(campaign, "Виктория")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.SOFT_ROUND,
+        participants=[ned, victoria],
+    )
+
+    parsed = gm_engine.parse_gm_response(
+        json.dumps(
+            {
+                "action": "TURN",
+                "public": "В каюте Виктории раздаётся стук в дверь.",
+                "private": [],
+                "turn_targets": [victoria.pk],
+                "scene_transition": None,
+            },
+            ensure_ascii=False,
+        ),
+        scene=scene,
+    )
+
+    assert parsed.turn_targets == [victoria.pk]
+
+    with pytest.raises(ValidationError, match="SOFT_ROUND"):
+        gm_engine.parse_gm_response(
+            json.dumps(
+                {
+                    "action": "TURN",
+                    "public": "Происходит локальный beat.",
+                    "private": [],
+                    "turn_targets": [],
+                    "scene_transition": None,
+                },
+                ensure_ascii=False,
+            ),
+            scene=scene,
+        )
+
+    config = GameMasterConfig.objects.create(campaign=campaign, enabled=True)
+    context = build_gm_context(scene=scene, config=config)
+    assert "SOFT_ROUND is for parallel or loosely coupled character lines" in context.system_prompt
+    assert "There is no obligation to alternate mechanically" in context.system_prompt
