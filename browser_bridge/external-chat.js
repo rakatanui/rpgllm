@@ -239,37 +239,94 @@ function stripStructuredFence(text) {
   return match ? match[1].trim() : trimmed;
 }
 
+function structuredJsonCandidates(text) {
+  const trimmed = (text || "").trim();
+  const candidates = [];
+  const add = (value) => {
+    const candidate = (value || "").trim();
+    if (candidate && !candidates.includes(candidate)) {
+      candidates.push(candidate);
+    }
+  };
+
+  add(stripStructuredFence(trimmed));
+
+  for (const match of trimmed.matchAll(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi)) {
+    add(match[1]);
+  }
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    add(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+
+  return candidates;
+}
+
 function structuredResponseStatus(text, jobId) {
-  const normalized = stripStructuredFence(text);
-  let payload;
-  try {
-    payload = JSON.parse(normalized);
-  } catch {
-    return { ready: false, reason: "not-json", normalized };
-  }
-  if (!payload || Array.isArray(payload) || typeof payload !== "object") {
-    return { ready: false, reason: "not-object", normalized };
+  const candidates = structuredJsonCandidates(text);
+  let lastReason = "not-json";
+  let lastNormalized = (text || "").trim();
+
+  for (const normalized of candidates) {
+    let payload;
+    try {
+      payload = JSON.parse(normalized);
+    } catch {
+      lastReason = "not-json";
+      lastNormalized = normalized;
+      continue;
+    }
+    if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+      lastReason = "not-object";
+      lastNormalized = normalized;
+      continue;
+    }
+
+    if (String(jobId || "").startsWith("gm:")) {
+      const action = String(payload.action || "").toUpperCase();
+      if (["TURN", "NARRATE", "WAIT"].includes(action)) {
+        return { ready: true, reason: "", normalized };
+      }
+      lastReason = action ? "invalid-gm-action" : "missing-gm-action";
+      lastNormalized = normalized;
+      continue;
+    }
+
+    if (String(jobId || "").startsWith("player:")) {
+      const action = String(payload.action_type || "").toUpperCase();
+      if (["ACT", "PASS", "ACT_OUT_OF_TURN"].includes(action)) {
+        return { ready: true, reason: "", normalized };
+      }
+      lastReason = action ? "invalid-player-action" : "missing-player-action";
+      lastNormalized = normalized;
+      continue;
+    }
+
+    return { ready: true, reason: "", normalized };
   }
 
+  return { ready: false, reason: lastReason, normalized: lastNormalized };
+}
+
+function structuredRepairPrompt(jobId, reason) {
   if (String(jobId || "").startsWith("gm:")) {
-    const action = String(payload.action || "").toUpperCase();
-    return {
-      ready: ["TURN", "NARRATE", "WAIT"].includes(action),
-      reason: action ? "invalid-gm-action" : "missing-gm-action",
-      normalized,
-    };
+    return (
+      "Your previous answer could not be imported by MRAZ (" + reason + "). " +
+      "Return ONLY the corrected JSON object for the SAME GM execution. " +
+      'Schema: {"action":"TURN|NARRATE|WAIT","public":"...","private":[],' +
+      '"turn_targets":[],"scene_transition":null}. ' +
+      "Do not repeat the scene, do not add commentary, Markdown, or code fences. " +
+      "In ROUND mode leave turn_targets empty."
+    );
   }
-
-  if (String(jobId || "").startsWith("player:")) {
-    const action = String(payload.action_type || "").toUpperCase();
-    return {
-      ready: ["ACT", "PASS", "ACT_OUT_OF_TURN"].includes(action),
-      reason: action ? "invalid-player-action" : "missing-player-action",
-      normalized,
-    };
-  }
-
-  return { ready: true, reason: "", normalized };
+  return (
+    "Your previous answer could not be imported by MRAZ (" + reason + "). " +
+    "Return ONLY the corrected JSON object for the SAME player execution. " +
+    'Schema: {"action_type":"ACT|PASS|ACT_OUT_OF_TURN","public":"...","private_to_gm":""}. ' +
+    "Do not add commentary, Markdown, or code fences."
+  );
 }
 
 function responseText(node, adapter) {
@@ -382,17 +439,25 @@ async function waitForFreshResponse(adapter, beforeTexts, jobId) {
         if (contract.ready) {
           return contract.normalized;
         }
-        if (stablePolls >= fallbackStablePolls) {
+        if (
+          stablePolls >= fallbackStablePolls &&
+          composerReadyAgain
+        ) {
           trace("response-contract-invalid", {
             jobId,
             responseLength: candidate.text.length,
             reason: contract.reason,
+            preview: candidate.text.slice(0, 240),
           });
-          throw new Error(
+          const error = new Error(
             "External model response stabilized but did not satisfy the structured response contract (" +
             contract.reason +
             ")."
           );
+          error.code = "MRAZ_INVALID_STRUCTURED_RESPONSE";
+          error.reason = contract.reason;
+          error.candidateText = candidate.text;
+          throw error;
         }
       }
     }
@@ -459,8 +524,49 @@ async function runJob(message) {
   sendButton.click();
   trace("send-clicked", { jobId: message.jobId });
 
-  const response = await waitForFreshResponse(adapter, beforeTexts, message.jobId);
-  if (!response.trim()) {
+  let response;
+  let responseBaseline = beforeTexts;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      response = await waitForFreshResponse(
+        adapter,
+        responseBaseline,
+        message.jobId
+      );
+      break;
+    } catch (error) {
+      if (
+        error.code !== "MRAZ_INVALID_STRUCTURED_RESPONSE" ||
+        attempt >= 2
+      ) {
+        throw error;
+      }
+
+      trace("response-auto-repair", {
+        jobId: message.jobId,
+        attempt: attempt + 1,
+        reason: error.reason || "invalid-structured-response",
+      });
+
+      responseBaseline = snapshotAssistantTexts(adapter);
+      const repairComposer = await waitForElement(adapter.composer);
+      fillComposer(
+        repairComposer,
+        structuredRepairPrompt(
+          message.jobId,
+          error.reason || "invalid-structured-response"
+        )
+      );
+      const repairSendButton = await waitForSendButton(adapter);
+      repairSendButton.click();
+      trace("repair-send-clicked", {
+        jobId: message.jobId,
+        attempt: attempt + 1,
+      });
+    }
+  }
+
+  if (!response || !response.trim()) {
     throw new Error(adapter.name + " returned an empty response.");
   }
 
