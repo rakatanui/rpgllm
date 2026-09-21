@@ -489,12 +489,14 @@ function prepareComposerSubmit(form, event) {
 function prepareSilentTurn(form, mode) {
   document.getElementById("composer-mode").value = "IC";
   form.action = "{% url 'silent_turn' scene.pk %}";
-  if (mode === "MANUAL" || mode === "SOFT_ROUND") {
-    const selected = form.querySelectorAll('input[name="selected_players"]:checked');
-    if (selected.length < 1) {
-      window.alert("Для Молчания выберите хотя бы одного игрока.");
-      return false;
-    }
+  const selected = form.querySelectorAll('input[name="selected_players"]:checked');
+  if (mode === "MANUAL" && selected.length !== 1) {
+    window.alert("Для Молчания в MANUAL выберите ровно одного игрока.");
+    return false;
+  }
+  if (mode === "SOFT_ROUND" && selected.length < 1) {
+    window.alert("Для Молчания в SOFT_ROUND выберите хотя бы одного игрока.");
+    return false;
   }
   const textarea = form.querySelector('textarea[name="content"]');
   if (textarea && textarea.value.trim()) {
