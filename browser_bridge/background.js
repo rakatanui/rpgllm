@@ -1,5 +1,38 @@
 const JOB_PREFIX = "mraz-bridge-job:";
 const AUTOPLAY_SOURCE_KEY = "mraz-autoplay-source";
+const DEBUG_LOG_KEY = "mraz-bridge-debug-log";
+const DEBUG_LOG_LIMIT = 500;
+
+async function appendDebugLog(component, event, details = {}) {
+  const entry = {
+    at: new Date().toISOString(),
+    component,
+    event,
+    details,
+  };
+  console.log("[MRAZ Bridge]", entry);
+  try {
+    const data = await chrome.storage.local.get(DEBUG_LOG_KEY);
+    const current = Array.isArray(data[DEBUG_LOG_KEY]) ? data[DEBUG_LOG_KEY] : [];
+    current.push(entry);
+    if (current.length > DEBUG_LOG_LIMIT) {
+      current.splice(0, current.length - DEBUG_LOG_LIMIT);
+    }
+    await chrome.storage.local.set({ [DEBUG_LOG_KEY]: current });
+  } catch (error) {
+    console.warn("MRAZ bridge could not persist debug log", error);
+  }
+}
+
+async function getDebugLogs() {
+  const data = await chrome.storage.local.get(DEBUG_LOG_KEY);
+  return Array.isArray(data[DEBUG_LOG_KEY]) ? data[DEBUG_LOG_KEY] : [];
+}
+
+async function clearDebugLogs() {
+  await chrome.storage.local.remove(DEBUG_LOG_KEY);
+}
+
 
 function jobKey(jobId) {
   return JOB_PREFIX + jobId;
@@ -96,6 +129,12 @@ async function findExistingTargetTab(chatUrl) {
 
 async function sendJobToExternalTab(job) {
   if (!job.targetTabId) return false;
+  await appendDebugLog("background", "job-send-attempt", {
+    jobId: job.jobId,
+    targetTabId: job.targetTabId,
+    state: job.state,
+    promptLength: (job.prompt || "").length,
+  });
   try {
     const response = await chrome.tabs.sendMessage(job.targetTabId, {
       type: "MRAZ_BRIDGE_RUN",
@@ -107,9 +146,23 @@ async function sendJobToExternalTab(job) {
     if (response && response.accepted) {
       job.state = "running";
       await saveJob(job);
+      await appendDebugLog("background", "job-send-accepted", {
+        jobId: job.jobId,
+        targetTabId: job.targetTabId,
+      });
       return true;
     }
-  } catch {
+    await appendDebugLog("background", "job-send-rejected", {
+      jobId: job.jobId,
+      targetTabId: job.targetTabId,
+      response: response || null,
+    });
+  } catch (error) {
+    await appendDebugLog("background", "job-send-error", {
+      jobId: job.jobId,
+      targetTabId: job.targetTabId,
+      error: String(error && error.message ? error.message : error),
+    });
     // The content script may not exist yet because navigation is still loading,
     // or an already-open tab may still have an invalidated pre-reload script.
   }
@@ -123,7 +176,16 @@ async function notifySource(job, payload) {
       jobId: job.jobId,
       ...payload,
     });
-    return Boolean(response && response.accepted);
+    const accepted = Boolean(response && response.accepted);
+    await appendDebugLog("background", "source-notify", {
+      jobId: job.jobId,
+      sourceTabId: job.sourceTabId,
+      ok: Boolean(payload && payload.ok),
+      accepted,
+      responseLength: payload && payload.response ? payload.response.length : 0,
+      error: payload && payload.error ? payload.error : "",
+    });
+    return accepted;
   } catch (error) {
     console.warn("MRAZ bridge could not notify source tab", error);
     return false;
@@ -143,9 +205,23 @@ async function startJob(message, sender) {
     );
   }
 
+  await appendDebugLog("background", "job-start-request", {
+    jobId: message.jobId,
+    sourceTabId: sender.tab.id,
+    chatUrl: message.chatUrl,
+    label: message.label || "",
+    promptLength: (message.prompt || "").length,
+  });
+
   const existing = await loadJob(message.jobId);
   if (existing) {
-    return { accepted: true, reused: true };
+    await appendDebugLog("background", "job-reused", {
+      jobId: message.jobId,
+      state: existing.state,
+      sourceTabId: existing.sourceTabId,
+      targetTabId: existing.targetTabId,
+    });
+    return { accepted: true, reused: true, state: existing.state };
   }
 
   let target = await findExistingTargetTab(message.chatUrl);
@@ -155,7 +231,18 @@ async function startJob(message, sender) {
       url: message.chatUrl,
       active: true,
     });
+    await appendDebugLog("background", "target-tab-created", {
+      jobId: message.jobId,
+      targetTabId: target.id,
+      chatUrl: message.chatUrl,
+    });
   } else {
+    await appendDebugLog("background", "target-tab-reused", {
+      jobId: message.jobId,
+      targetTabId: target.id,
+      tabUrl: target.url || "",
+      tabStatus: target.status || "",
+    });
     await chrome.tabs.update(target.id, { active: true });
     if (target.windowId) {
       await chrome.windows.update(target.windowId, { focused: true });
@@ -181,6 +268,10 @@ async function startJob(message, sender) {
       // invalidated content-script context. Reload it once so Manifest V3
       // injects the current external-chat.js, whose MRAZ_EXTERNAL_READY
       // handshake will pick up this waiting job.
+      await appendDebugLog("background", "target-tab-reload-stale-script", {
+        jobId: job.jobId,
+        targetTabId: target.id,
+      });
       await chrome.tabs.reload(target.id);
     }
   }
@@ -199,6 +290,10 @@ async function registerAutoplaySource(message, sender) {
     lastReloadAt: 0,
   };
   await saveAutoplaySource(source);
+  await appendDebugLog("background", "autoplay-source-registered", {
+    sourceTabId: source.sourceTabId,
+    sourceUrl: source.sourceUrl,
+  });
   return { accepted: true };
 }
 
@@ -263,12 +358,44 @@ async function tickAutoplay() {
   source.lastReloadExecution = executionId;
   source.lastReloadAt = now;
   await saveAutoplaySource(source);
+  await appendDebugLog("background", "autoplay-source-reload", {
+    sourceTabId: source.sourceTabId,
+    executionId,
+  });
   await chrome.tabs.reload(source.sourceTabId);
   return { accepted: true, pending: true, reloaded: true };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
+
+  if (message.type === "MRAZ_DEBUG_LOG") {
+    appendDebugLog(
+      message.component || "content",
+      message.event || "event",
+      message.details || {}
+    )
+      .then(() => sendResponse({ accepted: true }))
+      .catch(() => sendResponse({ accepted: false }));
+    return true;
+  }
+
+  if (message.type === "MRAZ_DEBUG_GET") {
+    getDebugLogs()
+      .then((logs) => sendResponse({ accepted: true, logs }))
+      .catch((error) => sendResponse({
+        accepted: false,
+        error: String(error && error.message ? error.message : error),
+      }));
+    return true;
+  }
+
+  if (message.type === "MRAZ_DEBUG_CLEAR") {
+    clearDebugLogs()
+      .then(() => sendResponse({ accepted: true }))
+      .catch(() => sendResponse({ accepted: false }));
+    return true;
+  }
 
   if (message.type === "MRAZ_AUTOPLAY_REGISTER") {
     registerAutoplaySource(message, sender)
@@ -365,6 +492,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         error: message.error || "",
       };
       await saveJob(job);
+      await appendDebugLog("background", "external-result-received", {
+        jobId: job.jobId,
+        ok: job.result.ok,
+        responseLength: job.result.response ? job.result.response.length : 0,
+        error: job.result.error || "",
+      });
       const delivered = await notifySource(job, job.result);
       if (delivered) {
         await deleteJob(message.jobId);
