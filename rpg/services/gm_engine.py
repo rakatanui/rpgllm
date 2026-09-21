@@ -37,6 +37,7 @@ from rpg.services.gm_context import (
     build_gm_authoritative_fact_corpus,
     build_gm_context,
     build_gm_knowledge_retrieval,
+    gm_lookup_fillable_scopes,
 )
 from rpg.services.llm import get_llm_client
 
@@ -99,6 +100,12 @@ def _validate_existing_source_exact_literals(
     if not retrieval:
         return
 
+    # An author-controlled GM_FILLABLE scope is an explicit exception to the
+    # conservative exact-literal guard for this specific existing-source lookup.
+    # Prompt rules still constrain the model to the matching delegated subject.
+    if gm_lookup_fillable_scopes(scene=scene):
+        return
+
     corpus = _normalize_fact_literal(build_gm_authoritative_fact_corpus(scene=scene))
     padded_corpus = f" {corpus} "
     response_text = "\n".join(
@@ -150,8 +157,12 @@ def gm_execution_request(scene: Scene) -> str:
         "Exact facts such as addresses, names, phone/registration numbers, dates, message contents, "
         "passwords, codes, case numbers, prior links/events, and existing-object properties require "
         "support in authoritative application context. If support is absent, say the information is "
-        "unknown/unavailable instead of completing the gap with plausible fiction. This does not "
-        "restrict genuinely new present/future world facts that arise now.\n\n"
+        "unknown/unavailable instead of completing the gap with plausible fiction. EXCEPTION: if "
+        "author-controlled context contains a matching [[GM_FILLABLE]]...[[/GM_FILLABLE]] scope, "
+        "that scope explicitly permits you to create the missing pre-existing details inside it. "
+        "Keep the invention inside that tagged subject/source, preserve all established constraints, "
+        "and treat anything you publish as fixed canon from then on. This does not restrict genuinely "
+        "new present/future world facts that arise now.\n\n"
         "NPC CAUSALITY: do not create suspicious, dramatic, or plot-significant NPC behavior merely "
         "because the player is nearby or because a GM beat is required. Such behavior needs support "
         "in NPC goals/knowledge, scene state, an ongoing event, or a direct consequence. Ordinary "
