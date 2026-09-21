@@ -81,3 +81,34 @@ def message_format(value):
 def saoot_format(value):
     """Backward-compatible alias for templates/plugins using the old filter."""
     return message_format(value)
+
+
+_OOC_PREFIXES = (
+    "[OOC PLAYER]",
+    "[OOC GM]",
+)
+
+
+@register.filter
+def message_visible_content(message):
+    """Return human-facing message text without transport-only OOC prefixes."""
+    value = getattr(message, "content", "") or ""
+    stripped = value.strip()
+    for prefix in _OOC_PREFIXES:
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].lstrip("\n ").strip()
+    return stripped
+
+
+@register.filter
+def message_type_label(message):
+    """Small UI label without changing stored action/message semantics."""
+    action = (getattr(message, "action_type", "") or "").strip().upper()
+    if action:
+        return action
+    content = (getattr(message, "content", "") or "").strip()
+    if any(content.startswith(prefix) for prefix in _OOC_PREFIXES):
+        return "OOC"
+    if (getattr(message, "author_type", "") or "").upper() == "SYSTEM":
+        return "SYSTEM"
+    return ""
