@@ -162,6 +162,29 @@ def gm_execution_request(scene: Scene) -> str:
     participants = list(
         scene.scene_participants.select_related("player").order_by("order", "pk")
     )
+    if scene.mode == TurnMode.ROUND:
+        order = list(scene.round_order or [])
+        active_id = None
+        if order and 0 <= scene.active_player_index < len(order):
+            active_id = order[scene.active_player_index]
+        active_participation = next(
+            (
+                item
+                for item in participants
+                if item.player_id == active_id
+            ),
+            None,
+        )
+        if active_participation is not None:
+            active_player = active_participation.player
+            text += (
+                "\n\nROUND CONTROL: the active player for the next player turn is "
+                f"{active_player.display_name} (player_id={active_player.pk}). "
+                "Frame the immediate beat so this active player has a clear opportunity "
+                "to react or act. Do not make an inactive participant the sole required "
+                "responder unless the fiction specifically requires an urgent out-of-turn "
+                "intervention."
+            )
     if (
         scene.mode == TurnMode.MANUAL
         and len(participants) == 1
@@ -259,6 +282,24 @@ def maybe_start_auto_gm(*, scene: Scene) -> GameMasterExecution | None:
         and not (config.manual_chat_url or "").strip()
     ):
         return None
+
+    latest_public_turn = (
+        scene.turns.filter(is_private=False)
+        .prefetch_related("executions")
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    if latest_public_turn is not None and latest_public_turn.state == TurnState.COMPLETED:
+        actions = [
+            (execution.action_type or "").strip().upper()
+            for execution in latest_public_turn.executions.all()
+        ]
+        if actions and all(action == "PASS" for action in actions):
+            # Safety brake: an all-PASS public turn contains no player action for
+            # autoplay to react to. Starting another automatic GM beat here can
+            # create a self-sustaining GM -> PASS -> GM loop.
+            return None
+
     if scene.turns.filter(state=TurnState.RUNNING).exists():
         return None
     if get_active_gm_execution(scene) is not None:
