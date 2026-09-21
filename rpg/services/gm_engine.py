@@ -800,9 +800,9 @@ def _validate_gm_response(response: GameMasterResponse, *, scene: Scene) -> None
     if not response.public:
         raise ValidationError("TURN requires a non-empty public GM beat.")
 
-    if scene.mode == TurnMode.MANUAL and not response.turn_targets:
+    if scene.mode in (TurnMode.MANUAL, TurnMode.SOFT_ROUND) and not response.turn_targets:
         raise ValidationError(
-            "TURN in MANUAL mode requires at least one turn target."
+            f"TURN in {scene.mode} mode requires at least one turn target."
         )
     if scene.mode == TurnMode.ROUND and response.turn_targets:
         raise ValidationError(
@@ -1023,6 +1023,11 @@ def _build_manual_chat_prompt(
         control.append(
             f"Round order IDs: {list(scene.round_order or [])}; "
             f"active index: {scene.active_player_index}"
+        )
+    elif scene.mode == TurnMode.SOFT_ROUND:
+        control.append(
+            "SOFT_ROUND: target only participant line(s) that have a meaningful beat now; "
+            "do not alternate mechanically."
         )
 
     prompt = (
