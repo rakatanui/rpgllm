@@ -530,10 +530,9 @@ def gm_model_status(request, scene_id):
         {
             "execution_id": gm_execution.pk if gm_execution else 0,
             "state": gm_execution.state if gm_execution else "",
-            "updated_at": (
-                gm_execution.updated_at.isoformat()
-                if gm_execution and gm_execution.updated_at
-                else ""
+            "has_error": bool(gm_execution and gm_execution.error),
+            "is_bootstrap": bool(
+                gm_execution and gm_execution.external_is_bootstrap
             ),
         }
     )
