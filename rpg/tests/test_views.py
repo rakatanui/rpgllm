@@ -7,7 +7,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles import finders
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client, override_settings
+from django.test import Client, RequestFactory, override_settings
 from django.urls import reverse
 
 from rpg.models import (
@@ -29,6 +29,7 @@ from rpg.models import (
     TurnState,
     Visibility,
 )
+from rpg import views
 from rpg.services import turn_engine
 from rpg.services.llm import LLMResponse, MockLLMClient
 from rpg.tests.factories import make_campaign, make_model, make_player, make_scene
@@ -3191,3 +3192,41 @@ def test_gm_model_status_and_panel_reflect_new_waiting_external_execution():
     html = panel.content.decode()
     assert f'data-mraz-bridge-execution="{execution.pk}"' in html
     assert 'data-mraz-bridge-autostart="1"' in html
+
+
+@pytest.mark.django_db
+def test_human_player_client_renders_local_qr_code():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    client = Client()
+
+    page = client.get(_human_url("human_player_client", scene, human))
+    qr = client.get(_human_url("human_player_qr", scene, human))
+
+    assert page.status_code == 200
+    html = page.content.decode()
+    assert _human_url("human_player_qr", scene, human) in html
+    assert "Open on phone" in html
+
+    assert qr.status_code == 200
+    assert qr["Content-Type"] == "image/png"
+    assert qr.content.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10]))
+    assert qr["Cache-Control"] == "private, no-store"
+
+
+@pytest.mark.django_db
+@override_settings(PUBLIC_PLAYER_HOST="play.example.test")
+def test_human_client_qr_targets_public_player_host():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    token = _human_token(scene, human)
+    request = RequestFactory().get("/ignored/")
+
+    target = views._human_client_share_url(request, token)
+
+    assert target == "https://play.example.test" + reverse(
+        "human_player_client",
+        kwargs={"access_token": token},
+    )
