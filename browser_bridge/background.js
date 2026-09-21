@@ -33,6 +33,9 @@ async function clearDebugLogs() {
   await chrome.storage.local.remove(DEBUG_LOG_KEY);
 }
 
+appendDebugLog("background", "service-worker-started", {
+  version: chrome.runtime.getManifest().version,
+});
 
 function jobKey(jobId) {
   return JOB_PREFIX + jobId;
