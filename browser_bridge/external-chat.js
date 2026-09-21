@@ -123,6 +123,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function safeRuntimeMessage(message) {
+  try {
+    if (!chrome.runtime || !chrome.runtime.id) {
+      return Promise.resolve(null);
+    }
+    return chrome.runtime.sendMessage(message).catch(() => null);
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+
 function firstElement(selectors, root = document) {
   for (const selector of selectors) {
     const element = root.querySelector(selector);
@@ -388,11 +399,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 
-chrome.runtime.sendMessage({ type: "MRAZ_EXTERNAL_READY" }).catch(() => {});
+safeRuntimeMessage({ type: "MRAZ_EXTERNAL_READY" });
 
 // When this persistent chat tab is left open on the GM machine, its heartbeat
 // keeps the MV3 service worker awake enough to notice new HUMAN -> GM autoplay
-// work even while the local MRAZ scene tab is in the background.
+// work even while the local MRAZ scene tab is in the background. If the
+// extension itself is reloaded, the old content script becomes invalid; the
+// guarded call below lets that obsolete script go quiet instead of throwing
+// every 2.5 seconds until the page is refreshed.
 window.setInterval(() => {
-  chrome.runtime.sendMessage({ type: "MRAZ_AUTOPLAY_TICK" }).catch(() => {});
+  safeRuntimeMessage({ type: "MRAZ_AUTOPLAY_TICK" });
 }, 2500);
