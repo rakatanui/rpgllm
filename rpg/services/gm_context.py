@@ -416,7 +416,9 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
         "If the exact datum is absent, treat it as UNKNOWN/UNAVAILABLE and do not infer, "
         "complete, or invent it. A retrieval miss never authorizes fabrication. "
         "A retrieved GM-visible fact also does not prove that the player character or the "
-        "consulted source has access to it; preserve visibility and in-fiction knowledge rules.\n"
+        "consulted source has access to it; preserve visibility and in-fiction knowledge rules. "
+        "Blocks explicitly labelled Player declaration history are evidence only that the character "
+        "made that declaration; they are not objective support for GM-owned external-world facts.\n"
     )
     if fillable_scopes:
         header += (
