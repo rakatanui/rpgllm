@@ -17,6 +17,11 @@ urlpatterns = [
         name="human_player_fragment",
     ),
     path(
+        "play/<uuid:access_token>/status/",
+        views.human_player_status,
+        name="human_player_status",
+    ),
+    path(
         "play/<uuid:access_token>/history/<str:channel>/",
         views.human_feed_page,
         name="human_feed_page",

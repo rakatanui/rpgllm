@@ -3044,3 +3044,105 @@ def test_human_token_cannot_set_another_players_appearance():
         )
     )
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_human_status_endpoint_reports_new_waiting_execution_without_full_page_reload():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Твой ход.",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    private = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="PRIVATE_STATUS_MARKER",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=human,
+    )
+
+    response = Client().get(_human_url("human_player_status", scene, human))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["waiting_execution_id"] == execution.pk
+    assert payload["public_latest_id"] > 0
+    assert payload["private_latest_id"] == private.pk
+    assert response["Cache-Control"] == "private, no-store"
+
+
+@pytest.mark.django_db
+def test_human_submit_as_last_round_response_auto_continues_to_manual_chat_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    ai_player = make_player(
+        campaign,
+        "Виктория",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_label="Gemini - Victoria",
+        manual_chat_url="https://gemini.google.com/app/test-victoria",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_initialized=True,
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[human, ai_player],
+    )
+    scene.round_order = [human.pk, ai_player.pk]
+    scene.active_player_index = 0
+    scene.save(update_fields=["round_order", "active_player_index", "updated_at"])
+
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_initialized=True,
+    )
+
+    result = turn_engine.start_turn(scene=scene, gm_message_text="Ваш ход.")
+    human_execution = result.turn.executions.get(player=human)
+    ai_execution = result.turn.executions.get(player=ai_player)
+    client = Client()
+
+    ai_response = client.post(
+        reverse(
+            "submit_external_response",
+            kwargs={"scene_id": scene.pk, "execution_id": ai_execution.pk},
+        ),
+        {
+            "response": (
+                '{"action_type":"PASS","public":"","private_to_gm":""}'
+            )
+        },
+    )
+    assert ai_response.status_code == 302
+    assert not scene.gm_executions.exists()
+
+    human_response = client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=human_execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Нед отвечает."},
+    )
+
+    assert human_response.status_code == 302
+    human_execution.refresh_from_db()
+    assert human_execution.state == ExecutionState.COMPLETED
+
+    gm_execution = scene.gm_executions.get()
+    assert gm_execution.state == GameMasterExecutionState.WAITING_EXTERNAL
+    assert gm_execution.external_chat_url == "https://chatgpt.com/c/test-gm"

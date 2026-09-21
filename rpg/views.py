@@ -7,7 +7,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
-from django.http import FileResponse, HttpResponse, HttpResponseBadRequest
+from django.http import FileResponse, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -703,6 +703,55 @@ def human_player_client(request, access_token):
         request,
         "rpg/human_player.html",
         _human_client_context(scene, player, request),
+    )
+    return _secure_human_response(response)
+
+
+def human_player_status(request, access_token):
+    scene, player, _ = _human_access_for_token(access_token)
+
+    waiting_execution_id = (
+        TurnExecution.objects.filter(
+            turn__scene=scene,
+            player=player,
+            transport=PlayerTransport.HUMAN,
+            state=ExecutionState.WAITING_HUMAN,
+        )
+        .order_by("-created_at", "-pk")
+        .values_list("pk", flat=True)
+        .first()
+    )
+    public_latest_id = (
+        Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PUBLIC,
+        )
+        .order_by("-pk")
+        .values_list("pk", flat=True)
+        .first()
+    )
+    private_latest_id = (
+        Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PRIVATE_GM_PLAYER,
+            private_player=player,
+        )
+        .order_by("-pk")
+        .values_list("pk", flat=True)
+        .first()
+    )
+    gm_execution = gm_engine.get_active_gm_execution(scene)
+
+    response = JsonResponse(
+        {
+            "waiting_execution_id": waiting_execution_id or 0,
+            "public_latest_id": public_latest_id or 0,
+            "private_latest_id": private_latest_id or 0,
+            "gm_execution_id": gm_execution.pk if gm_execution else 0,
+            "gm_execution_state": gm_execution.state if gm_execution else "",
+            "active_round_player_id": _active_round_player_id(scene) or 0,
+            "scene_closed": bool(scene.is_closed),
+        }
     )
     return _secure_human_response(response)
 
