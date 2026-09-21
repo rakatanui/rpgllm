@@ -109,8 +109,40 @@ _RETRIEVAL_STOPWORDS = {
 
 _RETRIEVAL_TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9]{3,}")
 
+READ_EXISTING_SOURCE = "READ_EXISTING_SOURCE"
+RECALL_EXISTING_FACT = "RECALL_EXISTING_FACT"
+USE_OPERATIONAL_DATA = "USE_OPERATIONAL_DATA"
+PROFESSIONAL_ACTION = "PROFESSIONAL_ACTION"
 
-def _latest_player_knowledge_lookup(scene: Scene) -> Message | None:
+_RECALL_STEMS = (
+    "вспомин", "вспомн", "помнит", "помн", "remember", "recall",
+)
+
+_OPERATIONAL_SOURCE_STEMS = (
+    "метео", "погод", "сводк", "прогноз", "ветер", "давлен", "облач", "видим",
+    "курс", "скорост", "снос", "дрейф", "пеленг", "радиопеленг", "компас",
+    "прибор", "вахт", "смен", "расписан", "табел", "меню", "манифест",
+    "пассажирск", "оперативн", "бюллет", "газет", "weather", "forecast",
+    "wind", "pressure", "visibility", "course", "speed", "drift", "bearing",
+    "instrument", "watch", "shift", "schedule", "roster", "menu", "manifest",
+    "bulletin", "newspaper",
+)
+
+_FIXED_SOURCE_STEMS = (
+    "досье", "архив", "переписк", "письм", "дневник", "тайн", "секрет",
+    "парол", "код", "дело", "улика", "доказ", "биограф", "контрабанд",
+    "груз", "message", "dossier", "archive", "letter", "correspondence",
+    "password", "secret", "case", "evidence", "biograph",
+)
+
+_PROFESSIONAL_ACTION_STEMS = (
+    "проклад", "счислен", "навига", "вахт", "контрол", "рассчит", "вычисл",
+    "провер", "сверя", "коррект", "держит курс", "ведёт курс", "наблюд",
+    "plot", "navigate", "calculate", "compute", "monitor", "check", "watch",
+)
+
+
+def _latest_public_player_act(scene: Scene) -> Message | None:
     message = (
         Message.objects.filter(
             scene=scene,
@@ -126,17 +158,51 @@ def _latest_player_knowledge_lookup(scene: Scene) -> Message | None:
         or message.action_type == "PASS"
     ):
         return None
-
-    text = (message.content or "").strip().lower()
-    if not text:
-        return None
-
-    has_lookup_verb = any(stem in text for stem in _KNOWLEDGE_LOOKUP_VERB_STEMS)
-    has_existing_source = any(stem in text for stem in _KNOWLEDGE_SOURCE_STEMS)
-    if not (has_lookup_verb and has_existing_source):
+    if not (message.content or "").strip():
         return None
     return message
 
+
+def classify_latest_player_information_action(scene: Scene) -> tuple[Message | None, str | None]:
+    """Classify the latest public player ACT for source-guard purposes.
+
+    The guard is intentionally narrow: ordinary professional work is not treated as
+    a request to reveal protected pre-existing content. Operational data is separated
+    so routine present-tense sources can be filled safely by the GM when no fixed lore
+    conflicts with them.
+    """
+    message = _latest_public_player_act(scene)
+    if message is None:
+        return None, None
+
+    text = (message.content or "").strip().lower()
+    has_lookup_verb = any(stem in text for stem in _KNOWLEDGE_LOOKUP_VERB_STEMS)
+    has_source = any(stem in text for stem in _KNOWLEDGE_SOURCE_STEMS)
+    has_recall = any(stem in text for stem in _RECALL_STEMS)
+    has_operational = any(stem in text for stem in _OPERATIONAL_SOURCE_STEMS)
+    has_fixed = any(stem in text for stem in _FIXED_SOURCE_STEMS)
+    has_professional = any(stem in text for stem in _PROFESSIONAL_ACTION_STEMS)
+
+    if has_recall:
+        return message, RECALL_EXISTING_FACT
+    if has_lookup_verb and has_fixed:
+        return message, READ_EXISTING_SOURCE
+    if has_lookup_verb and has_operational:
+        return message, USE_OPERATIONAL_DATA
+    if has_lookup_verb and has_source:
+        return message, READ_EXISTING_SOURCE
+    if has_operational and has_professional:
+        return message, PROFESSIONAL_ACTION
+    if has_professional:
+        return message, PROFESSIONAL_ACTION
+    return message, None
+
+
+def _latest_player_knowledge_lookup(scene: Scene) -> Message | None:
+    message, category = classify_latest_player_information_action(scene)
+    if category in {READ_EXISTING_SOURCE, RECALL_EXISTING_FACT, USE_OPERATIONAL_DATA}:
+        return message
+    return None
 
 def _retrieval_terms(text: str) -> list[str]:
     raw_terms: list[str] = []
@@ -227,13 +293,21 @@ def _matching_gm_fillable_scopes(*, scene: Scene, query: str) -> list[str]:
 
 
 def gm_lookup_fillable_scopes(*, scene: Scene) -> list[str]:
-    lookup = _latest_player_knowledge_lookup(scene)
-    if lookup is None:
+    lookup, category = classify_latest_player_information_action(scene)
+    if lookup is None or category is None:
         return []
-    return _matching_gm_fillable_scopes(
-        scene=scene,
-        query=(lookup.content or "").strip(),
-    )
+    query = (lookup.content or "").strip()
+    explicit = _matching_gm_fillable_scopes(scene=scene, query=query)
+    if explicit:
+        return explicit
+    if category == USE_OPERATIONAL_DATA:
+        return [
+            "AUTO OPERATIONAL SOURCE: routine current operational data requested in the latest "
+            "player action may be established by the GM if not already fixed by canon. This "
+            "permission covers only ordinary present/current operational details and never hidden "
+            "plot facts, mysteries, secrets, passwords, evidence, or protected historical content."
+        ]
+    return []
 
 
 def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
@@ -243,13 +317,17 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
     It only activates when the latest public player ACT looks like an attempt to
     consult, remember, or inspect information that should already exist.
     """
-    lookup = _latest_player_knowledge_lookup(scene)
-    if lookup is None:
+    lookup, lookup_category = classify_latest_player_information_action(scene)
+    if lookup is None or lookup_category not in {
+        READ_EXISTING_SOURCE,
+        RECALL_EXISTING_FACT,
+        USE_OPERATIONAL_DATA,
+    }:
         return ""
 
     query = (lookup.content or "").strip()
     terms = _retrieval_terms(query)
-    fillable_scopes = _matching_gm_fillable_scopes(scene=scene, query=query)
+    fillable_scopes = gm_lookup_fillable_scopes(scene=scene)
     candidates: list[tuple[int, int, str]] = []
     serial = 0
 
@@ -324,7 +402,8 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
 
     header = (
         "## AUTHORITATIVE KNOWLEDGE RETRIEVAL\n"
-        f"Detected existing-source lookup in the latest player ACT:\n{query}\n\n"
+        f"Detected information action category: {lookup_category}.\n"
+        f"Latest player ACT:\n{query}\n\n"
         "This retrieval is evidence, not creative permission by default. The requested exact "
         "datum may be stated only if it is supported by authoritative application context. "
         "If the exact datum is absent, treat it as UNKNOWN/UNAVAILABLE and do not infer, "
@@ -630,6 +709,19 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
         "needed, provided they do not contradict established canon. The permission is narrow: it "
         "does not authorize invention about unrelated sources or facts. Once a filled detail is "
         "published into canon, keep it stable thereafter."
+    )
+
+    parts.append(
+        "# INFORMATION ACTION CATEGORIES\n"
+        "Distinguish READ_EXISTING_SOURCE, RECALL_EXISTING_FACT, USE_OPERATIONAL_DATA, and "
+        "PROFESSIONAL_ACTION. Apply the strict pre-existing-source guard fully to READ_EXISTING_SOURCE "
+        "and RECALL_EXISTING_FACT. USE_OPERATIONAL_DATA covers routine current working data such as "
+        "weather, watch sheets, ordinary manifests, schedules, instrument-derived values, navigation "
+        "inputs, and similar present operational material; unless fixed canon says otherwise, the GM "
+        "may establish missing routine details when needed. PROFESSIONAL_ACTION is ordinary skilled "
+        "work and must not be blocked merely because the character checks, calculates, observes, or "
+        "uses professional tools. Do not reinterpret ordinary competence as an attempt to reveal a "
+        "hidden historical fact."
     )
 
     parts.append(
