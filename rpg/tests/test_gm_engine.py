@@ -238,6 +238,27 @@ def test_gm_prompt_requires_causal_support_for_plot_significant_npc_actions():
 
 
 @pytest.mark.django_db
+def test_gm_execution_request_names_active_round_player():
+    campaign = make_campaign()
+    ned = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    victoria = make_player(campaign, "Виктория")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[ned, victoria],
+    )
+    scene.round_order = [ned.pk, victoria.pk]
+    scene.active_player_index = 0
+    scene.save(update_fields=["round_order", "active_player_index", "updated_at"])
+
+    request = gm_engine.gm_execution_request(scene)
+
+    assert "ROUND CONTROL" in request
+    assert f"Нед (player_id={ned.pk})" in request
+    assert "Do not make an inactive participant the sole required responder" in request
+
+
+@pytest.mark.django_db
 def test_gm_context_is_omniscient_but_marks_visibility():
     campaign = make_campaign(shared_memory="Общий факт.")
     a = make_player(
