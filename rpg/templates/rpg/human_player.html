@@ -188,6 +188,58 @@ function humanClearNewMessages(channel) {
   tab?.classList.remove("has-new");
 }
 
+function humanHistoryUrl(channel, before) {
+  return window.location.pathname + "history/" + channel + "/?before=" + encodeURIComponent(before);
+}
+
+function humanCompactHistory(channel, liveRegion = null) {
+  const workspaceName = humanChannelWorkspace(channel);
+  const scroller = humanWorkspaceScroller(workspaceName);
+  const older = document.getElementById("human-" + channel + "-older-pages");
+  const live = liveRegion || document.querySelector('[data-human-live-channel="' + channel + '"]');
+  if (!scroller || !older || !live) return;
+
+  older.replaceChildren();
+  scroller.querySelectorAll(".human-history-sentinel").forEach((node) => node.remove());
+
+  const nextBefore = Number(live.dataset.nextBefore || 0);
+  if (live.dataset.hasOlder !== "1" || !nextBefore) return;
+
+  const sentinel = document.createElement("div");
+  sentinel.className = "human-history-sentinel";
+  sentinel.setAttribute("hx-get", humanHistoryUrl(channel, nextBefore));
+  sentinel.setAttribute(
+    "hx-trigger",
+    "intersect once root:#human-" + channel + "-scroll threshold:0.15"
+  );
+  sentinel.setAttribute("hx-swap", "outerHTML");
+  const label = document.createElement("span");
+  label.className = "meta";
+  label.textContent = "Loading older history…";
+  sentinel.appendChild(label);
+  older.insertAdjacentElement("afterend", sentinel);
+  if (window.htmx) htmx.process(sentinel);
+}
+
+function humanPreserveEvictedMessages(channel, oldMessages, currentIds) {
+  const older = document.getElementById("human-" + channel + "-older-pages");
+  const scroller = humanWorkspaceScroller(humanChannelWorkspace(channel));
+  if (!older || !scroller) return;
+
+  const carry = document.createElement("div");
+  carry.className = "human-history-page human-history-carryover";
+  let count = 0;
+
+  oldMessages.forEach((entry) => {
+    if (currentIds.has(entry.id)) return;
+    if (scroller.querySelector('[data-message-id="' + entry.id + '"]')) return;
+    carry.appendChild(entry.node.cloneNode(true));
+    count += 1;
+  });
+
+  if (count) older.prepend(carry);
+}
+
 function humanJumpToLatest(channel) {
   const name = humanChannelWorkspace(channel);
   humanSetWorkspace(name);
@@ -252,6 +304,10 @@ function humanCaptureRegion(region) {
     scrollHeight: scroller.scrollHeight,
     atTop: scroller.scrollTop <= 24,
     active: humanActiveWorkspaceName() === workspaceName,
+    oldMessages: Array.from(region.querySelectorAll("[data-message-id]")).map((node) => ({
+      id: Number(node.dataset.messageId || 0),
+      node: node.cloneNode(true),
+    })),
   });
 }
 
@@ -272,16 +328,29 @@ function humanRestoreRegion(regionId) {
 
   const scroller = humanWorkspaceScroller(state.workspaceName);
   const newLatest = Number(region.dataset.latestMessageId || 0);
+  const currentIds = new Set(
+    Array.from(region.querySelectorAll("[data-message-id]"))
+      .map((node) => Number(node.dataset.messageId || 0))
+      .filter((value) => value > 0)
+  );
   const newCount = state.oldLatest > 0
-    ? Array.from(region.querySelectorAll("[data-message-id]"))
-        .filter((node) => Number(node.dataset.messageId || 0) > state.oldLatest).length
+    ? Array.from(currentIds).filter((id) => id > state.oldLatest).length
     : 0;
+
+  if (!state.atTop) {
+    humanPreserveEvictedMessages(state.channel, state.oldMessages || [], currentIds);
+  }
 
   requestAnimationFrame(() => {
     if (!scroller) return;
-    if (state.atTop && state.active) {
+    if (state.atTop) {
       scroller.scrollTop = 0;
-      humanClearNewMessages(state.channel);
+      humanCompactHistory(state.channel, region);
+      if (state.active) {
+        humanClearNewMessages(state.channel);
+      } else if (newLatest > state.oldLatest && state.oldLatest > 0) {
+        humanShowNewMessages(state.channel, newCount || 1);
+      }
     } else {
       const delta = scroller.scrollHeight - state.scrollHeight;
       scroller.scrollTop = Math.max(0, state.scrollTop + delta);
@@ -336,8 +405,14 @@ document.querySelectorAll("[data-human-workspace-scroll]").forEach((scroller) =>
       const name = scroller.dataset.humanWorkspaceScroll;
       humanSaveScroll(name);
       if (scroller.scrollTop <= 24) {
-        if (name === "scene") humanClearNewMessages("public");
-        if (name === "private") humanClearNewMessages("private");
+        if (name === "scene") {
+          humanClearNewMessages("public");
+          humanCompactHistory("public");
+        }
+        if (name === "private") {
+          humanClearNewMessages("private");
+          humanCompactHistory("private");
+        }
       }
     });
   }, { passive: true });
