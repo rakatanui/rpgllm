@@ -816,6 +816,16 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
     )
 
     parts.append(
+        "# QUIET SCENES ARE VALID\n"
+        "A calm flight, routine watch, meal, tea, ordinary conversation, or uneventful work period "
+        "is legitimate play. Do not introduce accidents, fires, attacks, contraband, spies, murders, "
+        "or sabotage merely to raise drama. A new complication should follow from hidden lore, existing "
+        "NPC goals, route, cargo, passengers, political conditions, technical state, player actions, "
+        "or another already-established causal chain. If no such cause is ready, preserve the quiet "
+        "world and use a sensible time skip rather than inventing trouble."
+    )
+
+    parts.append(
         "# NPC CONVERSATION ENDING\n"
         "NPCs do not keep conversations alive merely because a player is nearby. Continue dialogue only while "
         "character, goals, interest, social context, current duties, or an already-open topic support it. Once "
