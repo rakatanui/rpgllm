@@ -15,6 +15,7 @@ from rpg.models import (
     CharacterAppearance,
     ExecutionState,
     GameMasterConfig,
+    GameMasterExecution,
     GameMasterExecutionState,
     GameMasterTransport,
     LoreEntry,
