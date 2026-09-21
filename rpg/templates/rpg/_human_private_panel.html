@@ -3,6 +3,8 @@
      class="human-live-region human-private-live"
      data-human-live-channel="private"
      data-latest-message-id="{{ private_latest_id|default:'' }}"
+     data-next-before="{{ private_next_before|default:'' }}"
+     data-has-older="{{ private_has_older|yesno:'1,0' }}"
      hx-get="{% url 'human_player_fragment' access_token %}?workspace=private"
      hx-trigger="human-private-poll"
      hx-swap="outerHTML">
