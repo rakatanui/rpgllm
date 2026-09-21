@@ -233,6 +233,45 @@ function visibleText(element) {
   return (element.innerText || element.textContent || "").trim();
 }
 
+function stripStructuredFence(text) {
+  const trimmed = (text || "").trim();
+  const match = trimmed.match(/^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i);
+  return match ? match[1].trim() : trimmed;
+}
+
+function structuredResponseStatus(text, jobId) {
+  const normalized = stripStructuredFence(text);
+  let payload;
+  try {
+    payload = JSON.parse(normalized);
+  } catch {
+    return { ready: false, reason: "not-json", normalized };
+  }
+  if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+    return { ready: false, reason: "not-object", normalized };
+  }
+
+  if (String(jobId || "").startsWith("gm:")) {
+    const action = String(payload.action || "").toUpperCase();
+    return {
+      ready: ["TURN", "NARRATE", "WAIT"].includes(action),
+      reason: action ? "invalid-gm-action" : "missing-gm-action",
+      normalized,
+    };
+  }
+
+  if (String(jobId || "").startsWith("player:")) {
+    const action = String(payload.action_type || "").toUpperCase();
+    return {
+      ready: ["ACT", "PASS", "ACT_OUT_OF_TURN"].includes(action),
+      reason: action ? "invalid-player-action" : "missing-player-action",
+      normalized,
+    };
+  }
+
+  return { ready: true, reason: "", normalized };
+}
+
 function responseText(node, adapter) {
   for (const selector of adapter.responseBody) {
     if (node.matches && node.matches(selector)) {
@@ -298,7 +337,7 @@ async function waitForSendButton(adapter) {
   );
 }
 
-async function waitForFreshResponse(adapter, beforeTexts) {
+async function waitForFreshResponse(adapter, beforeTexts, jobId) {
   const timeoutMs = 10 * 60 * 1000;
   const started = Date.now();
   let lastText = "";
@@ -339,7 +378,22 @@ async function waitForFreshResponse(adapter, beforeTexts) {
           stablePolls >= fallbackStablePolls
         )
       ) {
-        return candidate.text;
+        const contract = structuredResponseStatus(candidate.text, jobId);
+        if (contract.ready) {
+          return contract.normalized;
+        }
+        if (stablePolls >= fallbackStablePolls) {
+          trace("response-contract-invalid", {
+            jobId,
+            responseLength: candidate.text.length,
+            reason: contract.reason,
+          });
+          throw new Error(
+            "External model response stabilized but did not satisfy the structured response contract (" +
+            contract.reason +
+            ")."
+          );
+        }
       }
     }
 
@@ -405,7 +459,7 @@ async function runJob(message) {
   sendButton.click();
   trace("send-clicked", { jobId: message.jobId });
 
-  const response = await waitForFreshResponse(adapter, beforeTexts);
+  const response = await waitForFreshResponse(adapter, beforeTexts, message.jobId);
   if (!response.trim()) {
     throw new Error(adapter.name + " returned an empty response.");
   }
