@@ -82,6 +82,16 @@ urlpatterns = [
         name="toggle_human_access",
     ),
     path(
+        "scene/<int:scene_id>/gm-model/panel/",
+        views.gm_model_panel,
+        name="gm_model_panel",
+    ),
+    path(
+        "scene/<int:scene_id>/gm-model/status/",
+        views.gm_model_status,
+        name="gm_model_status",
+    ),
+    path(
         "scene/<int:scene_id>/gm-model/start/",
         views.start_model_gm,
         name="start_model_gm",
