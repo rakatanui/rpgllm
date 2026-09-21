@@ -124,7 +124,8 @@
 <div id="gm-model-live"
      data-gm-execution-id="{{ gm_execution.pk|default:'0' }}"
      data-gm-execution-state="{{ gm_execution.state|default:'' }}"
-     data-gm-execution-updated="{{ gm_execution.updated_at|date:'c'|default:'' }}">
+     data-gm-execution-error="{% if gm_execution.error %}1{% else %}0{% endif %}"
+     data-gm-execution-bootstrap="{% if gm_execution.external_is_bootstrap %}1{% else %}0{% endif %}">
   {% include "rpg/_gm_model_panel.html" %}
 </div>
 
@@ -344,7 +345,8 @@ function gmModelDomSignature() {
   return [
     host.dataset.gmExecutionId || "0",
     host.dataset.gmExecutionState || "",
-    host.dataset.gmExecutionUpdated || "",
+    host.dataset.gmExecutionError || "0",
+    host.dataset.gmExecutionBootstrap || "0",
   ].join(":");
 }
 
@@ -352,7 +354,8 @@ function gmModelStatusSignature(status) {
   return [
     String(status.execution_id || 0),
     status.state || "",
-    status.updated_at || "",
+    status.has_error ? "1" : "0",
+    status.is_bootstrap ? "1" : "0",
   ].join(":");
 }
 
@@ -375,7 +378,8 @@ async function refreshGmModelPanel(status) {
     host.innerHTML = html;
     host.dataset.gmExecutionId = String(status.execution_id || 0);
     host.dataset.gmExecutionState = status.state || "";
-    host.dataset.gmExecutionUpdated = status.updated_at || "";
+    host.dataset.gmExecutionError = status.has_error ? "1" : "0";
+    host.dataset.gmExecutionBootstrap = status.is_bootstrap ? "1" : "0";
 
     if (window.htmx) htmx.process(host);
     document.dispatchEvent(new CustomEvent("mraz:gm-panel-updated"));
