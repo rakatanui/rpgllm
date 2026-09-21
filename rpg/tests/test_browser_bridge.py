@@ -75,3 +75,23 @@ def test_browser_bridge_recovers_stale_tabs_after_extension_reload():
     assert "MRAZ_EXTERNAL_READY" in external
     assert "safeRuntimeMessage" in source
     assert "MRAZ_SOURCE_READY" in source
+
+
+def test_browser_bridge_exposes_persistent_debug_log_popup():
+    manifest = json.loads((BRIDGE / "manifest.json").read_text(encoding="utf-8"))
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert manifest["version"] == "0.4.0"
+    assert manifest["action"]["default_popup"] == "popup.html"
+    assert (BRIDGE / "popup.html").is_file()
+    assert (BRIDGE / "popup.js").is_file()
+    assert "mraz-bridge-debug-log" in background
+    assert "MRAZ_DEBUG_GET" in background
+    assert "MRAZ_DEBUG_CLEAR" in background
+    assert "MRAZ_DEBUG_LOG" in external
+    assert "MRAZ_DEBUG_LOG" in source
+    assert "job-send-attempt" in background
+    assert "bridge-result-received" in source
+    assert "response-detected" in external
