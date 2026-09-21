@@ -1,0 +1,8 @@
+<div class="human-history-page" data-history-channel="{{ channel }}">
+  {% if channel == "public" %}
+    {% include "rpg/_human_public_messages.html" %}
+  {% else %}
+    {% include "rpg/_human_private_messages.html" %}
+  {% endif %}
+</div>
+{% include "rpg/_human_history_sentinel.html" %}
