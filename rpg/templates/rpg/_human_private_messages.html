@@ -1,0 +1,27 @@
+{% load rpg_extras %}
+{% for m in private_messages %}
+  {% with body=m|message_visible_content label=m|message_type_label %}
+    <article class="msg {% if m.author_type == 'GM' %}gm{% elif m.author_type == 'PLAYER' %}private{% else %}system{% endif %}"
+             data-message-id="{{ m.pk }}"
+             data-author-type="{{ m.author_type }}"
+             data-action-type="{{ m.action_type|default:'' }}">
+      <div class="msg-header">
+        <strong class="author">
+          {% if m.author_type == "GM" %}GM
+          {% elif m.author_player %}{{ m.author_player.display_name }}
+          {% else %}System{% endif %}
+        </strong>
+        {% if label %}
+          <span class="action-tag action-{{ label|lower }}">{{ label }}</span>
+        {% endif %}
+      </div>
+      {% if body %}
+        <div class="msg-content">{{ body|message_format }}</div>
+      {% elif m.action_type == "PASS" %}
+        <div class="pass">Pass.</div>
+      {% endif %}
+    </article>
+  {% endwith %}
+{% empty %}
+  <p class="meta human-feed-empty">No private messages.</p>
+{% endfor %}
