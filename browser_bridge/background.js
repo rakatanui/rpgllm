@@ -218,13 +218,30 @@ async function startJob(message, sender) {
 
   const existing = await loadJob(message.jobId);
   if (existing) {
-    await appendDebugLog("background", "job-reused", {
-      jobId: message.jobId,
-      state: existing.state,
-      sourceTabId: existing.sourceTabId,
-      targetTabId: existing.targetTabId,
-    });
-    return { accepted: true, reused: true, state: existing.state };
+    if (existing.state === "paused-result" && message.manualRetry) {
+      await appendDebugLog("background", "job-manual-retry", {
+        jobId: message.jobId,
+        sourceTabId: existing.sourceTabId,
+        targetTabId: existing.targetTabId,
+      });
+      await deleteJob(message.jobId);
+    } else {
+      await appendDebugLog("background", "job-reused", {
+        jobId: message.jobId,
+        state: existing.state,
+        sourceTabId: existing.sourceTabId,
+        targetTabId: existing.targetTabId,
+      });
+      if (existing.state === "paused-result") {
+        return {
+          accepted: false,
+          reused: true,
+          state: existing.state,
+          error: "Bridge job is paused after a failed result/import. Retry it manually.",
+        };
+      }
+      return { accepted: true, reused: true, state: existing.state };
+    }
   }
 
   let target = await findExistingTargetTab(message.chatUrl);
@@ -452,6 +469,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const delivered = await notifySource(job, job.result);
           if (delivered) {
             await deleteJob(job.jobId);
+          } else {
+            job.state = "paused-result";
+            await saveJob(job);
+            await appendDebugLog("background", "job-paused-after-source-reject", {
+              jobId: job.jobId,
+              sourceTabId: job.sourceTabId,
+            });
           }
         }
       }
@@ -504,8 +528,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const delivered = await notifySource(job, job.result);
       if (delivered) {
         await deleteJob(message.jobId);
+      } else {
+        job.state = "paused-result";
+        await saveJob(job);
+        await appendDebugLog("background", "job-paused-after-source-reject", {
+          jobId: job.jobId,
+          sourceTabId: job.sourceTabId,
+          resultOk: job.result.ok,
+          error: job.result.error || "",
+        });
       }
-      sendResponse({ accepted: true, delivered });
+      sendResponse({ accepted: true, delivered, paused: !delivered });
     })();
     return true;
   }
