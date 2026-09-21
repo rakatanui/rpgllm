@@ -1265,3 +1265,25 @@ def test_soft_round_gm_turn_targets_only_meaningful_parallel_line():
     context = build_gm_context(scene=scene, config=config)
     assert "SOFT_ROUND is for parallel or loosely coupled character lines" in context.system_prompt
     assert "There is no obligation to alternate mechanically" in context.system_prompt
+
+
+@pytest.mark.django_db
+def test_scene_transition_requires_new_description_and_memory():
+    campaign = make_campaign()
+    human = make_player(campaign, "P", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    with pytest.raises(ValidationError, match="description"):
+        gm_engine.parse_gm_response(
+            json.dumps(
+                {
+                    "action": "TURN",
+                    "public": "Сцена меняется.",
+                    "private": [],
+                    "turn_targets": [human.pk],
+                    "scene_transition": {"name": "Новая сцена"},
+                },
+                ensure_ascii=False,
+            ),
+            scene=scene,
+        )
