@@ -153,18 +153,18 @@ def gm_execution_request(scene: Scene) -> str:
         "justify WAIT. Use TURN when this beat should be followed by player action, NARRATE when "
         "the beat should enter canon without immediately opening a player turn, and WAIT only when "
         "the established fiction specifically requires the GM to take no action at this moment.\n\n"
-        "AUTHORITATIVE-SOURCE GUARD: if the player consults or remembers an already-existing "
-        "document, dossier, briefing, phone, correspondence, log, database, memory card, memory, "
-        "prior event, or other established source/object, never invent missing pre-existing content. "
-        "Exact facts such as addresses, names, phone/registration numbers, dates, message contents, "
-        "passwords, codes, case numbers, prior links/events, and existing-object properties require "
-        "support in authoritative application context. If support is absent, say the information is "
-        "unknown/unavailable instead of completing the gap with plausible fiction. EXCEPTION: if "
-        "author-controlled context contains a matching [[GM_FILLABLE]]...[[/GM_FILLABLE]] scope, "
-        "that scope explicitly permits you to create the missing pre-existing details inside it. "
-        "Keep the invention inside that tagged subject/source, preserve all established constraints, "
-        "and treat anything you publish as fixed canon from then on. This does not restrict genuinely "
-        "new present/future world facts that arise now.\n\n"
+        "AUTHORITATIVE-SOURCE GUARD: distinguish protected pre-existing sources from routine current "
+        "operational data. For READ_EXISTING_SOURCE and RECALL_EXISTING_FACT involving dossiers, "
+        "correspondence, archives, memories, logs, passwords, evidence, hidden cargo, prior events, or "
+        "other plot-significant history, never invent missing content unless authoritative context supports "
+        "it. Exact addresses, names, phone/registration numbers, dates, message contents, passwords, codes, "
+        "case numbers, prior links/events, and protected existing-object properties remain guarded. "
+        "A matching author-controlled [[GM_FILLABLE]]...[[/GM_FILLABLE]] scope explicitly permits filling "
+        "its missing details. Routine USE_OPERATIONAL_DATA may also receive an automatic narrow fillable "
+        "scope for current weather, watch sheets, ordinary schedules/manifests, instrument-derived values, "
+        "navigation inputs, and similar non-mystery working data. PROFESSIONAL_ACTION by itself is not a "
+        "source lookup and must not be blocked. Any invented fillable detail becomes fixed canon when "
+        "published and may not be freely changed later.\n\n"
         "SCENE TRANSITION LIFECYCLE: when scene_transition is necessary, do not change only the label. "
         "Return a concise new current-state description and a durable memory summary in the transition "
         "object. The old scene description may remain in history, but it must not continue to describe "
@@ -1012,6 +1012,8 @@ def _build_manual_chat_prompt(
     control = [
         f"Scene: {scene.name}",
         f"Turn mode: {scene.mode}",
+        "The CURRENT SCENE CONTROL below supersedes stale pre-transition location/state wording "
+        "that may still appear in older conversation history.",
     ]
     if scene.description.strip():
         control.append("Scene description:\n" + scene.description.strip())
@@ -1079,6 +1081,11 @@ def _manual_history_message(message: Message) -> str:
     else:
         author = message.author_type
     action = f" [{message.action_type}]" if message.action_type else ""
+    if message.author_type == AuthorType.PLAYER:
+        return (
+            f"[{scope}] {author}{action} [PLAYER DECLARATION; external-world claims "
+            f"are not objective GM confirmation]:\n{message.content}"
+        )
     return f"[{scope}] {author}{action}:\n{message.content}"
 
 
