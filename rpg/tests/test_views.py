@@ -2319,21 +2319,22 @@ def test_human_client_preserves_disclosures_scroll_and_focus_across_polling():
     assert response.status_code == 200
     assert 'id="human-notes"' in html
     assert 'data-human-preserve-open="notes"' in html
-    assert 'id="human-public-feed"' in html
-    assert 'data-human-preserve-scroll="public"' in html
-    assert 'id="human-private-feed"' in html
-    assert 'data-human-preserve-scroll="private"' in html
-    assert 'hx-trigger="human-poll"' in html
-    assert 'hx-trigger="every 2s"' not in html
+    assert 'id="human-public-scroll"' in html
+    assert 'data-human-workspace-scroll="scene"' in html
+    assert 'id="human-private-scroll"' in html
+    assert 'data-human-workspace-scroll="private"' in html
+    assert 'hx-trigger="human-scene-poll"' in html
+    assert 'hx-trigger="human-private-poll"' in html
     assert "htmx:beforeSwap" in html
     assert "htmx:afterSwap" in html
-    assert "captureHumanPollingState" in html
-    assert "restoreHumanPollingState" in html
-    assert "humanPlayerIsEditing" in html
-    assert "selectionInsideHumanPanel" in html
-    assert "window.setInterval(pollHumanPlayerPanel, 2000)" in html
-    assert "bottomGap" in html
+    assert "humanCaptureRegion" in html
+    assert "humanRestoreRegion" in html
+    assert "humanRegionIsEditing" in html
+    assert "humanPreserveEvictedMessages" in html
+    assert "humanCompactHistory" in html
+    assert "window.setInterval(humanPollAll, 2000)" in html
     assert "selectionStart" in html
+    assert "sessionStorage" in html
 
 
 @pytest.mark.django_db
@@ -2447,10 +2448,14 @@ def test_human_client_puts_gameplay_before_reference_and_collapses_character_sec
     ).content.decode()
 
     primary_index = html.index('id="human-character-primary"')
-    gameplay_index = html.index('id="human-player-panel"')
+    scene_index = html.index('id="human-workspace-scene"')
+    private_index = html.index('id="human-workspace-private"')
     reference_index = html.index('id="human-character-reference"')
 
-    assert primary_index < gameplay_index < reference_index
+    assert primary_index < scene_index < private_index < reference_index
+    assert 'data-human-workspace-target="scene"' in html
+    assert 'data-human-workspace-target="private"' in html
+    assert 'data-human-workspace-target="character"' in html
     assert not re.search(
         r"<details[^>]*\bopen\b[^>]*>\s*<summary>Characteristics</summary>",
         html,
@@ -2463,7 +2468,113 @@ def test_human_client_puts_gameplay_before_reference_and_collapses_character_sec
         r"<details[^>]*\bopen\b[^>]*>\s*<summary>Memory summary</summary>",
         html,
     )
-    assert "grid-template-columns:112px minmax(0,1fr)" in html
+    assert "height:100dvh" in html
+    assert "grid-template-columns:72px minmax(0,1fr)" in html
+
+
+@pytest.mark.django_db
+def test_human_client_paginates_newest_first_and_filters_empty_none_messages():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    created = []
+    for index in range(75):
+        created.append(
+            Message.objects.create(
+                campaign=campaign,
+                scene=scene,
+                author_type=AuthorType.GM,
+                visibility=Visibility.PUBLIC,
+                content=f"PUBLIC_{index:03d}",
+            )
+        )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        visibility=Visibility.PUBLIC,
+        content="None",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        visibility=Visibility.PUBLIC,
+        content="   ",
+    )
+
+    client = Client()
+    html = client.get(_human_url("human_player_client", scene, human)).content.decode()
+
+    assert "PUBLIC_074" in html
+    assert "PUBLIC_015" in html
+    assert "PUBLIC_014" not in html
+    assert ">None<" not in html
+    assert html.index("PUBLIC_074") < html.index("PUBLIC_073")
+    assert "human-history-sentinel" in html
+
+    before = created[15].pk
+    older = client.get(
+        _human_url("human_feed_page", scene, human, channel="public"),
+        {"before": before},
+    )
+    older_html = older.content.decode()
+    assert older.status_code == 200
+    assert "PUBLIC_014" in older_html
+    assert "PUBLIC_000" in older_html
+    assert older_html.index("PUBLIC_014") < older_html.index("PUBLIC_013")
+
+
+@pytest.mark.django_db
+def test_human_private_feed_is_separate_workspace_and_paginates():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    private_messages = []
+    for index in range(65):
+        private_messages.append(
+            Message.objects.create(
+                campaign=campaign,
+                scene=scene,
+                author_type=AuthorType.GM,
+                visibility=Visibility.PRIVATE_GM_PLAYER,
+                private_player=human,
+                content=f"PRIVATE_{index:03d}",
+            )
+        )
+
+    client = Client()
+    html = client.get(_human_url("human_player_client", scene, human)).content.decode()
+
+    assert 'id="human-workspace-private"' in html
+    assert "Visible only to you and the Game Master" in html
+    assert "PRIVATE_064" in html
+    assert "PRIVATE_004" not in html
+    assert "Send OOC" in html
+
+    older = client.get(
+        _human_url("human_feed_page", scene, human, channel="private"),
+        {"before": private_messages[5].pk},
+    )
+    older_html = older.content.decode()
+    assert "PRIVATE_004" in older_html
+    assert "PRIVATE_000" in older_html
+
+
+@pytest.mark.django_db
+def test_human_reference_uses_one_primary_history_search():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    html = Client().get(_human_url("human_player_client", scene, human)).content.decode()
+
+    search_url = _human_url("human_episode_search", scene, human)
+    assert html.count(f'action="{search_url}"') == 1
+    assert "Search episodes" not in html
+    assert 'placeholder="Search visible history..."' in html
 
 
 @pytest.mark.django_db
