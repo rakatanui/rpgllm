@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.4"
+    assert manifest["version"] == "0.4.5"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -156,3 +156,14 @@ def test_manual_chat_player_delta_cards_autostart_bridge():
     assert 'data-mraz-bridge-kind="player"' in players_template
     assert 'data-mraz-bridge-autostart="1"' in players_template
     assert "not waiting.external_is_bootstrap" in players_template
+
+
+def test_gemini_bridge_prefers_visible_final_response_body():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert 'requireVisibleResponseBody: true' in external
+    assert 'preferLastResponseBody: true' in external
+    assert 'function elementIsVisible' in external
+    assert '".model-response-text",' not in external.split('"gemini.google.com": {', 1)[1].split('};', 1)[0]
+    assert '"response-contract-ready"' in external
+    assert "preview: contract.normalized.slice(0, 240)" in external
