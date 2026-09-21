@@ -134,6 +134,22 @@ function safeRuntimeMessage(message) {
   }
 }
 
+function trace(event, details = {}) {
+  const entry = {
+    component: "external-chat",
+    event,
+    details: {
+      pageUrl: window.location.href,
+      ...details,
+    },
+  };
+  console.log("[MRAZ Bridge external]", event, entry.details);
+  return safeRuntimeMessage({
+    type: "MRAZ_DEBUG_LOG",
+    ...entry,
+  });
+}
+
 function firstElement(selectors, root = document) {
   for (const selector of selectors) {
     const element = root.querySelector(selector);
@@ -337,6 +353,11 @@ async function waitForFreshResponse(adapter, beforeTexts) {
 
 async function runJob(message) {
   const adapter = adapterForPage();
+  trace("job-run-start", {
+    jobId: message.jobId,
+    chatUrl: message.chatUrl,
+    promptLength: (message.prompt || "").length,
+  });
   if (!adapter) {
     throw new Error("This external chat site is not supported by the bridge.");
   }
@@ -354,21 +375,55 @@ async function runJob(message) {
   }
 
   const beforeTexts = snapshotAssistantTexts(adapter);
+  trace("assistant-snapshot", {
+    jobId: message.jobId,
+    assistantCount: beforeTexts.length,
+  });
+
   const composer = await waitForElement(adapter.composer);
+  trace("composer-found", {
+    jobId: message.jobId,
+    tag: composer.tagName,
+    id: composer.id || "",
+    className: String(composer.className || "").slice(0, 200),
+  });
+
   fillComposer(composer, message.prompt);
+  trace("composer-filled", {
+    jobId: message.jobId,
+    promptLength: (message.prompt || "").length,
+    visibleLength: (composer.innerText || composer.value || composer.textContent || "").length,
+  });
 
   const sendButton = await waitForSendButton(adapter);
+  trace("send-button-ready", {
+    jobId: message.jobId,
+    tag: sendButton.tagName,
+    ariaLabel: sendButton.getAttribute("aria-label") || "",
+    testId: sendButton.getAttribute("data-testid") || "",
+  });
   sendButton.click();
+  trace("send-clicked", { jobId: message.jobId });
 
   const response = await waitForFreshResponse(adapter, beforeTexts);
   if (!response.trim()) {
     throw new Error(adapter.name + " returned an empty response.");
   }
 
-  await chrome.runtime.sendMessage({
+  trace("response-detected", {
+    jobId: message.jobId,
+    responseLength: response.length,
+  });
+
+  const ack = await chrome.runtime.sendMessage({
     type: "MRAZ_EXTERNAL_RESULT",
     jobId: message.jobId,
     response,
+  });
+  trace("result-sent", {
+    jobId: message.jobId,
+    acknowledged: Boolean(ack && ack.accepted),
+    delivered: Boolean(ack && ack.delivered),
   });
 }
 
@@ -376,15 +431,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "MRAZ_BRIDGE_RUN") return false;
 
   if (activeJobs.has(message.jobId)) {
+    trace("duplicate-job-ignored", { jobId: message.jobId });
     sendResponse({ accepted: true, duplicate: true });
     return false;
   }
 
   activeJobs.add(message.jobId);
+  trace("job-received", {
+    jobId: message.jobId,
+    promptLength: (message.prompt || "").length,
+    chatUrl: message.chatUrl || "",
+  });
   sendResponse({ accepted: true });
 
   runJob(message)
     .catch(async (error) => {
+      trace("job-error", {
+        jobId: message.jobId,
+        error: String(error && error.message ? error.message : error),
+      });
       await chrome.runtime.sendMessage({
         type: "MRAZ_EXTERNAL_ERROR",
         jobId: message.jobId,
@@ -393,12 +458,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })
     .finally(() => {
       activeJobs.delete(message.jobId);
+      trace("job-finished", { jobId: message.jobId });
     });
 
   return false;
 });
 
 
+trace("content-script-ready", {
+  host: window.location.hostname,
+});
 safeRuntimeMessage({ type: "MRAZ_EXTERNAL_READY" });
 
 // When this persistent chat tab is left open on the GM machine, its heartbeat
