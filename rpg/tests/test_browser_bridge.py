@@ -62,3 +62,16 @@ def test_browser_bridge_contains_deepseek_adapter():
     assert "completionStablePolls: 7" in external
     assert "preferLastResponseBody: true" in external
     assert '"chat.deepseek.com"' in background
+
+
+def test_browser_bridge_recovers_stale_tabs_after_extension_reload():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert "reusedExistingTab" in background
+    assert "chrome.tabs.reload(target.id)" in background
+    assert "safeRuntimeMessage" in external
+    assert "MRAZ_EXTERNAL_READY" in external
+    assert "safeRuntimeMessage" in source
+    assert "MRAZ_SOURCE_READY" in source
