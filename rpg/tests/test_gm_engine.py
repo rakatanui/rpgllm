@@ -1140,3 +1140,46 @@ def test_gm_context_contains_routine_pacing_and_professional_guidance():
     assert "# NPC CONVERSATION ENDING" in context.system_prompt
     assert "# PROFESSIONAL COMPETENCE AND TECHNICAL WORK" in context.system_prompt
     assert "# PARALLEL CHARACTER LINES" in context.system_prompt
+
+
+@pytest.mark.django_db
+def test_player_asserted_exact_world_fact_does_not_satisfy_fixed_source_guard():
+    campaign = make_campaign()
+    human = make_player(campaign, "Баальтаз", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content="Баальтаз утверждает, что домашний адрес Астара — ul. Szeroka 99.",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content="Баальтаз открывает старое досье и проверяет домашний адрес Астара.",
+    )
+
+    request = gm_engine.gm_execution_request(scene)
+    assert "READ_EXISTING_SOURCE" in request
+    assert "Player declaration history (not objective GM confirmation)" in request
+
+    with pytest.raises(ValidationError, match="unsupported exact datum"):
+        gm_engine.parse_gm_response(
+            json.dumps(
+                {
+                    "action": "NARRATE",
+                    "public": "В досье действительно указан адрес ul. Szeroka 99.",
+                    "private": [],
+                    "turn_targets": [],
+                },
+                ensure_ascii=False,
+            ),
+            scene=scene,
+        )
