@@ -375,6 +375,35 @@ function tickAutoplay() {
   safeRuntimeMessage({ type: "MRAZ_AUTOPLAY_TICK" });
 }
 
+let autoStartTimer = null;
+
+function scheduleAutoStartBridge(reason = "dom-update") {
+  if (autoStartTimer !== null) return;
+  autoStartTimer = window.setTimeout(() => {
+    autoStartTimer = null;
+    const started = autoStartBridgeIfPresent();
+    if (started) {
+      trace("autostart-after-dom-update", { reason });
+    }
+  }, 50);
+}
+
+document.addEventListener("mraz:gm-panel-updated", () => {
+  scheduleAutoStartBridge("gm-panel-updated");
+});
+
+document.body.addEventListener("htmx:afterSwap", () => {
+  scheduleAutoStartBridge("htmx-after-swap");
+});
+
+const bridgeDomObserver = new MutationObserver(() => {
+  scheduleAutoStartBridge("mutation");
+});
+bridgeDomObserver.observe(document.body, {
+  childList: true,
+  subtree: true,
+});
+
 setBridgeReady();
 trace("content-script-ready");
 traceHumanWaitingState();
