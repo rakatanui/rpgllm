@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.2"
+    assert manifest["version"] == "0.4.3"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -122,3 +122,17 @@ def test_browser_bridge_validates_structured_response_before_import():
     assert "waitForFreshResponse(adapter, beforeTexts, message.jobId)" in external
     assert "human-waiting" in source
     assert "human-submit" in source
+
+
+def test_browser_bridge_pauses_failed_result_instead_of_autoretrying():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert 'job.state = "paused-result"' in background
+    assert "job-paused-after-source-reject" in background
+    assert "job-manual-retry" in background
+    assert "manualRetry" in background
+    assert "bridge-paused-after-external-error" in source
+    assert "bridge-import-server-state" in source
+    assert "sameExecutionStillWaiting" in source
+    assert "Automatic retry is paused" in source

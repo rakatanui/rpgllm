@@ -183,7 +183,8 @@ def gm_execution_request(scene: Scene) -> str:
                 "Frame the immediate beat so this active player has a clear opportunity "
                 "to react or act. Do not make an inactive participant the sole required "
                 "responder unless the fiction specifically requires an urgent out-of-turn "
-                "intervention."
+                "intervention. Because this scene is ROUND, TURN must always return "
+                "turn_targets=[]; the application owns round order and rejects explicit targets."
             )
     if (
         scene.mode == TurnMode.MANUAL
