@@ -2014,3 +2014,54 @@ def test_player_context_hides_gm_fillable_control_markers():
     assert "[[GM_FILLABLE]]" not in context.system_prompt
     assert "[[/GM_FILLABLE]]" not in context.system_prompt
     assert "метеосводка Halcyon с конкретными погодными данными" in context.system_prompt
+
+
+@pytest.mark.django_db
+def test_soft_round_calls_only_selected_parallel_line_and_does_not_advance_round_index(mock_backend):
+    camp = make_campaign()
+    ned = make_player(camp, "Нед", transport=PlayerTransport.HUMAN)
+    victoria = make_player(camp, "Виктория", transport=PlayerTransport.HUMAN)
+    scene = make_scene(
+        camp,
+        mode=TurnMode.SOFT_ROUND,
+        participants=[ned, victoria],
+        round_order=[ned.pk, victoria.pk],
+    )
+    scene.active_player_index = 1
+    scene.save(update_fields=["active_player_index", "updated_at"])
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="В каюте Виктории появляется новая информация.",
+        selected_players=[victoria],
+    )
+
+    assert result.turn.mode == TurnMode.SOFT_ROUND
+    assert result.turn.participants == [victoria.pk]
+    assert result.turn.executions.count() == 1
+    execution = result.turn.executions.get()
+    assert execution.player_id == victoria.pk
+    assert execution.state == ExecutionState.WAITING_HUMAN
+
+    turn_engine.submit_human_response(
+        execution=execution,
+        action_type="ACT",
+        public_text="Виктория реагирует на сообщение.",
+    )
+    scene.refresh_from_db()
+    assert scene.active_player_index == 1
+
+
+@pytest.mark.django_db
+def test_player_context_marks_external_world_values_as_assessments_until_gm_confirms():
+    camp = make_campaign()
+    player = make_player(camp, "Нед")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[player])
+
+    context = __import__(
+        "rpg.services.context_builder", fromlist=["build_player_context"]
+    ).build_player_context(player=player, scene=scene)
+
+    assert "# PLAYER AGENCY AND WORLD-STATE CLAIMS" in context.system_prompt
+    assert "do not convert an uncertain assessment" in context.system_prompt
+    assert "Нед оценивает снос примерно в два процента" in context.system_prompt
