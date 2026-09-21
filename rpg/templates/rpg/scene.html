@@ -175,7 +175,7 @@
 
   <span class="ic-only">
     <label><input type="checkbox" name="run_turn" value="1" checked> Run turn</label>
-    {% if scene.mode == "MANUAL" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
+    {% if scene.mode == "MANUAL" or scene.mode == "SOFT_ROUND" or scene.mode == "SIMULTANEOUS" or scene.mode == "TABLE" %}
       <span class="meta">Players:</span>
       {% for p in players %}
         <label><input type="checkbox" name="selected_players" value="{{ p.pk }}" {% if scene.mode == "MANUAL" %}checked{% endif %}> {{ p.display_name }}</label>
@@ -195,7 +195,7 @@
           data-round-blocked="{% if scene.mode == 'ROUND' and not round_ready %}1{% else %}0{% endif %}"
           {% if scene.mode == "ROUND" and not round_ready %}disabled title="Confirm ROUND player order first"{% endif %}>Send</button>
 
-  {% if scene.mode == "ROUND" or scene.mode == "MANUAL" %}
+  {% if scene.mode == "ROUND" or scene.mode == "SOFT_ROUND" or scene.mode == "MANUAL" %}
     <span class="ic-only">
       <button id="gm-silence-button"
               type="submit"
@@ -489,10 +489,10 @@ function prepareComposerSubmit(form, event) {
 function prepareSilentTurn(form, mode) {
   document.getElementById("composer-mode").value = "IC";
   form.action = "{% url 'silent_turn' scene.pk %}";
-  if (mode === "MANUAL") {
+  if (mode === "MANUAL" || mode === "SOFT_ROUND") {
     const selected = form.querySelectorAll('input[name="selected_players"]:checked');
-    if (selected.length !== 1) {
-      window.alert("Для Молчания в MANUAL выберите ровно одного игрока.");
+    if (selected.length < 1) {
+      window.alert("Для Молчания выберите хотя бы одного игрока.");
       return false;
     }
   }
