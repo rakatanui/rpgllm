@@ -256,6 +256,7 @@ def test_gm_execution_request_names_active_round_player():
     assert "ROUND CONTROL" in request
     assert f"Нед (player_id={ned.pk})" in request
     assert "Do not make an inactive participant the sole required responder" in request
+    assert "turn_targets=[]" in request
 
 
 @pytest.mark.django_db
