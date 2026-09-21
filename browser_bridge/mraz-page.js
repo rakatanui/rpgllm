@@ -241,6 +241,31 @@ document.addEventListener("click", (event) => {
   startBridge(button);
 });
 
+document.addEventListener("submit", (event) => {
+  const form = event.target.closest && event.target.closest(".human-action-form");
+  if (!form) return;
+  const action = form.querySelector('select[name="action_type"]');
+  const content = form.querySelector('textarea[name="content"]');
+  trace("human-submit", {
+    actionUrl: form.action || "",
+    actionType: action ? action.value : "",
+    contentLength: content ? content.value.length : 0,
+  });
+});
+
+function traceHumanWaitingState() {
+  const form = document.querySelector(".human-action-form");
+  if (!form) return;
+  const action = form.querySelector('select[name="action_type"]');
+  trace("human-waiting", {
+    actionUrl: form.action || "",
+    selectedAction: action ? action.value : "",
+    allowedActions: action
+      ? Array.from(action.options).map((option) => option.value)
+      : [],
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message && message.type === "MRAZ_BRIDGE_RESULT") {
     submitBridgeResult(message)
@@ -290,6 +315,7 @@ function tickAutoplay() {
 
 setBridgeReady();
 trace("content-script-ready");
+traceHumanWaitingState();
 autoStartBridgeIfPresent();
 safeRuntimeMessage({ type: "MRAZ_SOURCE_READY" });
 registerAutoplaySource().then(tickAutoplay).catch(() => {});
