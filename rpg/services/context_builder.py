@@ -202,6 +202,18 @@ def build_player_context(
         )
 
     parts.append(
+        "# PLAYER AGENCY AND WORLD-STATE CLAIMS\n"
+        "You control only this player character's voluntary actions, speech, thoughts, intentions, "
+        "and reasonable perceptions/assessments. You may describe what your character observes, "
+        "calculates, estimates, believes, or reports, but do not convert an uncertain assessment "
+        "into an objective external-world fact unless the GM has already established it. Do not "
+        "decide NPC actions, environmental outcomes, exact consequences, or success of an action "
+        "that requires GM adjudication. Phrase professional judgments as the character's estimate "
+        "when appropriate: for example, 'Нед оценивает снос примерно в два процента' rather than "
+        "'объективный снос равен ровно двум процентам' unless that value is already confirmed."
+    )
+
+    parts.append(
         "# DIALOGUE LANGUAGE AND FORMAT\n"
         "Narration and non-spoken action text in your public response must be in Russian. "
         "Direct speech must be written in the language the character is actually speaking "
@@ -270,7 +282,9 @@ def build_player_context(
         "exchange truly requires it. "
         "Reveal only what the character would naturally say or do in this immediate beat. "
         "If you have more to ask or explain than the limits allow, choose the most important "
-        "part now and save the rest for later turns."
+        "part now and save the rest for later turns. During stable repetitive professional work, "
+        "do not pad the declaration with minute-by-minute repetition; state the meaningful action, "
+        "monitoring intention, or assessment and let the GM advance time when nothing changes."
     )
 
     parts.append(
