@@ -3230,3 +3230,38 @@ def test_human_client_qr_targets_public_player_host():
         "human_player_client",
         kwargs={"access_token": token},
     )
+
+
+@pytest.mark.django_db
+def test_soft_round_scene_exposes_target_selection_and_allows_selected_silence():
+    campaign = make_campaign()
+    ned = make_player(campaign, "Нед")
+    victoria = make_player(campaign, "Виктория")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.SOFT_ROUND,
+        participants=[ned, victoria],
+    )
+    client = Client()
+
+    page = client.get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = page.content.decode()
+    assert page.status_code == 200
+    assert "SOFT_ROUND" in html
+    assert 'name="selected_players"' in html
+    assert 'id="gm-silence-button"' in html
+
+    with patch("rpg.views.turn_engine.start_silent_turn") as silent:
+        missing = client.post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {},
+        )
+        selected = client.post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {"selected_players": [str(victoria.pk)]},
+        )
+
+    assert missing.status_code == 400
+    assert selected.status_code == 302
+    silent.assert_called_once()
+    assert [p.pk for p in silent.call_args.kwargs["selected_players"]] == [victoria.pk]
