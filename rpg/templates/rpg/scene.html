@@ -328,45 +328,6 @@
 
 {% block scripts %}
 <script>
-const humanTurnSignalChannel =
-  "BroadcastChannel" in window ? new BroadcastChannel("mraz-human-turns-v1") : null;
-const humanTurnPublished = new Map();
-
-function publishHumanTurnSignals() {
-  document
-    .querySelectorAll("[data-human-wait-player-id][data-human-wait-execution-id]")
-    .forEach((card) => {
-      const playerId = Number(card.dataset.humanWaitPlayerId || 0);
-      const executionId = Number(card.dataset.humanWaitExecutionId || 0);
-      if (!playerId || !executionId) return;
-      if (humanTurnPublished.get(playerId) === executionId) return;
-
-      humanTurnPublished.set(playerId, executionId);
-      const payload = {
-        type: "human-turn",
-        sceneId: {{ scene.pk }},
-        playerId,
-        executionId,
-        at: Date.now(),
-      };
-
-      try {
-        localStorage.setItem(
-          "mraz.human.turn." + playerId,
-          JSON.stringify(payload)
-        );
-      } catch (error) {
-        console.warn("Could not persist human turn signal", error);
-      }
-
-      try {
-        humanTurnSignalChannel?.postMessage(payload);
-      } catch (error) {
-        console.warn("Could not broadcast human turn signal", error);
-      }
-    });
-}
-
 function handleModeChange(select) {
   const roundSetup = document.getElementById("round-setup");
   const sendButton = document.getElementById("gm-send-button");
@@ -519,8 +480,6 @@ async function markPrivateRead(form, playerId) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  publishHumanTurnSignals();
-
   const auto = document.getElementById("private-autoopen");
   if (auto) auto.checked = privateAutoOpenEnabled();
   if (localStorage.getItem("mraz.private.collapsed") === "1") togglePrivatePanel(false);
@@ -557,10 +516,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 document.body.addEventListener("htmx:afterSwap", (event) => {
-  if (event.target?.id === "players") {
-    maybeAutoOpenPrivate();
-    publishHumanTurnSignals();
-  }
+  if (event.target?.id === "players") maybeAutoOpenPrivate();
   if (event.target?.id === "public-scene") filterPublicMessages();
 });
 </script>
