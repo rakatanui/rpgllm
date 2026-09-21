@@ -104,6 +104,9 @@
                data-mraz-bridge-execution="{{ waiting.pk }}"
                data-mraz-bridge-chat-url="{{ waiting.external_chat_url }}"
                data-mraz-bridge-label="{{ waiting.external_chat_label|default:'External chat' }}"
+               {% if waiting.external_chat_url and not waiting.error and not waiting.external_is_bootstrap %}
+                 data-mraz-bridge-autostart="1"
+               {% endif %}
                open>
         <summary>
           External response needed
