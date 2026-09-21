@@ -131,7 +131,7 @@ _OPERATIONAL_SOURCE_STEMS = (
 _FIXED_SOURCE_STEMS = (
     "досье", "архив", "переписк", "письм", "дневник", "тайн", "секрет",
     "парол", "код", "дело", "улика", "доказ", "биограф", "контрабанд",
-    "груз", "message", "dossier", "archive", "letter", "correspondence",
+    "message", "dossier", "archive", "letter", "correspondence",
     "password", "secret", "case", "evidence", "biograph",
 )
 
