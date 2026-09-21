@@ -142,7 +142,7 @@ async function startBridge(button) {
   }
 }
 
-function submitBridgeResult(message) {
+async function submitBridgeResult(message) {
   trace("bridge-result-received", {
     jobId: message.jobId || "",
     ok: Boolean(message.ok),
@@ -184,13 +184,53 @@ function submitBridgeResult(message) {
   response.dispatchEvent(new Event("input", { bubbles: true }));
   setStatus(card, "Response received. Importing…", "done");
 
-  // Let the extension message acknowledgement return before navigation tears
-  // down this content script. The normal Django form remains the authority.
   trace("bridge-import-submit", {
     jobId: message.jobId || "",
     responseLength: response.value.length,
   });
-  window.setTimeout(() => form.requestSubmit(), 0);
+
+  let importResponse;
+  try {
+    importResponse = await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      credentials: "include",
+      redirect: "follow",
+      cache: "no-store",
+    });
+  } catch (error) {
+    trace("bridge-import-http-error", {
+      jobId: message.jobId || "",
+      error: String(error && error.message ? error.message : error),
+    });
+    setStatus(card, "Response arrived, but importing it into MRAZ failed.", "error");
+    return false;
+  }
+
+  trace("bridge-import-http-complete", {
+    jobId: message.jobId || "",
+    status: importResponse.status,
+    ok: importResponse.ok,
+    redirected: importResponse.redirected,
+    finalUrl: importResponse.url || "",
+  });
+
+  if (!importResponse.ok) {
+    setStatus(
+      card,
+      "Response arrived, but MRAZ rejected the import with HTTP " + importResponse.status + ".",
+      "error"
+    );
+    return false;
+  }
+
+  // The server has now committed either the accepted response or its validation
+  // error. Only after that do we acknowledge the bridge result, so autoplay
+  // cannot observe the same WAITING_EXTERNAL execution and launch it again.
+  const finalUrl = importResponse.url || window.location.href;
+  window.setTimeout(() => {
+    window.location.assign(finalUrl);
+  }, 100);
   return true;
 }
 
@@ -203,8 +243,16 @@ document.addEventListener("click", (event) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message && message.type === "MRAZ_BRIDGE_RESULT") {
-    sendResponse({ accepted: submitBridgeResult(message) });
-    return false;
+    submitBridgeResult(message)
+      .then((accepted) => sendResponse({ accepted }))
+      .catch((error) => {
+        trace("bridge-result-import-error", {
+          jobId: message.jobId || "",
+          error: String(error && error.message ? error.message : error),
+        });
+        sendResponse({ accepted: false });
+      });
+    return true;
   }
   return false;
 });
