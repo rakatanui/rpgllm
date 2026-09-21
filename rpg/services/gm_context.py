@@ -421,17 +421,33 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
         "made that declaration; they are not objective support for GM-owned external-world facts.\n"
     )
     if fillable_scopes:
-        header += (
-            "\nEXPLICIT GM_FILLABLE DELEGATION ACTIVE FOR THIS LOOKUP. "
-            "The author has explicitly delegated the missing pre-existing details inside the "
-            "matching scope(s) below to the Game Master. You MAY invent those missing details "
-            "when needed, but only inside the delegated subject/source, and they must remain "
-            "compatible with all established canon. Once published, the invented details become "
-            "canon and must not be re-rolled or contradicted later. This permission does not spill "
-            "into unrelated untagged facts.\n"
-            + "\n".join(f"- {scope}" for scope in fillable_scopes)
-            + "\n"
+        automatic_operational = all(
+            scope.startswith("AUTO OPERATIONAL SOURCE:")
+            for scope in fillable_scopes
         )
+        if automatic_operational:
+            header += (
+                "\nAUTOMATIC GM_FILLABLE OPERATIONAL SCOPE ACTIVE FOR THIS LOOKUP. "
+                "This is routine current operational data, so the application permits the GM "
+                "to establish missing non-mystery working details when needed. Preserve all "
+                "established canon; do not use this permission for hidden plot facts, secrets, "
+                "evidence, passwords, protected history, or unrelated exact data. Once published, "
+                "the new details become fixed canon and must stay stable.\n"
+                + "\n".join(f"- {scope}" for scope in fillable_scopes)
+                + "\n"
+            )
+        else:
+            header += (
+                "\nEXPLICIT GM_FILLABLE DELEGATION ACTIVE FOR THIS LOOKUP. "
+                "The author has explicitly delegated the missing pre-existing details inside the "
+                "matching scope(s) below to the Game Master. You MAY invent those missing details "
+                "when needed, but only inside the delegated subject/source, and they must remain "
+                "compatible with all established canon. Once published, the invented details become "
+                "canon and must not be re-rolled or contradicted later. This permission does not spill "
+                "into unrelated untagged facts.\n"
+                + "\n".join(f"- {scope}" for scope in fillable_scopes)
+                + "\n"
+            )
     if not selected:
         if fillable_scopes:
             return (
