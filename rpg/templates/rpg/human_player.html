@@ -387,7 +387,7 @@ function humanUpdateWaitingWorkspace() {
     : humanBaseTitle;
 }
 
-function humanPollRegion(id, eventName, force = false) {
+async function humanPollRegion(id, eventName, force = false) {
   const region = document.getElementById(id);
   if (
     !region ||
@@ -396,8 +396,35 @@ function humanPollRegion(id, eventName, force = false) {
   ) {
     return;
   }
+
+  const url = region.getAttribute("hx-get");
+  if (!url) return;
+
   humanPollInFlight.add(id);
-  htmx.trigger(region, eventName);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    if (!response.ok) return;
+
+    const html = await response.text();
+    const template = document.createElement("template");
+    template.innerHTML = html.trim();
+    const replacement = template.content.firstElementChild;
+    if (!replacement || replacement.id !== id) return;
+
+    humanCaptureRegion(region);
+    region.replaceWith(replacement);
+    if (window.htmx) htmx.process(replacement);
+    humanRestoreRegion(id);
+  } catch (error) {
+    console.warn("Human live-region refresh failed", error);
+  } finally {
+    humanPollInFlight.delete(id);
+  }
 }
 
 function humanPollAll(force = false) {
@@ -517,16 +544,6 @@ document.body.addEventListener("htmx:afterSwap", (event) => {
   if (id === "human-scene-live" || id === "human-private-live") {
     humanRestoreRegion(id);
   }
-});
-
-document.body.addEventListener("htmx:afterRequest", (event) => {
-  const target = event.detail?.elt || event.detail?.target || event.target;
-  if (target?.id) humanPollInFlight.delete(target.id);
-});
-
-document.body.addEventListener("htmx:responseError", (event) => {
-  const target = event.detail?.elt || event.detail?.target || event.target;
-  if (target?.id) humanPollInFlight.delete(target.id);
 });
 
 document.addEventListener("keydown", (event) => {
