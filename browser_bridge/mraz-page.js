@@ -56,10 +56,10 @@ function makeJobId(card) {
   return kind + ":" + execution;
 }
 
-async function startBridge(button) {
+async function startBridge(button, { manualRetry = false } = {}) {
   const card = bridgeCardFromButton(button);
   if (!card) return false;
-  if (card.dataset.mrazBridgeJob) return true;
+  if (card.dataset.mrazBridgeJob && !manualRetry) return true;
 
   const promptElement = card.querySelector("[data-mraz-bridge-prompt]");
   const responseForm = card.querySelector("[data-mraz-bridge-response-form]");
@@ -118,6 +118,7 @@ async function startBridge(button) {
       prompt,
       chatUrl,
       label,
+      manualRetry,
     });
     if (!result || !result.accepted) {
       throw new Error(result && result.error ? result.error : "Bridge rejected the job.");
@@ -134,6 +135,7 @@ async function startBridge(button) {
       error: String(error && error.message ? error.message : error),
     });
     button.disabled = false;
+    delete card.dataset.mrazBridgeJob;
     setStatus(
       card,
       String(error && error.message ? error.message : error),
@@ -169,8 +171,19 @@ async function submitBridgeResult(message) {
   if (button) button.disabled = false;
 
   if (!message.ok) {
-    setStatus(card, message.error || "External chat bridge failed.", "error");
-    return true;
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
+    setStatus(
+      card,
+      (message.error || "External chat bridge failed.") +
+        " Automatic retry is paused. Click Send via browser bridge to retry manually.",
+      "error"
+    );
+    trace("bridge-paused-after-external-error", {
+      jobId: message.jobId || "",
+      error: message.error || "",
+    });
+    return false;
   }
 
   const form = card.querySelector("[data-mraz-bridge-response-form]");
@@ -207,27 +220,70 @@ async function submitBridgeResult(message) {
     return false;
   }
 
+  const importHtml = await importResponse.text();
+  const finalUrl = importResponse.url || window.location.href;
+
   trace("bridge-import-http-complete", {
     jobId: message.jobId || "",
     status: importResponse.status,
     ok: importResponse.ok,
     redirected: importResponse.redirected,
-    finalUrl: importResponse.url || "",
+    finalUrl,
+    responseLength: importHtml.length,
   });
 
   if (!importResponse.ok) {
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
     setStatus(
       card,
-      "Response arrived, but MRAZ rejected the import with HTTP " + importResponse.status + ".",
+      "Response arrived, but MRAZ rejected the import with HTTP " +
+        importResponse.status +
+        ". Automatic retry is paused.",
       "error"
     );
     return false;
   }
 
-  // The server has now committed either the accepted response or its validation
-  // error. Only after that do we acknowledge the bridge result, so autoplay
-  // cannot observe the same WAITING_EXTERNAL execution and launch it again.
-  const finalUrl = importResponse.url || window.location.href;
+  const importedDocument = new DOMParser().parseFromString(importHtml, "text/html");
+  const returnedCards = Array.from(
+    importedDocument.querySelectorAll("[data-mraz-bridge-card]")
+  );
+  const sameExecutionCard = returnedCards.find(
+    (candidate) =>
+      candidate.dataset.mrazBridgeKind === kind &&
+      candidate.dataset.mrazBridgeExecution === execution
+  );
+  const returnedError = sameExecutionCard
+    ? (sameExecutionCard.querySelector(".execution-error")?.textContent || "").trim()
+    : "";
+  const returnedAutostart = Boolean(
+    sameExecutionCard && sameExecutionCard.dataset.mrazBridgeAutostart === "1"
+  );
+
+  trace("bridge-import-server-state", {
+    jobId: message.jobId || "",
+    sameExecutionStillWaiting: Boolean(sameExecutionCard),
+    returnedAutostart,
+    returnedError,
+  });
+
+  if (sameExecutionCard) {
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
+    setStatus(
+      card,
+      (
+        returnedError ||
+        "MRAZ still reports the same execution as waiting after import."
+      ) +
+        " Automatic retry is paused. Inspect the execution and retry manually.",
+      "error"
+    );
+    return false;
+  }
+
+  delete card.dataset.mrazBridgePaused;
   window.setTimeout(() => {
     window.location.assign(finalUrl);
   }, 100);
@@ -238,7 +294,13 @@ document.addEventListener("click", (event) => {
   const button = event.target.closest(BRIDGE_BUTTON_SELECTOR);
   if (!button) return;
   event.preventDefault();
-  startBridge(button);
+  const card = bridgeCardFromButton(button);
+  const manualRetry = Boolean(card && card.dataset.mrazBridgePaused === "1");
+  if (card && manualRetry) {
+    delete card.dataset.mrazBridgePaused;
+    delete card.dataset.mrazBridgeJob;
+  }
+  startBridge(button, { manualRetry });
 });
 
 document.addEventListener("submit", (event) => {
@@ -292,7 +354,7 @@ function autoStartBridgeIfPresent() {
   });
   const button = card.querySelector(BRIDGE_BUTTON_SELECTOR);
   if (!button || button.disabled) return false;
-  startBridge(button);
+  startBridge(button, { manualRetry: false });
   return true;
 }
 
