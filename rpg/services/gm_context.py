@@ -391,8 +391,15 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
             if message.author_player_id and message.author_player
             else message.author_type
         )
+        if message.author_type == AuthorType.PLAYER:
+            label = (
+                f"Player declaration history (not objective GM confirmation): "
+                f"{message.scene.name} / {author}"
+            )
+        else:
+            label = f"Canon history: {message.scene.name} / {author}"
         add_candidate(
-            f"Canon history: {message.scene.name} / {author}",
+            label,
             message.content,
             title=author,
         )
@@ -516,6 +523,10 @@ def build_gm_authoritative_fact_corpus(*, scene: Scene) -> str:
         Message.objects.filter(scene_id__in=lineage_ids)
         .order_by("created_at", "pk")
     ):
+        # Player declarations remain canon as declarations, but they must not
+        # become hard evidence for exact GM-owned world facts merely by being said.
+        if message.author_type == AuthorType.PLAYER:
+            continue
         blocks.append(message.content)
 
     return "\n".join((block or "").strip() for block in blocks if (block or "").strip())
