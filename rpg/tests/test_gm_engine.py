@@ -897,3 +897,97 @@ def test_manual_gm_chat_uses_delta_inside_scene_lineage():
     assert "AUTHORITATIVE-SOURCE GUARD" in next_execution.external_prompt
     assert "NPC CAUSALITY" in next_execution.external_prompt
     assert "scene_transition" in next_execution.external_prompt
+
+
+@pytest.mark.django_db
+def test_matching_gm_fillable_scope_allows_missing_preexisting_weather_details():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(
+        campaign,
+        name="Буэнос-Айрес. Перед вылетом",
+        mode=TurnMode.MANUAL,
+        participants=[human],
+        description=(
+            "HMATS Halcyon готовится к вылету. "
+            "[[GM_FILLABLE]]Метеосводка Halcyon перед вылетом из Буэнос-Айреса: "
+            "конкретные значения ветра, давления, облачности и прогноз по маршруту "
+            "могут быть установлены мастером при первом обращении.[[/GM_FILLABLE]]"
+        ),
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content=(
+            "Нед открывает метеосводку Halcyon перед вылетом из Буэнос-Айреса "
+            "и проверяет прогноз по маршруту."
+        ),
+    )
+
+    request = gm_engine.gm_execution_request(scene)
+
+    assert "AUTHORITATIVE KNOWLEDGE RETRIEVAL" in request
+    assert "EXPLICIT GM_FILLABLE DELEGATION ACTIVE FOR THIS LOOKUP" in request
+    assert "Метеосводка Halcyon" in request
+
+    parsed = gm_engine.parse_gm_response(
+        json.dumps(
+            {
+                "action": "NARRATE",
+                "public": (
+                    "В принятой перед вылетом сводке стоит дата 27.12.1932; "
+                    "ветер у побережья северо-восточный, умеренный."
+                ),
+                "private": [],
+                "turn_targets": [],
+            },
+            ensure_ascii=False,
+        ),
+        scene=scene,
+    )
+    assert "27.12.1932" in parsed.public
+
+
+@pytest.mark.django_db
+def test_gm_fillable_permission_does_not_spill_into_unrelated_lookup():
+    campaign = make_campaign()
+    human = make_player(campaign, "Баальтаз", transport=PlayerTransport.HUMAN)
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.MANUAL,
+        participants=[human],
+        description=(
+            "[[GM_FILLABLE]]Метеосводка Halcyon перед вылетом из Буэнос-Айреса; "
+            "погодные значения может определить мастер.[[/GM_FILLABLE]]"
+        ),
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.PLAYER,
+        author_player=human,
+        visibility=Visibility.PUBLIC,
+        action_type="ACT",
+        content="Баальтаз открывает досье и ищет домашний адрес Астара.",
+    )
+
+    request = gm_engine.gm_execution_request(scene)
+    assert "EXPLICIT GM_FILLABLE DELEGATION ACTIVE FOR THIS LOOKUP" not in request
+
+    with pytest.raises(ValidationError, match="unsupported exact datum"):
+        gm_engine.parse_gm_response(
+            json.dumps(
+                {
+                    "action": "NARRATE",
+                    "public": "В досье указан адрес ul. Szeroka 99.",
+                    "private": [],
+                    "turn_targets": [],
+                },
+                ensure_ascii=False,
+            ),
+            scene=scene,
+        )

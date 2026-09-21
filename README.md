@@ -158,6 +158,37 @@ universally known facts as `GLOBAL`; route specialist/secret knowledge through
 `SCENE` or `PLAYER` so models do not receive information their characters
 should not know.
 
+
+### Explicit GM-fillable gaps
+
+The model GM normally refuses to invent missing content from an already-existing
+source such as a dossier, log, briefing, archive or remembered prior event. When
+the human author intentionally wants one narrow gap to remain undefined until it
+is first used in play, wrap the scope in:
+
+```text
+[[GM_FILLABLE]]...[[/GM_FILLABLE]]
+```
+
+Example:
+
+```text
+Перед вылетом Halcyon получил метеосводку.
+[[GM_FILLABLE]]
+Метеосводка Halcyon перед вылетом из Буэнос-Айреса: конкретные значения
+ветра, давления, облачности и прогноз по маршруту могут быть установлены
+мастером при первом обращении.
+[[/GM_FILLABLE]]
+```
+
+When a later existing-source lookup matches that scope, the GM may invent the
+missing details inside it while preserving all established canon. The permission
+does not spill into unrelated facts. Once a generated detail is published, it is
+canon and must remain stable. Only author-controlled campaign/scene/lore/player
+configuration fields grant this permission; ordinary chat messages do not.
+Player-model context keeps the readable inner text but strips the control
+markers themselves.
+
 ## Scenes as playable sessions
 
 A `Scene` is now effectively a playable session/thread with an explicit

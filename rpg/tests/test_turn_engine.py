@@ -1994,3 +1994,23 @@ def test_human_completed_execution_cannot_regenerate_through_llm(mock_backend):
             turn_engine.regenerate_execution(execution)
 
     get_client.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_player_context_hides_gm_fillable_control_markers():
+    camp = make_campaign(
+        shared_memory=(
+            "Перед вылетом существует "
+            "[[GM_FILLABLE]]метеосводка Halcyon с конкретными погодными данными[[/GM_FILLABLE]]."
+        )
+    )
+    player = make_player(camp, "Victoria")
+    scene = make_scene(camp, mode=TurnMode.MANUAL, participants=[player])
+
+    context = __import__(
+        "rpg.services.context_builder", fromlist=["build_player_context"]
+    ).build_player_context(player=player, scene=scene)
+
+    assert "[[GM_FILLABLE]]" not in context.system_prompt
+    assert "[[/GM_FILLABLE]]" not in context.system_prompt
+    assert "метеосводка Halcyon с конкретными погодными данными" in context.system_prompt

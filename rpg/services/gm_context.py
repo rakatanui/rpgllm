@@ -23,6 +23,7 @@ from rpg.models import (
     Visibility,
 )
 from rpg.services.context_builder import get_scene_lineage
+from rpg.services.gm_fillable import extract_gm_fillable_scopes
 
 
 @dataclass
@@ -66,6 +67,9 @@ _KNOWLEDGE_SOURCE_STEMS = (
     "памят",
     "архив",
     "запис",
+    "сводк",
+    "прогноз",
+    "метео",
     "файл",
     "реестр",
     "адрес",
@@ -85,6 +89,9 @@ _KNOWLEDGE_SOURCE_STEMS = (
     "memory",
     "archive",
     "record",
+    "weather",
+    "forecast",
+    "bulletin",
     "address",
     "name",
     "number",
@@ -163,6 +170,72 @@ def _retrieval_score(text: str, terms: list[str]) -> int:
     return score
 
 
+def _matching_gm_fillable_scopes(*, scene: Scene, query: str) -> list[str]:
+    """Return author-delegated fillable scopes relevant to one lookup query.
+
+    Only configuration/lore/memory fields can grant the delegation. Ordinary
+    player/GM chat history cannot create a new GM_FILLABLE permission.
+    """
+    terms = _retrieval_terms(query)
+    matches: list[tuple[int, int, str]] = []
+    serial = 0
+
+    def consider(label: str, body: str) -> None:
+        nonlocal serial
+        for scope in extract_gm_fillable_scopes(body):
+            serial += 1
+            score = _retrieval_score(f"{label}\n{scope}", terms)
+            if score > 0:
+                matches.append((score, serial, f"{label}: {scope}"))
+
+    campaign = scene.campaign
+    consider("Campaign description", campaign.description)
+    consider("Campaign system prompt", campaign.system_prompt)
+    consider("Shared campaign memory", campaign.shared_memory)
+
+    lineage = get_scene_lineage(scene)
+    for lineage_scene in lineage:
+        consider(f"Scene description: {lineage_scene.name}", lineage_scene.description)
+        consider(f"Scene memory: {lineage_scene.name}", lineage_scene.memory_summary)
+
+    for entry in (
+        LoreEntry.objects.filter(campaign=campaign, enabled=True)
+        .order_by("priority", "title", "pk")
+    ):
+        consider(f"Lore: {entry.title}", entry.content)
+
+    for participation in (
+        SceneParticipant.objects.filter(scene=scene)
+        .select_related("player")
+        .prefetch_related("player__appearances")
+        .order_by("order", "pk")
+    ):
+        player = participation.player
+        consider(f"Character prompt: {player.display_name}", player.character_prompt)
+        consider(f"Character summary: {player.display_name}", player.character_summary)
+        consider(f"Characteristics: {player.display_name}", player.characteristics)
+        consider(f"Abilities: {player.display_name}", player.abilities)
+        consider(f"Player memory: {player.display_name}", player.memory_summary)
+        for appearance in player.appearances.all():
+            consider(
+                f"Appearance: {player.display_name} / {appearance.name}",
+                appearance.description,
+            )
+
+    matches.sort(key=lambda item: (-item[0], item[1]))
+    return [text for _, _, text in matches[:6]]
+
+
+def gm_lookup_fillable_scopes(*, scene: Scene) -> list[str]:
+    lookup = _latest_player_knowledge_lookup(scene)
+    if lookup is None:
+        return []
+    return _matching_gm_fillable_scopes(
+        scene=scene,
+        query=(lookup.content or "").strip(),
+    )
+
+
 def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
     """Return focused authoritative support for an existing-source lookup ACT.
 
@@ -176,6 +249,7 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
 
     query = (lookup.content or "").strip()
     terms = _retrieval_terms(query)
+    fillable_scopes = _matching_gm_fillable_scopes(scene=scene, query=query)
     candidates: list[tuple[int, int, str]] = []
     serial = 0
 
@@ -251,14 +325,32 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
     header = (
         "## AUTHORITATIVE KNOWLEDGE RETRIEVAL\n"
         f"Detected existing-source lookup in the latest player ACT:\n{query}\n\n"
-        "This retrieval is evidence, not creative permission. The requested exact datum "
-        "may be stated only if it is supported by authoritative application context. "
+        "This retrieval is evidence, not creative permission by default. The requested exact "
+        "datum may be stated only if it is supported by authoritative application context. "
         "If the exact datum is absent, treat it as UNKNOWN/UNAVAILABLE and do not infer, "
         "complete, or invent it. A retrieval miss never authorizes fabrication. "
         "A retrieved GM-visible fact also does not prove that the player character or the "
         "consulted source has access to it; preserve visibility and in-fiction knowledge rules.\n"
     )
+    if fillable_scopes:
+        header += (
+            "\nEXPLICIT GM_FILLABLE DELEGATION ACTIVE FOR THIS LOOKUP. "
+            "The author has explicitly delegated the missing pre-existing details inside the "
+            "matching scope(s) below to the Game Master. You MAY invent those missing details "
+            "when needed, but only inside the delegated subject/source, and they must remain "
+            "compatible with all established canon. Once published, the invented details become "
+            "canon and must not be re-rolled or contradicted later. This permission does not spill "
+            "into unrelated untagged facts.\n"
+            + "\n".join(f"- {scope}" for scope in fillable_scopes)
+            + "\n"
+        )
     if not selected:
+        if fillable_scopes:
+            return (
+                header
+                + "\nRETRIEVAL STATUS: NO FIXED RECORDS FOUND, BUT MATCHING GM_FILLABLE "
+                "DELEGATION EXISTS. Fill only the delegated missing details as needed."
+            )
         return (
             header
             + "\nRETRIEVAL STATUS: NO RELEVANT AUTHORITATIVE RECORDS FOUND. "
@@ -282,8 +374,15 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
         header
         + "\nRETRIEVAL STATUS: RELEVANT AUTHORITATIVE RECORDS FOUND. "
         "Their presence does not imply that every requested field exists in them. "
-        "If the requested exact datum is not explicitly supported below or elsewhere in "
-        "authoritative context, it remains UNKNOWN.\n\n"
+        + (
+            "If a missing datum falls inside the matching GM_FILLABLE delegation above, "
+            "you may establish it now. Otherwise, if it is not explicitly supported below "
+            "or elsewhere in authoritative context, it remains UNKNOWN.\n\n"
+            if fillable_scopes
+            else
+            "If the requested exact datum is not explicitly supported below or elsewhere in "
+            "authoritative context, it remains UNKNOWN.\n\n"
+        )
         + "\n\n".join(blocks)
     )
 
@@ -524,7 +623,13 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
         "Treat exact data as especially high risk: addresses, names, phone numbers, registration "
         "numbers, dates, message/document contents, passwords, codes, case numbers, specific NPC "
         "links, prior events, and concrete characteristics of already-existing objects. Absence of "
-        "a retrieval result is NEVER permission to invent such a fact."
+        "a retrieval result is NEVER permission to invent such a fact.\n"
+        "EXPLICIT EXCEPTION: author-controlled text inside [[GM_FILLABLE]]...[[/GM_FILLABLE]] "
+        "delegates the unspecified details of that tagged subject/source to you. When a lookup "
+        "actually concerns that tagged scope, you may invent its missing pre-existing details as "
+        "needed, provided they do not contradict established canon. The permission is narrow: it "
+        "does not authorize invention about unrelated sources or facts. Once a filled detail is "
+        "published into canon, keep it stable thereafter."
     )
 
     parts.append(

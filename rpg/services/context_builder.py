@@ -28,6 +28,8 @@ from typing import Iterable
 from django.conf import settings
 from django.db.models import Q
 
+from rpg.services.gm_fillable import strip_gm_fillable_markers
+
 from rpg.models import (
     AuthorType,
     LoreEntry,
@@ -299,13 +301,14 @@ def build_player_context(
         'paraphrase the public response there.'
     )
 
-    system_prompt = "\n\n".join(parts)
+    system_prompt = strip_gm_fillable_markers("\n\n".join(parts))
 
     # ---- recent message history (chat) ----
     chat: list[dict] = []
     for message in recent_history:
         entry = _message_to_chat(message, player)
         if entry is not None:
+            entry["content"] = strip_gm_fillable_markers(entry.get("content", ""))
             chat.append(entry)
 
     # The trigger must always be present even if a custom caller passed a history
@@ -318,6 +321,7 @@ def build_player_context(
         ):
             entry = _message_to_chat(trigger_message, player)
             if entry is not None:
+                entry["content"] = strip_gm_fillable_markers(entry.get("content", ""))
                 chat.append(entry)
 
     return BuiltContext(system_prompt=system_prompt, messages=chat)
