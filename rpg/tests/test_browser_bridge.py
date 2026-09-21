@@ -83,7 +83,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.0"
+    assert manifest["version"] == "0.4.1"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -95,3 +95,15 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     assert "job-send-attempt" in background
     assert "bridge-result-received" in source
     assert "response-detected" in external
+
+
+def test_browser_bridge_guards_oversized_prompts_before_external_navigation():
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    popup = (BRIDGE / "popup.js").read_text(encoding="utf-8")
+
+    assert "MAX_BRIDGE_PROMPT_CHARS = 30000" in source
+    assert "bridge-prompt-too-large" in source
+    assert "too large for automatic browser insertion" in source
+    assert "service-worker-started" in background
+    assert "getManifest().version" in popup
