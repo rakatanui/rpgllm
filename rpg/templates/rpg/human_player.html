@@ -95,6 +95,7 @@
 {% block scripts %}
 <script>
 const humanClientStoragePrefix = "mraz.human." + window.location.pathname;
+const humanMobileTopStorageKey = humanClientStoragePrefix + ".mobileTopCollapsed";
 const humanStatusUrl = "{% url 'human_player_status' access_token %}";
 const humanBaseTitle = document.title;
 let humanLastStatusSignature = "";
@@ -104,6 +105,39 @@ const humanFieldState = new Map();
 const humanDetailsState = new Map();
 const humanPollInFlight = new Set();
 let humanLastInteractionAt = 0;
+
+function humanApplyMobileTopState(collapsed = null) {
+  const shell = document.querySelector("[data-human-player-client]");
+  if (!shell) return;
+
+  if (collapsed === null) {
+    collapsed = sessionStorage.getItem(humanMobileTopStorageKey) === "1";
+  }
+
+  shell.classList.toggle("human-mobile-top-collapsed", Boolean(collapsed));
+  document.querySelectorAll("[data-human-mobile-top-toggle]").forEach((button) => {
+    button.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    button.setAttribute(
+      "aria-label",
+      collapsed ? "Expand upper player controls" : "Collapse upper player controls"
+    );
+    button.title = collapsed ? "Open upper controls" : "Trim upper controls";
+    const sr = button.querySelector(".sr-only");
+    if (sr) {
+      sr.textContent = collapsed
+        ? "Expand upper player controls"
+        : "Collapse upper player controls";
+    }
+  });
+}
+
+function humanToggleMobileTop() {
+  const shell = document.querySelector("[data-human-player-client]");
+  if (!shell) return;
+  const collapsed = !shell.classList.contains("human-mobile-top-collapsed");
+  sessionStorage.setItem(humanMobileTopStorageKey, collapsed ? "1" : "0");
+  humanApplyMobileTopState(collapsed);
+}
 
 function humanWorkspace(name) {
   return document.querySelector('[data-human-workspace="' + name + '"]');
@@ -145,7 +179,14 @@ function humanSetWorkspace(name) {
     workspace.setAttribute("aria-hidden", active ? "false" : "true");
   });
 
-  document.querySelectorAll("[data-human-workspace-target]").forEach((button) => {
+  document.addEventListener("click", (event) => {
+  const button = event.target.closest?.("[data-human-mobile-top-toggle]");
+  if (!button) return;
+  event.preventDefault();
+  humanToggleMobileTop();
+});
+
+document.querySelectorAll("[data-human-workspace-target]").forEach((button) => {
     const active = button.dataset.humanWorkspaceTarget === name;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", active ? "true" : "false");
@@ -371,7 +412,10 @@ function humanRestoreRegion(regionId) {
   });
 
   humanSwapState.delete(regionId);
-  if (regionId === "human-scene-live") humanUpdateWaitingWorkspace();
+  if (regionId === "human-scene-live") {
+    humanUpdateWaitingWorkspace();
+    humanApplyMobileTopState();
+  }
 }
 
 function humanUpdateWaitingWorkspace() {
@@ -564,6 +608,7 @@ const initialWorkspace =
   sessionStorage.getItem(humanClientStoragePrefix + ".workspace") || "scene";
 humanSetWorkspace(initialWorkspace);
 humanUpdateWaitingWorkspace();
+humanApplyMobileTopState();
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) humanCheckStatus(true);

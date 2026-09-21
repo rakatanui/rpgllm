@@ -41,6 +41,16 @@
           <span class="chip">WAITING</span>
         {% endif %}
       </div>
+
+      <button class="human-mobile-deck-toggle"
+              type="button"
+              data-human-mobile-top-toggle
+              aria-expanded="true"
+              aria-label="Collapse upper player controls"
+              title="Trim upper controls">
+        <span class="human-mobile-trim-wheel" aria-hidden="true"></span>
+        <span class="sr-only">Collapse upper player controls</span>
+      </button>
     </section>
 
     {% if waiting_execution and not waiting_execution.turn.is_private and not scene.is_closed %}
