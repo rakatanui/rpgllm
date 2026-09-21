@@ -100,7 +100,6 @@ const ADAPTERS = {
     assistant: [
       "model-response",
       '[data-test-id="model-response"]',
-      ".model-response-text",
     ],
     responseBody: [
       ".model-response-text",
@@ -112,6 +111,8 @@ const ADAPTERS = {
       ".stop-button",
       '[data-test-id*="stop"]',
     ],
+    preferLastResponseBody: true,
+    requireVisibleResponseBody: true,
   },
 };
 
@@ -222,9 +223,26 @@ function fillComposer(element, prompt) {
   element.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+function elementIsVisible(element) {
+  if (!element) return false;
+  if (element.getAttribute && element.getAttribute("aria-hidden") === "true") {
+    return false;
+  }
+  const style = window.getComputedStyle(element);
+  if (
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    style.opacity === "0"
+  ) {
+    return false;
+  }
+  return element.getClientRects().length > 0;
+}
+
 function visibleText(element) {
   if (!element) return "";
   const codeBlocks = Array.from(element.querySelectorAll("pre code"))
+    .filter((node) => elementIsVisible(node))
     .map((node) => (node.innerText || node.textContent || "").trim())
     .filter(Boolean);
   if (codeBlocks.length === 1 && /^[\s]*[\[{]/.test(codeBlocks[0])) {
@@ -331,12 +349,22 @@ function structuredRepairPrompt(jobId, reason) {
 
 function responseText(node, adapter) {
   for (const selector of adapter.responseBody) {
-    if (node.matches && node.matches(selector)) {
+    if (
+      node.matches &&
+      node.matches(selector) &&
+      (!adapter.requireVisibleResponseBody || elementIsVisible(node))
+    ) {
       const ownText = visibleText(node);
       if (ownText) return ownText;
     }
 
-    const bodies = Array.from(node.querySelectorAll(selector));
+    let bodies = Array.from(node.querySelectorAll(selector));
+    if (adapter.requireVisibleResponseBody) {
+      const visibleBodies = bodies.filter((body) => elementIsVisible(body));
+      if (visibleBodies.length) {
+        bodies = visibleBodies;
+      }
+    }
     if (adapter.preferLastResponseBody) {
       bodies.reverse();
     }
@@ -437,6 +465,11 @@ async function waitForFreshResponse(adapter, beforeTexts, jobId) {
       ) {
         const contract = structuredResponseStatus(candidate.text, jobId);
         if (contract.ready) {
+          trace("response-contract-ready", {
+            jobId,
+            responseLength: contract.normalized.length,
+            preview: contract.normalized.slice(0, 240),
+          });
           return contract.normalized;
         }
         if (
