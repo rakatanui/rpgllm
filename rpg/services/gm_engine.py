@@ -155,7 +155,7 @@ def gm_response_contract() -> str:
         "numeric player_id values from the application context. scene_transition must be "
         "null unless movement or a materially changed situation makes the live Scene label/state "
         'false; then use {"name":"New scene label","description":"concise current-state description",'
-        '"memory":"compact durable scene memory after the transition"}. description and memory are "
+        '"memory":"compact durable scene memory after the transition"}. description and memory are '
         "required on a transition so stale pre-transition state is not kept as CURRENT SCENE."
     )
 
