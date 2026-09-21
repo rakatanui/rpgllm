@@ -109,8 +109,40 @@ _RETRIEVAL_STOPWORDS = {
 
 _RETRIEVAL_TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9]{3,}")
 
+READ_EXISTING_SOURCE = "READ_EXISTING_SOURCE"
+RECALL_EXISTING_FACT = "RECALL_EXISTING_FACT"
+USE_OPERATIONAL_DATA = "USE_OPERATIONAL_DATA"
+PROFESSIONAL_ACTION = "PROFESSIONAL_ACTION"
 
-def _latest_player_knowledge_lookup(scene: Scene) -> Message | None:
+_RECALL_STEMS = (
+    "вспомин", "вспомн", "помнит", "помн", "remember", "recall",
+)
+
+_OPERATIONAL_SOURCE_STEMS = (
+    "метео", "погод", "сводк", "прогноз", "ветер", "давлен", "облач", "видим",
+    "курс", "скорост", "снос", "дрейф", "пеленг", "радиопеленг", "компас",
+    "прибор", "вахт", "смен", "расписан", "табел", "меню", "манифест",
+    "пассажирск", "оперативн", "бюллет", "газет", "weather", "forecast",
+    "wind", "pressure", "visibility", "course", "speed", "drift", "bearing",
+    "instrument", "watch", "shift", "schedule", "roster", "menu", "manifest",
+    "bulletin", "newspaper",
+)
+
+_FIXED_SOURCE_STEMS = (
+    "досье", "архив", "переписк", "письм", "дневник", "тайн", "секрет",
+    "парол", "код", "дело", "улика", "доказ", "биограф", "контрабанд",
+    "message", "dossier", "archive", "letter", "correspondence",
+    "password", "secret", "case", "evidence", "biograph",
+)
+
+_PROFESSIONAL_ACTION_STEMS = (
+    "проклад", "счислен", "навига", "вахт", "контрол", "рассчит", "вычисл",
+    "провер", "сверя", "коррект", "держит курс", "ведёт курс", "наблюд",
+    "plot", "navigate", "calculate", "compute", "monitor", "check", "watch",
+)
+
+
+def _latest_public_player_act(scene: Scene) -> Message | None:
     message = (
         Message.objects.filter(
             scene=scene,
@@ -126,17 +158,51 @@ def _latest_player_knowledge_lookup(scene: Scene) -> Message | None:
         or message.action_type == "PASS"
     ):
         return None
-
-    text = (message.content or "").strip().lower()
-    if not text:
-        return None
-
-    has_lookup_verb = any(stem in text for stem in _KNOWLEDGE_LOOKUP_VERB_STEMS)
-    has_existing_source = any(stem in text for stem in _KNOWLEDGE_SOURCE_STEMS)
-    if not (has_lookup_verb and has_existing_source):
+    if not (message.content or "").strip():
         return None
     return message
 
+
+def classify_latest_player_information_action(scene: Scene) -> tuple[Message | None, str | None]:
+    """Classify the latest public player ACT for source-guard purposes.
+
+    The guard is intentionally narrow: ordinary professional work is not treated as
+    a request to reveal protected pre-existing content. Operational data is separated
+    so routine present-tense sources can be filled safely by the GM when no fixed lore
+    conflicts with them.
+    """
+    message = _latest_public_player_act(scene)
+    if message is None:
+        return None, None
+
+    text = (message.content or "").strip().lower()
+    has_lookup_verb = any(stem in text for stem in _KNOWLEDGE_LOOKUP_VERB_STEMS)
+    has_source = any(stem in text for stem in _KNOWLEDGE_SOURCE_STEMS)
+    has_recall = any(stem in text for stem in _RECALL_STEMS)
+    has_operational = any(stem in text for stem in _OPERATIONAL_SOURCE_STEMS)
+    has_fixed = any(stem in text for stem in _FIXED_SOURCE_STEMS)
+    has_professional = any(stem in text for stem in _PROFESSIONAL_ACTION_STEMS)
+
+    if has_recall:
+        return message, RECALL_EXISTING_FACT
+    if has_lookup_verb and has_fixed:
+        return message, READ_EXISTING_SOURCE
+    if has_lookup_verb and has_operational:
+        return message, USE_OPERATIONAL_DATA
+    if has_lookup_verb and has_source:
+        return message, READ_EXISTING_SOURCE
+    if has_operational and has_professional:
+        return message, PROFESSIONAL_ACTION
+    if has_professional:
+        return message, PROFESSIONAL_ACTION
+    return message, None
+
+
+def _latest_player_knowledge_lookup(scene: Scene) -> Message | None:
+    message, category = classify_latest_player_information_action(scene)
+    if category in {READ_EXISTING_SOURCE, RECALL_EXISTING_FACT, USE_OPERATIONAL_DATA}:
+        return message
+    return None
 
 def _retrieval_terms(text: str) -> list[str]:
     raw_terms: list[str] = []
@@ -227,13 +293,21 @@ def _matching_gm_fillable_scopes(*, scene: Scene, query: str) -> list[str]:
 
 
 def gm_lookup_fillable_scopes(*, scene: Scene) -> list[str]:
-    lookup = _latest_player_knowledge_lookup(scene)
-    if lookup is None:
+    lookup, category = classify_latest_player_information_action(scene)
+    if lookup is None or category is None:
         return []
-    return _matching_gm_fillable_scopes(
-        scene=scene,
-        query=(lookup.content or "").strip(),
-    )
+    query = (lookup.content or "").strip()
+    explicit = _matching_gm_fillable_scopes(scene=scene, query=query)
+    if explicit:
+        return explicit
+    if category == USE_OPERATIONAL_DATA:
+        return [
+            "AUTO OPERATIONAL SOURCE: routine current operational data requested in the latest "
+            "player action may be established by the GM if not already fixed by canon. This "
+            "permission covers only ordinary present/current operational details and never hidden "
+            "plot facts, mysteries, secrets, passwords, evidence, or protected historical content."
+        ]
+    return []
 
 
 def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
@@ -243,13 +317,17 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
     It only activates when the latest public player ACT looks like an attempt to
     consult, remember, or inspect information that should already exist.
     """
-    lookup = _latest_player_knowledge_lookup(scene)
-    if lookup is None:
+    lookup, lookup_category = classify_latest_player_information_action(scene)
+    if lookup is None or lookup_category not in {
+        READ_EXISTING_SOURCE,
+        RECALL_EXISTING_FACT,
+        USE_OPERATIONAL_DATA,
+    }:
         return ""
 
     query = (lookup.content or "").strip()
     terms = _retrieval_terms(query)
-    fillable_scopes = _matching_gm_fillable_scopes(scene=scene, query=query)
+    fillable_scopes = gm_lookup_fillable_scopes(scene=scene)
     candidates: list[tuple[int, int, str]] = []
     serial = 0
 
@@ -313,8 +391,15 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
             if message.author_player_id and message.author_player
             else message.author_type
         )
+        if message.author_type == AuthorType.PLAYER:
+            label = (
+                f"Player declaration history (not objective GM confirmation): "
+                f"{message.scene.name} / {author}"
+            )
+        else:
+            label = f"Canon history: {message.scene.name} / {author}"
         add_candidate(
-            f"Canon history: {message.scene.name} / {author}",
+            label,
             message.content,
             title=author,
         )
@@ -324,26 +409,45 @@ def build_gm_knowledge_retrieval(*, scene: Scene) -> str:
 
     header = (
         "## AUTHORITATIVE KNOWLEDGE RETRIEVAL\n"
-        f"Detected existing-source lookup in the latest player ACT:\n{query}\n\n"
+        f"Detected information action category: {lookup_category}.\n"
+        f"Latest player ACT:\n{query}\n\n"
         "This retrieval is evidence, not creative permission by default. The requested exact "
         "datum may be stated only if it is supported by authoritative application context. "
         "If the exact datum is absent, treat it as UNKNOWN/UNAVAILABLE and do not infer, "
         "complete, or invent it. A retrieval miss never authorizes fabrication. "
         "A retrieved GM-visible fact also does not prove that the player character or the "
-        "consulted source has access to it; preserve visibility and in-fiction knowledge rules.\n"
+        "consulted source has access to it; preserve visibility and in-fiction knowledge rules. "
+        "Blocks explicitly labelled Player declaration history are evidence only that the character "
+        "made that declaration; they are not objective support for GM-owned external-world facts.\n"
     )
     if fillable_scopes:
-        header += (
-            "\nEXPLICIT GM_FILLABLE DELEGATION ACTIVE FOR THIS LOOKUP. "
-            "The author has explicitly delegated the missing pre-existing details inside the "
-            "matching scope(s) below to the Game Master. You MAY invent those missing details "
-            "when needed, but only inside the delegated subject/source, and they must remain "
-            "compatible with all established canon. Once published, the invented details become "
-            "canon and must not be re-rolled or contradicted later. This permission does not spill "
-            "into unrelated untagged facts.\n"
-            + "\n".join(f"- {scope}" for scope in fillable_scopes)
-            + "\n"
+        automatic_operational = all(
+            scope.startswith("AUTO OPERATIONAL SOURCE:")
+            for scope in fillable_scopes
         )
+        if automatic_operational:
+            header += (
+                "\nAUTOMATIC GM_FILLABLE OPERATIONAL SCOPE ACTIVE FOR THIS LOOKUP. "
+                "This is routine current operational data, so the application permits the GM "
+                "to establish missing non-mystery working details when needed. Preserve all "
+                "established canon; do not use this permission for hidden plot facts, secrets, "
+                "evidence, passwords, protected history, or unrelated exact data. Once published, "
+                "the new details become fixed canon and must stay stable.\n"
+                + "\n".join(f"- {scope}" for scope in fillable_scopes)
+                + "\n"
+            )
+        else:
+            header += (
+                "\nEXPLICIT GM_FILLABLE DELEGATION ACTIVE FOR THIS LOOKUP. "
+                "The author has explicitly delegated the missing pre-existing details inside the "
+                "matching scope(s) below to the Game Master. You MAY invent those missing details "
+                "when needed, but only inside the delegated subject/source, and they must remain "
+                "compatible with all established canon. Once published, the invented details become "
+                "canon and must not be re-rolled or contradicted later. This permission does not spill "
+                "into unrelated untagged facts.\n"
+                + "\n".join(f"- {scope}" for scope in fillable_scopes)
+                + "\n"
+            )
     if not selected:
         if fillable_scopes:
             return (
@@ -437,6 +541,10 @@ def build_gm_authoritative_fact_corpus(*, scene: Scene) -> str:
         Message.objects.filter(scene_id__in=lineage_ids)
         .order_by("created_at", "pk")
     ):
+        # Player declarations remain canon as declarations, but they must not
+        # become hard evidence for exact GM-owned world facts merely by being said.
+        if message.author_type == AuthorType.PLAYER:
+            continue
         blocks.append(message.content)
 
     return "\n".join((block or "").strip() for block in blocks if (block or "").strip())
@@ -534,9 +642,14 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
         if current is None and appearances:
             current = appearances[0]
 
+        control_mode = (
+            "HUMAN_PLAYER"
+            if player.transport == "HUMAN"
+            else player.transport
+        )
         lines = [
             f"## {player.display_name} [player_id={player.pk}]",
-            f"Transport: {player.transport}",
+            f"Control: {control_mode}",
         ]
         if player.character_prompt.strip():
             lines.append("Character prompt:\n" + player.character_prompt.strip())
@@ -633,6 +746,33 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
     )
 
     parts.append(
+        "# INFORMATION ACTION CATEGORIES\n"
+        "Distinguish READ_EXISTING_SOURCE, RECALL_EXISTING_FACT, USE_OPERATIONAL_DATA, and "
+        "PROFESSIONAL_ACTION. Apply the strict pre-existing-source guard fully to READ_EXISTING_SOURCE "
+        "and RECALL_EXISTING_FACT. USE_OPERATIONAL_DATA covers routine current working data such as "
+        "weather, watch sheets, ordinary manifests, schedules, instrument-derived values, navigation "
+        "inputs, and similar present operational material; unless fixed canon says otherwise, the GM "
+        "may establish missing routine details when needed. PROFESSIONAL_ACTION is ordinary skilled "
+        "work and must not be blocked merely because the character checks, calculates, observes, or "
+        "uses professional tools. Do not reinterpret ordinary competence as an attempt to reveal a "
+        "hidden historical fact."
+    )
+
+    parts.append(
+        "# PLAYER DECLARATIONS VS OBJECTIVE WORLD STATE\n"
+        "A published PLAYER message is authoritative as a declaration of what that player character "
+        "voluntarily does, says, thinks/intends, perceives, estimates, or reports. It is NOT automatically "
+        "authoritative for external-world consequences, NPC actions, exact measurements, or outcomes that "
+        "belong to the GM. Distinguish: PLAYER_VOLUNTARY_ACTION, PLAYER_SPEECH, PLAYER_THOUGHT_OR_INTENT, "
+        "PLAYER_PERCEPTION_OR_ASSESSMENT, PLAYER_ASSERTED_WORLD_STATE, and GM_RESULT. Preserve the first "
+        "three as the player's agency. Preserve perception/assessment as the fact that the character made "
+        "that observation or estimate, not necessarily as objective truth. Treat PLAYER_ASSERTED_WORLD_STATE "
+        "as a claim awaiting GM confirmation unless earlier authoritative canon already establishes it. "
+        "Example: 'we are two percent off course' from a player means the character estimates/reports roughly "
+        "two percent deviation; it becomes an objective exact deviation only if the GM confirms it."
+    )
+
+    parts.append(
         "# NPC CAUSALITY\n"
         "NPCs must not perform suspicious, dramatic, or plot-significant actions merely because "
         "a player character is nearby or because the GM was asked to produce a beat. Such actions "
@@ -660,6 +800,12 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
             "For action TURN, turn_targets must be an empty list. The application owns the "
             "ROUND order and will invoke the frozen round roster itself."
         ),
+        TurnMode.SOFT_ROUND: (
+            "SOFT_ROUND is for parallel or loosely coupled character lines. For TURN, choose one "
+            "or more participant IDs in turn_targets whose line has a meaningful beat now. There "
+            "is no obligation to alternate mechanically or manufacture content for an idle line. "
+            "Target only the line(s) that naturally require player response."
+        ),
         TurnMode.SIMULTANEOUS: (
             "For action TURN, turn_targets may be empty to invoke all scene participants, "
             "or contain a subset of current participant IDs."
@@ -670,6 +816,62 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
         ),
     }
     parts.append("# TURN TARGETING\n" + mode_rules.get(scene.mode, ""))
+
+    parts.append(
+        "# PACING AND MEANINGFUL CHANGE\n"
+        "Do not play every minute of stable repetitive work. When conditions are stable, the character is "
+        "performing routine repeated work, no meaningful choice is pending, and no event is scheduled to "
+        "break the routine, compress time to the next natural decision or meaningful change. A meaningful "
+        "change includes new information, a new task, a constraint, an opportunity, changed conditions, a "
+        "problem, an NPC decision, a relationship shift, conflict of interest, an incoming message, a technical "
+        "fault, a new important object, or a significant result of player action. Never manufacture an event "
+        "merely to avoid quiet. Do not skip across a point where the player could make an important decision, "
+        "conditions materially change, danger/opportunity appears, conflict begins, or the character is "
+        "deliberately monitoring something whose change matters. Routine professional work may be summarized "
+        "over sensible minutes or hours until something meaningful changes."
+    )
+
+    parts.append(
+        "# QUIET SCENES ARE VALID\n"
+        "A calm flight, routine watch, meal, tea, ordinary conversation, or uneventful work period "
+        "is legitimate play. Do not introduce accidents, fires, attacks, contraband, spies, murders, "
+        "or sabotage merely to raise drama. A new complication should follow from hidden lore, existing "
+        "NPC goals, route, cargo, passengers, political conditions, technical state, player actions, "
+        "or another already-established causal chain. If no such cause is ready, preserve the quiet "
+        "world and use a sensible time skip rather than inventing trouble."
+    )
+
+    parts.append(
+        "# NPC CONVERSATION ENDING\n"
+        "NPCs do not keep conversations alive merely because a player is nearby. Continue dialogue only while "
+        "character, goals, interest, social context, current duties, or an already-open topic support it. Once "
+        "the conversational function is complete, an NPC may naturally return to work, read, leave, fall silent, "
+        "or attend to the environment. Do not make incidental NPCs suspicious, cryptic, or unusually attentive "
+        "as a generic hint that plot exists."
+    )
+
+    parts.append(
+        "# PROFESSIONAL COMPETENCE AND TECHNICAL WORK\n"
+        "Track demonstrated competence and changing trust. A senior professional may test a newcomer early, but "
+        "once baseline competence has been demonstrated, shift toward normal delegated work: the character handles "
+        "routine tasks independently, while seniors supervise outcomes and intervene for mistakes, unusual conditions, "
+        "or vehicle-specific concerns. Do not make a qualified professional repeatedly explain elementary operations. "
+        "For navigation and similar work, vary the relevant inputs as conditions require: dead reckoning, heading, "
+        "speed, elapsed time, wind/drift estimates, compass, visual landmarks, radio bearings when available, celestial "
+        "navigation when conditions permit, radio-room information, and current weather. In poor visibility, frequent "
+        "instrument checks can verify heading/speed/vehicle state, but they do not magically provide an independent "
+        "precise position; dead-reckoning uncertainty may grow. Use technical detail when it creates a decision, problem, "
+        "or sense of professional work, not as textbook padding."
+    )
+
+    parts.append(
+        "# PARALLEL CHARACTER LINES\n"
+        "When characters are physically separated and pursuing independent tasks, do not invent dialogue or events "
+        "solely to satisfy turn order. Let the currently meaningful line advance and compress routine elsewhere. Bring "
+        "separated characters together through natural infrastructure such as watch changes, meals, common rooms, service "
+        "requests, intermediate stops, announcements, organizational procedures, genuine need for assistance, or shared "
+        "events, not contrived corridor collisions."
+    )
 
     parts.append(
         "# MASTERING DISCIPLINE\n"
@@ -694,7 +896,8 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
         '"private":[{"player_id":123,"content":"..."}],'
         '"turn_targets":[123],"scene_transition":null}\n'
         '"public" is the GM text visible to the whole scene. "private" contains optional '
-        "GM messages visible only to the named player. turn_targets contains Player IDs, "
+        "GM messages visible only to the named player. If scene_transition is non-null it must "
+        'contain name, description, and memory for the new live current state. turn_targets contains Player IDs, '
         "not names. For WAIT, public must be empty, private must be empty and turn_targets "
         "must be empty. For NARRATE, turn_targets must be empty. For TURN, public must not "
         "be empty. scene_transition must normally be null. Use "
@@ -739,9 +942,14 @@ def _message_to_chat(message: Message) -> dict:
     else:
         role = "system"
         author = "System"
+    if message.author_type == AuthorType.PLAYER:
+        framing = "PLAYER DECLARATION; external-world claims are not objective GM confirmation"
+        content = f"[{scope}] {author}{action} [{framing}]:\n{message.content}"
+    else:
+        content = f"[{scope}] {author}{action}:\n{message.content}"
     return {
         "role": role,
-        "content": f"[{scope}] {author}{action}:\n{message.content}",
+        "content": content,
     }
 
 

@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.6"
+    assert manifest["version"] == "0.4.7"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -177,3 +177,12 @@ def test_browser_bridge_autostarts_jobs_inserted_by_live_ui_updates():
     assert "new MutationObserver" in source
     assert "scheduleAutoStartBridge" in source
     assert '"autostart-after-dom-update"' in source
+
+
+def test_browser_bridge_requires_full_scene_state_on_gm_transition():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert '"invalid-scene-transition-state"' in external
+    assert "transition.description" in external
+    assert "transition.memory" in external
+    assert '"description":"current state"' in external

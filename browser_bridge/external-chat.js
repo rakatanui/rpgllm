@@ -304,12 +304,28 @@ function structuredResponseStatus(text, jobId) {
 
     if (String(jobId || "").startsWith("gm:")) {
       const action = String(payload.action || "").toUpperCase();
-      if (["TURN", "NARRATE", "WAIT"].includes(action)) {
-        return { ready: true, reason: "", normalized };
+      if (!["TURN", "NARRATE", "WAIT"].includes(action)) {
+        lastReason = action ? "invalid-gm-action" : "missing-gm-action";
+        lastNormalized = normalized;
+        continue;
       }
-      lastReason = action ? "invalid-gm-action" : "missing-gm-action";
-      lastNormalized = normalized;
-      continue;
+
+      const transition = payload.scene_transition;
+      if (transition !== null && transition !== undefined) {
+        if (
+          typeof transition !== "object" ||
+          Array.isArray(transition) ||
+          !String(transition.name || "").trim() ||
+          !String(transition.description || "").trim() ||
+          !String(transition.memory || "").trim()
+        ) {
+          lastReason = "invalid-scene-transition-state";
+          lastNormalized = normalized;
+          continue;
+        }
+      }
+
+      return { ready: true, reason: "", normalized };
     }
 
     if (String(jobId || "").startsWith("player:")) {
@@ -334,7 +350,8 @@ function structuredRepairPrompt(jobId, reason) {
       "Your previous answer could not be imported by MRAZ (" + reason + "). " +
       "Return ONLY the corrected JSON object for the SAME GM execution. " +
       'Schema: {"action":"TURN|NARRATE|WAIT","public":"...","private":[],' +
-      '"turn_targets":[],"scene_transition":null}. ' +
+      '"turn_targets":[],"scene_transition":null}. If scene_transition is not null, ' +
+      'it MUST be {"name":"...","description":"current state","memory":"durable summary"}. ' +
       "Do not repeat the scene, do not add commentary, Markdown, or code fences. " +
       "In ROUND mode leave turn_targets empty."
     );

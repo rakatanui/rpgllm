@@ -1318,11 +1318,11 @@ def send_gm_message(request, scene_id):
         selected_players = _selected_players_from_request(request, scene)
         if (
             run_turn_flag
-            and scene.mode == TurnMode.MANUAL
+            and scene.mode in (TurnMode.MANUAL, TurnMode.SOFT_ROUND)
             and not selected_players
         ):
             return HttpResponseBadRequest(
-                "MANUAL mode requires selecting at least one player."
+                f"{scene.mode} mode requires selecting at least one player."
             )
         if run_turn_flag:
             turn_engine.start_turn(
@@ -1350,8 +1350,10 @@ def silent_turn(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
-    if scene.mode not in (TurnMode.ROUND, TurnMode.MANUAL):
-        return HttpResponseBadRequest("Silence is available only in ROUND or MANUAL mode.")
+    if scene.mode not in (TurnMode.ROUND, TurnMode.MANUAL, TurnMode.SOFT_ROUND):
+        return HttpResponseBadRequest(
+            "Silence is available only in ROUND, SOFT_ROUND, or MANUAL mode."
+        )
 
     try:
         selected_players = _selected_players_from_request(request, scene)
@@ -1361,9 +1363,13 @@ def silent_turn(request, scene_id):
                     "ROUND mode requires a confirmed player order before Silence."
                 )
             selected_players = []
-        elif len(selected_players) != 1:
+        elif scene.mode == TurnMode.MANUAL and len(selected_players) != 1:
             return HttpResponseBadRequest(
                 "MANUAL Silence requires selecting exactly one player."
+            )
+        elif scene.mode == TurnMode.SOFT_ROUND and not selected_players:
+            return HttpResponseBadRequest(
+                "SOFT_ROUND Silence requires selecting at least one player."
             )
 
         turn_engine.start_silent_turn(

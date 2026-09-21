@@ -178,6 +178,12 @@
           <div class="turn-banner">
             Scene transition on publish:
             <strong>{{ scene.name }}</strong> → <strong>{{ gm_execution.scene_transition.name }}</strong>
+            {% if gm_execution.scene_transition.description %}
+              <div class="meta">New current state: {{ gm_execution.scene_transition.description }}</div>
+            {% endif %}
+            {% if gm_execution.scene_transition.memory %}
+              <div class="meta">New scene memory: {{ gm_execution.scene_transition.memory }}</div>
+            {% endif %}
           </div>
         {% endif %}
 

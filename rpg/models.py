@@ -22,6 +22,7 @@ class Visibility(models.TextChoices):
 class TurnMode(models.TextChoices):
     MANUAL = "MANUAL", "Manual"
     ROUND = "ROUND", "Round"
+    SOFT_ROUND = "SOFT_ROUND", "Soft round / parallel lines"
     SIMULTANEOUS = "SIMULTANEOUS", "Simultaneous"
     TABLE = "TABLE", "Table"
 
