@@ -771,6 +771,12 @@ def build_gm_context(*, scene: Scene, config: GameMasterConfig) -> BuiltGameMast
             "For action TURN, turn_targets must be an empty list. The application owns the "
             "ROUND order and will invoke the frozen round roster itself."
         ),
+        TurnMode.SOFT_ROUND: (
+            "SOFT_ROUND is for parallel or loosely coupled character lines. For TURN, choose one "
+            "or more participant IDs in turn_targets whose line has a meaningful beat now. There "
+            "is no obligation to alternate mechanically or manufacture content for an idle line. "
+            "Target only the line(s) that naturally require player response."
+        ),
         TurnMode.SIMULTANEOUS: (
             "For action TURN, turn_targets may be empty to invoke all scene participants, "
             "or contain a subset of current participant IDs."
