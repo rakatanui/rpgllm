@@ -160,9 +160,7 @@
     {% endif %}
 
     {% if human_waiting %}
-      <div class="human-wait-card"
-           data-human-wait-player-id="{{ p.pk }}"
-           data-human-wait-execution-id="{{ human_waiting.pk }}">
+      <div class="human-wait-card">
         <strong>Waiting for human player</strong>
         {% if human_waiting.turn.is_private %}
           <span class="chip">PRIVATE</span>
