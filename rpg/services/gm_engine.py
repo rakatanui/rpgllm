@@ -100,10 +100,21 @@ def _validate_existing_source_exact_literals(
     if not retrieval:
         return
 
-    # An author-controlled GM_FILLABLE scope is an explicit exception to the
-    # conservative exact-literal guard for this specific existing-source lookup.
-    # Prompt rules still constrain the model to the matching delegated subject.
-    if gm_lookup_fillable_scopes(scene=scene):
+    fillable_scopes = gm_lookup_fillable_scopes(scene=scene)
+    explicit_fillable = any(
+        not scope.startswith("AUTO OPERATIONAL SOURCE:")
+        for scope in fillable_scopes
+    )
+    auto_operational = any(
+        scope.startswith("AUTO OPERATIONAL SOURCE:")
+        for scope in fillable_scopes
+    )
+
+    # Explicit author-controlled GM_FILLABLE is a deliberate broad exception for
+    # its matching subject. Automatic operational filling is narrower: it may
+    # establish routine dated/current working data, but it must not accidentally
+    # authorize unrelated addresses, phones, passwords, case numbers, etc.
+    if explicit_fillable:
         return
 
     corpus = _normalize_fact_literal(build_gm_authoritative_fact_corpus(scene=scene))
@@ -117,7 +128,11 @@ def _validate_existing_source_exact_literals(
             ],
         ]
     )
-    for pattern in _PREEXISTING_EXACT_FACT_PATTERNS:
+    for pattern_index, pattern in enumerate(_PREEXISTING_EXACT_FACT_PATTERNS):
+        if auto_operational and pattern_index == 2:
+            # A date printed on a current weather/watch/operational sheet is routine
+            # metadata and may be established with the rest of that source.
+            continue
         for match in pattern.finditer(response_text):
             literal = match.group(0).strip()
             normalized = _normalize_fact_literal(literal)
