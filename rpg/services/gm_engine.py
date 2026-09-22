@@ -159,6 +159,7 @@ def gm_response_contract() -> str:
         "required on a transition so stale pre-transition state is not kept as CURRENT SCENE."
     )
 
+
 def gm_execution_request(scene: Scene) -> str:
     text = (
         "## EXECUTION REQUEST\n"
