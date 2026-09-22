@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MRAZ Bridge Log</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 10px; width: 760px; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+    button { padding: 6px 10px; }
+    #status { margin-left: auto; font-size: 12px; opacity: 0.7; align-self: center; }
+    textarea {
+      width: 100%;
+      height: 520px;
+      resize: vertical;
+      box-sizing: border-box;
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button id="refresh" type="button">Refresh</button>
+    <button id="copy" type="button">Copy</button>
+    <button id="clear" type="button">Clear</button>
+    <span id="status"></span>
+  </div>
+  <textarea id="log" readonly spellcheck="false"></textarea>
+  <script src="popup.js"></script>
+</body>
+</html>

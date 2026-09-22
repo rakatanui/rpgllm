@@ -1,11 +1,17 @@
 {% load rpg_extras %}
 <section class="panel gm-model-panel"
+         {% if gm_config and gm_config.auto_continue %}
+           data-mraz-gm-autoplay="1"
+         {% endif %}
          {% if gm_execution and gm_execution.state == "WAITING_EXTERNAL" %}
            data-mraz-bridge-card
            data-mraz-bridge-kind="gm"
            data-mraz-bridge-execution="{{ gm_execution.pk }}"
            data-mraz-bridge-chat-url="{{ gm_execution.external_chat_url }}"
            data-mraz-bridge-label="{{ gm_execution.external_chat_label|default:'Model GM' }}"
+           {% if gm_config and gm_config.auto_continue and not gm_execution.error and not gm_execution.external_is_bootstrap %}
+             data-mraz-bridge-autostart="1"
+           {% endif %}
          {% endif %}>
   <div class="gm-model-header">
     <div>
@@ -18,6 +24,7 @@
         <span class="chip {% if gm_config.enabled %}generating{% endif %}">
           {% if gm_config.enabled %}ENABLED{% else %}DISABLED{% endif %}
         </span>
+        {% if gm_config.auto_continue %}<span class="chip generating">AUTO CONTINUE</span>{% endif %}
         <span class="chip">{{ gm_config.get_transport_display }}</span>
         {% if gm_config.transport == "LITELLM" and gm_config.model_config %}
           <span class="meta">{{ gm_config.model_config.name }}</span>
@@ -55,6 +62,13 @@
 
       {% if gm_execution.error %}
         <div class="execution-error">{{ gm_execution.error }}</div>
+      {% endif %}
+
+      {% if gm_execution.external_is_bootstrap %}
+        <div class="turn-banner">
+          BOOTSTRAP is intentionally not auto-sent by the browser bridge.
+          Copy it into the persistent GM chat manually, then import the response here.
+        </div>
       {% endif %}
 
       <label>Prompt for external GM chat</label>
@@ -159,6 +173,19 @@
             </div>
           {% endif %}
         </div>
+
+        {% if gm_execution.scene_transition.name %}
+          <div class="turn-banner">
+            Scene transition on publish:
+            <strong>{{ scene.name }}</strong> → <strong>{{ gm_execution.scene_transition.name }}</strong>
+            {% if gm_execution.scene_transition.description %}
+              <div class="meta">New current state: {{ gm_execution.scene_transition.description }}</div>
+            {% endif %}
+            {% if gm_execution.scene_transition.memory %}
+              <div class="meta">New scene memory: {{ gm_execution.scene_transition.memory }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
 
         <label>Public GM beat</label>
         <textarea name="public"

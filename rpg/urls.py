@@ -17,6 +17,21 @@ urlpatterns = [
         name="human_player_fragment",
     ),
     path(
+        "play/<uuid:access_token>/status/",
+        views.human_player_status,
+        name="human_player_status",
+    ),
+    path(
+        "play/<uuid:access_token>/qr.png",
+        views.human_player_qr,
+        name="human_player_qr",
+    ),
+    path(
+        "play/<uuid:access_token>/history/<str:channel>/",
+        views.human_feed_page,
+        name="human_feed_page",
+    ),
+    path(
         "play/<uuid:access_token>/appearance/<int:appearance_id>/current/",
         views.set_human_current_appearance,
         name="set_human_current_appearance",
@@ -70,6 +85,16 @@ urlpatterns = [
         "scene/<int:scene_id>/human/<int:player_id>/access/toggle/",
         views.toggle_human_access,
         name="toggle_human_access",
+    ),
+    path(
+        "scene/<int:scene_id>/gm-model/panel/",
+        views.gm_model_panel,
+        name="gm_model_panel",
+    ),
+    path(
+        "scene/<int:scene_id>/gm-model/status/",
+        views.gm_model_status,
+        name="gm_model_status",
     ),
     path(
         "scene/<int:scene_id>/gm-model/start/",

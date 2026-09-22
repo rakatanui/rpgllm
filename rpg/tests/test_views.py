@@ -1,18 +1,23 @@
 """View-level tests for scene message relationships."""
 import base64
+import re
 from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles import finders
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client, override_settings
+from django.test import Client, RequestFactory, override_settings
 from django.urls import reverse
 
 from rpg.models import (
     AuthorType,
     CharacterAppearance,
     ExecutionState,
+    GameMasterConfig,
+    GameMasterExecution,
+    GameMasterExecutionState,
+    GameMasterTransport,
     LoreEntry,
     ManualChatContextMode,
     Message,
@@ -24,6 +29,7 @@ from rpg.models import (
     TurnState,
     Visibility,
 )
+from rpg import views
 from rpg.services import turn_engine
 from rpg.services.llm import LLMResponse, MockLLMClient
 from rpg.tests.factories import make_campaign, make_model, make_player, make_scene
@@ -1645,6 +1651,152 @@ def test_manual_chat_player_card_shows_copy_open_and_paste_controls():
 
 
 @pytest.mark.django_db
+def test_manual_chat_submit_auto_continues_to_manual_chat_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    ai_player = make_player(
+        campaign,
+        "Виктория",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_label="ChatGPT Player",
+        manual_chat_url="https://chatgpt.com/c/test-player",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[human, ai_player],
+    )
+    scene.round_order = [human.pk, ai_player.pk]
+    scene.active_player_index = 0
+    scene.save(update_fields=["round_order", "active_player_index", "updated_at"])
+
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Ваш ход.",
+    )
+    human_execution = result.turn.executions.get(player=human)
+    ai_execution = result.turn.executions.get(player=ai_player)
+    client = Client()
+
+    human_response = client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=human_execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Нед действует."},
+    )
+
+    assert human_response.status_code == 302
+    assert not scene.gm_executions.exists()
+
+    ai_response = client.post(
+        reverse(
+            "submit_external_response",
+            kwargs={"scene_id": scene.pk, "execution_id": ai_execution.pk},
+        ),
+        {
+            "response": (
+                '{"action_type":"PASS","public":"Виктория пропускает ход.",'
+                '"private_to_gm":""}'
+            )
+        },
+    )
+
+    assert ai_response.status_code == 302
+    ai_execution.refresh_from_db()
+    assert ai_execution.state == ExecutionState.COMPLETED
+
+    gm_execution = scene.gm_executions.get()
+    assert gm_execution.state == GameMasterExecutionState.WAITING_EXTERNAL
+    assert gm_execution.external_chat_url == "https://chatgpt.com/c/test-gm"
+
+
+@pytest.mark.django_db
+def test_all_pass_round_does_not_auto_continue_to_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    ai_player = make_player(
+        campaign,
+        "Виктория",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_label="ChatGPT Player",
+        manual_chat_url="https://chatgpt.com/c/test-player",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[human, ai_player],
+    )
+    scene.round_order = [human.pk, ai_player.pk]
+    scene.active_player_index = 0
+    scene.save(update_fields=["round_order", "active_player_index", "updated_at"])
+
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Ваш ход.",
+    )
+    human_execution = result.turn.executions.get(player=human)
+    ai_execution = result.turn.executions.get(player=ai_player)
+    client = Client()
+
+    human_response = client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=human_execution.pk,
+        ),
+        {"action_type": "PASS", "content": ""},
+    )
+    assert human_response.status_code == 302
+    assert not scene.gm_executions.exists()
+
+    ai_response = client.post(
+        reverse(
+            "submit_external_response",
+            kwargs={"scene_id": scene.pk, "execution_id": ai_execution.pk},
+        ),
+        {
+            "response": (
+                '{"action_type":"PASS","public":"Виктория пропускает ход.",'
+                '"private_to_gm":""}'
+            )
+        },
+    )
+
+    assert ai_response.status_code == 302
+    result.turn.refresh_from_db()
+    assert result.turn.state == TurnState.COMPLETED
+    assert not scene.gm_executions.exists()
+
+
+@pytest.mark.django_db
 def test_external_response_view_imports_valid_paste():
     campaign = make_campaign()
     lucien = make_player(
@@ -1961,6 +2113,111 @@ def test_human_submit_view_completes_waiting_execution(mock_backend):
 
 
 @pytest.mark.django_db
+def test_human_bearer_token_post_does_not_require_csrf():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="go",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    csrf_client = Client(enforce_csrf_checks=True)
+
+    response = csrf_client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Я отвечаю без CSRF cookie."},
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+
+
+@pytest.mark.django_db
+def test_csrf_remains_enabled_for_master_write_routes():
+    campaign = make_campaign()
+    player = make_player(campaign, "P")
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[player])
+    csrf_client = Client(enforce_csrf_checks=True)
+
+    response = csrf_client.post(
+        reverse("start_model_gm", kwargs={"scene_id": scene.pk})
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_human_submit_auto_continues_to_manual_chat_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+    )
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Твой ход.",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    client = Client()
+
+    response = client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Я осматриваю вошедшего мужчину."},
+    )
+
+    assert response.status_code == 302
+    execution.refresh_from_db()
+    assert execution.state == ExecutionState.COMPLETED
+
+    gm_execution = scene.gm_executions.get()
+    assert gm_execution.state == GameMasterExecutionState.WAITING_EXTERNAL
+    assert gm_execution.external_chat_url == "https://chatgpt.com/c/test-gm"
+
+    human_html = client.get(
+        _human_url("human_player_client", scene, human)
+    ).content.decode()
+    assert "MASTER THINKING" in human_html
+
+    gm_html = client.get(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+    ).content.decode()
+    assert 'data-mraz-gm-autoplay="1"' in gm_html
+    assert "BOOTSTRAP" in gm_html
+    assert 'data-mraz-bridge-autostart="1"' not in gm_html
+    assert "BOOTSTRAP is intentionally not auto-sent" in gm_html
+
+    gm_execution.error = "Rejected response"
+    gm_execution.save(update_fields=["error", "updated_at"])
+    paused_html = client.get(
+        reverse("scene", kwargs={"scene_id": scene.pk})
+    ).content.decode()
+    assert 'data-mraz-gm-autoplay="1"' in paused_html
+    assert 'data-mraz-bridge-autostart="1"' not in paused_html
+
+
+@pytest.mark.django_db
 def test_human_access_token_cannot_submit_another_players_execution():
     campaign = make_campaign()
     human_a = make_player(campaign, "A", transport=PlayerTransport.HUMAN)
@@ -2212,16 +2469,22 @@ def test_human_client_preserves_disclosures_scroll_and_focus_across_polling():
     assert response.status_code == 200
     assert 'id="human-notes"' in html
     assert 'data-human-preserve-open="notes"' in html
-    assert 'id="human-public-feed"' in html
-    assert 'data-human-preserve-scroll="public"' in html
-    assert 'id="human-private-feed"' in html
-    assert 'data-human-preserve-scroll="private"' in html
+    assert 'id="human-public-scroll"' in html
+    assert 'data-human-workspace-scroll="scene"' in html
+    assert 'id="human-private-scroll"' in html
+    assert 'data-human-workspace-scroll="private"' in html
+    assert 'hx-trigger="human-scene-poll"' in html
+    assert 'hx-trigger="human-private-poll"' in html
     assert "htmx:beforeSwap" in html
     assert "htmx:afterSwap" in html
-    assert "captureHumanPollingState" in html
-    assert "restoreHumanPollingState" in html
-    assert "bottomGap" in html
+    assert "humanCaptureRegion" in html
+    assert "humanRestoreRegion" in html
+    assert "humanRegionIsEditing" in html
+    assert "humanPreserveEvictedMessages" in html
+    assert "humanCompactHistory" in html
+    assert "window.setInterval(humanPollAll, 2000)" in html
     assert "selectionStart" in html
+    assert "sessionStorage" in html
 
 
 @pytest.mark.django_db
@@ -2315,6 +2578,153 @@ def test_human_client_renders_character_card_and_episode_search():
     assert "Помнит встречу у старого вокзала" in html
     assert _human_url("human_episode_search", scene, human) in html
     assert _human_url("upload_human_character_image", scene, human) in html
+
+
+@pytest.mark.django_db
+def test_human_client_puts_gameplay_before_reference_and_collapses_character_sections():
+    campaign = make_campaign()
+    human = make_player(
+        campaign,
+        "Живой",
+        transport=PlayerTransport.HUMAN,
+        characteristics="Сила 2",
+        abilities="Видит следы магии",
+        memory_summary="Помнит старый вокзал.",
+    )
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    html = Client().get(
+        _human_url("human_player_client", scene, human)
+    ).content.decode()
+
+    primary_index = html.index('id="human-character-primary"')
+    scene_index = html.index('id="human-workspace-scene"')
+    private_index = html.index('id="human-workspace-private"')
+    reference_index = html.index('id="human-character-reference"')
+
+    assert primary_index < scene_index < private_index < reference_index
+    assert 'data-human-workspace-target="scene"' in html
+    assert 'data-human-workspace-target="private"' in html
+    assert 'data-human-workspace-target="character"' in html
+    assert not re.search(
+        r"<details[^>]*\bopen\b[^>]*>\s*<summary>Characteristics</summary>",
+        html,
+    )
+    assert not re.search(
+        r"<details[^>]*\bopen\b[^>]*>\s*<summary>Abilities</summary>",
+        html,
+    )
+    assert not re.search(
+        r"<details[^>]*\bopen\b[^>]*>\s*<summary>Memory summary</summary>",
+        html,
+    )
+    assert "height:100dvh" in html
+    assert "grid-template-columns:72px minmax(0,1fr)" in html
+
+
+@pytest.mark.django_db
+def test_human_client_paginates_newest_first_and_filters_empty_none_messages():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    created = []
+    for index in range(75):
+        created.append(
+            Message.objects.create(
+                campaign=campaign,
+                scene=scene,
+                author_type=AuthorType.GM,
+                visibility=Visibility.PUBLIC,
+                content=f"PUBLIC_{index:03d}",
+            )
+        )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        visibility=Visibility.PUBLIC,
+        content="None",
+    )
+    Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        visibility=Visibility.PUBLIC,
+        content="   ",
+    )
+
+    client = Client()
+    html = client.get(_human_url("human_player_client", scene, human)).content.decode()
+
+    assert "PUBLIC_074" in html
+    assert "PUBLIC_015" in html
+    assert "PUBLIC_014" not in html
+    assert ">None<" not in html
+    assert html.index("PUBLIC_074") < html.index("PUBLIC_073")
+    assert "human-history-sentinel" in html
+
+    before = created[15].pk
+    older = client.get(
+        _human_url("human_feed_page", scene, human, channel="public"),
+        {"before": before},
+    )
+    older_html = older.content.decode()
+    assert older.status_code == 200
+    assert "PUBLIC_014" in older_html
+    assert "PUBLIC_000" in older_html
+    assert older_html.index("PUBLIC_014") < older_html.index("PUBLIC_013")
+
+
+@pytest.mark.django_db
+def test_human_private_feed_is_separate_workspace_and_paginates():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    private_messages = []
+    for index in range(65):
+        private_messages.append(
+            Message.objects.create(
+                campaign=campaign,
+                scene=scene,
+                author_type=AuthorType.GM,
+                visibility=Visibility.PRIVATE_GM_PLAYER,
+                private_player=human,
+                content=f"PRIVATE_{index:03d}",
+            )
+        )
+
+    client = Client()
+    html = client.get(_human_url("human_player_client", scene, human)).content.decode()
+
+    assert 'id="human-workspace-private"' in html
+    assert "Visible only to you and the Game Master" in html
+    assert "PRIVATE_064" in html
+    assert "PRIVATE_004" not in html
+    assert "Send OOC" in html
+
+    older = client.get(
+        _human_url("human_feed_page", scene, human, channel="private"),
+        {"before": private_messages[5].pk},
+    )
+    older_html = older.content.decode()
+    assert "PRIVATE_004" in older_html
+    assert "PRIVATE_000" in older_html
+
+
+@pytest.mark.django_db
+def test_human_reference_uses_one_primary_history_search():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+
+    html = Client().get(_human_url("human_player_client", scene, human)).content.decode()
+
+    search_url = _human_url("human_episode_search", scene, human)
+    assert html.count(f'action="{search_url}"') == 1
+    assert "Search episodes" not in html
+    assert 'placeholder="Search visible history..."' in html
 
 
 @pytest.mark.django_db
@@ -2636,3 +3046,222 @@ def test_human_token_cannot_set_another_players_appearance():
         )
     )
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_human_status_endpoint_reports_new_waiting_execution_without_full_page_reload():
+    campaign = make_campaign()
+    human = make_player(campaign, "Живой", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    result = turn_engine.start_turn(
+        scene=scene,
+        gm_message_text="Твой ход.",
+        selected_players=[human],
+    )
+    execution = result.turn.executions.get(player=human)
+    private = Message.objects.create(
+        campaign=campaign,
+        scene=scene,
+        author_type=AuthorType.GM,
+        content="PRIVATE_STATUS_MARKER",
+        visibility=Visibility.PRIVATE_GM_PLAYER,
+        private_player=human,
+    )
+
+    response = Client().get(_human_url("human_player_status", scene, human))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["waiting_execution_id"] == execution.pk
+    assert payload["public_latest_id"] > 0
+    assert payload["private_latest_id"] == private.pk
+    assert response["Cache-Control"] == "private, no-store"
+
+
+@pytest.mark.django_db
+def test_human_submit_as_last_round_response_auto_continues_to_manual_chat_gm():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    ai_player = make_player(
+        campaign,
+        "Виктория",
+        transport=PlayerTransport.MANUAL_CHAT,
+        manual_chat_label="Gemini - Victoria",
+        manual_chat_url="https://gemini.google.com/app/test-victoria",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_initialized=True,
+    )
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.ROUND,
+        participants=[human, ai_player],
+    )
+    scene.round_order = [human.pk, ai_player.pk]
+    scene.active_player_index = 0
+    scene.save(update_fields=["round_order", "active_player_index", "updated_at"])
+
+    GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_initialized=True,
+    )
+
+    result = turn_engine.start_turn(scene=scene, gm_message_text="Ваш ход.")
+    human_execution = result.turn.executions.get(player=human)
+    ai_execution = result.turn.executions.get(player=ai_player)
+    client = Client()
+
+    ai_response = client.post(
+        reverse(
+            "submit_external_response",
+            kwargs={"scene_id": scene.pk, "execution_id": ai_execution.pk},
+        ),
+        {
+            "response": (
+                '{"action_type":"PASS","public":"","private_to_gm":""}'
+            )
+        },
+    )
+    assert ai_response.status_code == 302
+    assert not scene.gm_executions.exists()
+
+    human_response = client.post(
+        _human_url(
+            "submit_human_response",
+            scene,
+            human,
+            execution_id=human_execution.pk,
+        ),
+        {"action_type": "ACT", "content": "Нед отвечает."},
+    )
+
+    assert human_response.status_code == 302
+    human_execution.refresh_from_db()
+    assert human_execution.state == ExecutionState.COMPLETED
+
+    gm_execution = scene.gm_executions.get()
+    assert gm_execution.state == GameMasterExecutionState.WAITING_EXTERNAL
+    assert gm_execution.external_chat_url == "https://chatgpt.com/c/test-gm"
+
+
+@pytest.mark.django_db
+def test_gm_model_status_and_panel_reflect_new_waiting_external_execution():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    config = GameMasterConfig.objects.create(
+        campaign=campaign,
+        enabled=True,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        review_before_publish=False,
+        auto_continue=True,
+        manual_chat_label="ChatGPT GM",
+        manual_chat_url="https://chatgpt.com/c/test-gm",
+        manual_chat_context_mode=ManualChatContextMode.CHAT_MEMORY,
+        manual_chat_initialized=True,
+    )
+    execution = GameMasterExecution.objects.create(
+        scene=scene,
+        config=config,
+        state=GameMasterExecutionState.WAITING_EXTERNAL,
+        transport=GameMasterTransport.MANUAL_CHAT,
+        external_prompt="DELTA",
+        external_chat_label="ChatGPT GM",
+        external_chat_url="https://chatgpt.com/c/test-gm",
+        external_is_bootstrap=False,
+    )
+    client = Client()
+
+    status = client.get(
+        reverse("gm_model_status", kwargs={"scene_id": scene.pk})
+    )
+    panel = client.get(
+        reverse("gm_model_panel", kwargs={"scene_id": scene.pk})
+    )
+
+    assert status.status_code == 200
+    assert status.json()["execution_id"] == execution.pk
+    assert status.json()["state"] == GameMasterExecutionState.WAITING_EXTERNAL
+    assert panel.status_code == 200
+    html = panel.content.decode()
+    assert f'data-mraz-bridge-execution="{execution.pk}"' in html
+    assert 'data-mraz-bridge-autostart="1"' in html
+
+
+@pytest.mark.django_db
+def test_human_player_client_renders_local_qr_code():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    client = Client()
+
+    page = client.get(_human_url("human_player_client", scene, human))
+    qr = client.get(_human_url("human_player_qr", scene, human))
+
+    assert page.status_code == 200
+    html = page.content.decode()
+    assert _human_url("human_player_qr", scene, human) in html
+    assert "Open on phone" in html
+
+    assert qr.status_code == 200
+    assert qr["Content-Type"] == "image/png"
+    assert qr.content.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10]))
+    assert qr["Cache-Control"] == "private, no-store"
+
+
+@pytest.mark.django_db
+@override_settings(PUBLIC_PLAYER_HOST="play.example.test")
+def test_human_client_qr_targets_public_player_host():
+    campaign = make_campaign()
+    human = make_player(campaign, "Нед", transport=PlayerTransport.HUMAN)
+    scene = make_scene(campaign, mode=TurnMode.MANUAL, participants=[human])
+    token = _human_token(scene, human)
+    request = RequestFactory().get("/ignored/")
+
+    target = views._human_client_share_url(request, token)
+
+    assert target == "https://play.example.test" + reverse(
+        "human_player_client",
+        kwargs={"access_token": token},
+    )
+
+
+@pytest.mark.django_db
+def test_soft_round_scene_exposes_target_selection_and_allows_selected_silence():
+    campaign = make_campaign()
+    ned = make_player(campaign, "Нед")
+    victoria = make_player(campaign, "Виктория")
+    scene = make_scene(
+        campaign,
+        mode=TurnMode.SOFT_ROUND,
+        participants=[ned, victoria],
+    )
+    client = Client()
+
+    page = client.get(reverse("scene", kwargs={"scene_id": scene.pk}))
+    html = page.content.decode()
+    assert page.status_code == 200
+    assert "SOFT_ROUND" in html
+    assert 'name="selected_players"' in html
+    assert 'id="gm-silence-button"' in html
+
+    with patch("rpg.views.turn_engine.start_silent_turn") as silent:
+        missing = client.post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {},
+        )
+        selected = client.post(
+            reverse("silent_turn", kwargs={"scene_id": scene.pk}),
+            {"selected_players": [str(victoria.pk)]},
+        )
+
+    assert missing.status_code == 400
+    assert selected.status_code == 302
+    silent.assert_called_once()
+    assert [p.pk for p in silent.call_args.kwargs["selected_players"]] == [victoria.pk]

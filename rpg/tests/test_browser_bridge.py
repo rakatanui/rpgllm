@@ -47,7 +47,9 @@ def test_browser_bridge_keeps_results_until_source_acknowledges_import():
     assert 'job.state = "result-ready"' in background
     assert "MRAZ_SOURCE_READY" in background
     assert "response && response.accepted" in background
-    assert "form.requestSubmit()" in source
+    assert 'fetch(form.action' in source
+    assert "new FormData(form)" in source
+    assert "bridge-import-http-complete" in source
     assert "data-mraz-bridge-card" in source
 
 
@@ -62,3 +64,163 @@ def test_browser_bridge_contains_deepseek_adapter():
     assert "completionStablePolls: 7" in external
     assert "preferLastResponseBody: true" in external
     assert '"chat.deepseek.com"' in background
+
+
+def test_browser_bridge_recovers_stale_tabs_after_extension_reload():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert "reusedExistingTab" in background
+    assert "chrome.tabs.reload(target.id)" in background
+    assert "safeRuntimeMessage" in external
+    assert "MRAZ_EXTERNAL_READY" in external
+    assert "safeRuntimeMessage" in source
+    assert "MRAZ_SOURCE_READY" in source
+
+
+def test_browser_bridge_exposes_persistent_debug_log_popup():
+    manifest = json.loads((BRIDGE / "manifest.json").read_text(encoding="utf-8"))
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert manifest["version"] == "0.4.7"
+    assert manifest["action"]["default_popup"] == "popup.html"
+    assert (BRIDGE / "popup.html").is_file()
+    assert (BRIDGE / "popup.js").is_file()
+    assert "mraz-bridge-debug-log" in background
+    assert "MRAZ_DEBUG_GET" in background
+    assert "MRAZ_DEBUG_CLEAR" in background
+    assert "MRAZ_DEBUG_LOG" in external
+    assert "MRAZ_DEBUG_LOG" in source
+    assert "job-send-attempt" in background
+    assert "bridge-result-received" in source
+    assert "response-detected" in external
+
+
+def test_browser_bridge_guards_oversized_prompts_before_external_navigation():
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    popup = (BRIDGE / "popup.js").read_text(encoding="utf-8")
+
+    assert "MAX_BRIDGE_PROMPT_CHARS = 30000" in source
+    assert "bridge-prompt-too-large" in source
+    assert "too large for automatic browser insertion" in source
+    assert "service-worker-started" in background
+    assert "getManifest().version" in popup
+
+
+def test_browser_bridge_validates_structured_response_before_import():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert "structuredResponseStatus" in external
+    assert "missing-gm-action" in external
+    assert "missing-player-action" in external
+    assert "response-contract-invalid" in external
+    assert "waitForFreshResponse(adapter, beforeTexts, message.jobId)" in external
+    assert "human-waiting" in source
+    assert "human-submit" in source
+
+
+def test_browser_bridge_pauses_failed_result_instead_of_autoretrying():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert 'job.state = "paused-result"' in background
+    assert "job-paused-after-source-reject" in background
+    assert "job-manual-retry" in background
+    assert "manualRetry" in background
+    assert "bridge-paused-after-external-error" in source
+    assert "bridge-import-server-state" in source
+    assert "sameExecutionStillWaiting" in source
+    assert "Automatic retry is paused" in source
+
+
+def test_browser_bridge_blocks_autoplay_for_paused_jobs():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    autoplay = background.split("async function tickAutoplay()", 1)[1]
+
+    paused_guard = autoplay.index('job.state === "paused-result"')
+    busy_guard = autoplay.index(
+        "jobs.some((job) => job.sourceTabId === source.sourceTabId)",
+        paused_guard,
+    )
+
+    assert paused_guard < busy_guard
+    assert "autoplay-blocked-paused-job" in autoplay
+    assert 'reason: "paused-result"' in autoplay
+
+
+def test_browser_bridge_rejects_oversized_prompts_in_background():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+
+    guard = background.index("promptLength > MAX_BRIDGE_PROMPT_LENGTH")
+    tab_creation = background.index("chrome.tabs.create", guard)
+
+    assert "MAX_BRIDGE_PROMPT_LENGTH = 30000" in background
+    assert guard < tab_creation
+    assert "job-rejected-prompt-too-large" in background
+    assert 'failureReason: "prompt-too-large"' in background
+
+
+def test_browser_bridge_preserves_machine_readable_failure_reasons():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert "job.failureReason = delivery.failureReason" in background
+    assert '"external-chat-timeout"' in external
+    assert '"import-error"' in source
+    assert '"source-tab-rejected-result"' in source
+
+
+def test_browser_bridge_auto_repairs_invalid_structured_responses():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert "structuredJsonCandidates" in external
+    assert "response-auto-repair" in external
+    assert "repair-send-clicked" in external
+    assert "MRAZ_INVALID_STRUCTURED_RESPONSE" in external
+    assert "preview: candidate.text.slice(0, 240)" in external
+
+
+def test_manual_chat_player_delta_cards_autostart_bridge():
+    players_template = (
+        ROOT / "rpg" / "templates" / "rpg" / "_players.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'data-mraz-bridge-kind="player"' in players_template
+    assert 'data-mraz-bridge-autostart="1"' in players_template
+    assert "not waiting.external_is_bootstrap" in players_template
+
+
+def test_gemini_bridge_prefers_visible_final_response_body():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert 'requireVisibleResponseBody: true' in external
+    assert 'preferLastResponseBody: true' in external
+    assert 'function elementIsVisible' in external
+    assert '".model-response-text",' not in external.split('"gemini.google.com": {', 1)[1].split('};', 1)[0]
+    assert '"response-contract-ready"' in external
+    assert "preview: contract.normalized.slice(0, 240)" in external
+
+
+def test_browser_bridge_autostarts_jobs_inserted_by_live_ui_updates():
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert 'document.addEventListener("mraz:gm-panel-updated"' in source
+    assert 'document.body.addEventListener("htmx:afterSwap"' in source
+    assert "new MutationObserver" in source
+    assert "scheduleAutoStartBridge" in source
+    assert '"autostart-after-dom-update"' in source
+
+
+def test_browser_bridge_requires_full_scene_state_on_gm_transition():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert '"invalid-scene-transition-state"' in external
+    assert "transition.description" in external
+    assert "transition.memory" in external
+    assert '"description":"current state"' in external

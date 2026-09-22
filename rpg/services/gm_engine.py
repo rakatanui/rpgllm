@@ -33,7 +33,12 @@ from rpg.models import (
 )
 from rpg.services import turn_engine
 from rpg.services.context_builder import get_scene_lineage
-from rpg.services.gm_context import build_gm_context
+from rpg.services.gm_context import (
+    build_gm_authoritative_fact_corpus,
+    build_gm_context,
+    build_gm_knowledge_retrieval,
+    gm_lookup_fillable_scopes,
+)
 from rpg.services.llm import get_llm_client
 
 
@@ -44,6 +49,7 @@ class GameMasterResponse:
     public: str
     private: list[dict]
     turn_targets: list[int]
+    scene_transition: dict | None = None
 
 
 ACTIVE_GM_STATES = {
@@ -54,14 +60,103 @@ ACTIVE_GM_STATES = {
 }
 
 
+_PREEXISTING_EXACT_FACT_PATTERNS = (
+    re.compile(
+        r"\b(?:ul\.?|al\.?|aleja|plac|pl\.?|street|st\.?|road|rd\.?|"
+        r"улиц\w*|ул\.?|проспект\w*|пр-т|переул\w*|пер\.?)\s+"
+        r"[A-Za-zА-Яа-яЁёÀ-ž'’.-]+(?:\s+[A-Za-zА-Яа-яЁёÀ-ž'’.-]+){0,5}\s+"
+        r"\d+[A-Za-zА-Яа-я]?(?:[/-]\d+)?",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(r"(?<!\w)\+?\d[\d\s()\-]{7,}\d(?!\w)"),
+    re.compile(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b"),
+    re.compile(
+        r"\b(?:парол\w*|код\w*|номер\s+дела|регистрацион\w*\s+номер|"
+        r"case\s*(?:no\.?|number)?)\s*[:#№-]?\s*"
+        r"[A-ZА-Я0-9][A-ZА-Я0-9._/-]{3,}\b",
+        flags=re.IGNORECASE,
+    ),
+)
+
+
+def _normalize_fact_literal(text: str) -> str:
+    normalized = (text or "").casefold().replace("ё", "е")
+    normalized = re.sub(r"[\s,;:()]+", " ", normalized)
+    return normalized.strip(" .")
+
+
+def _validate_existing_source_exact_literals(
+    response: GameMasterResponse,
+    *,
+    scene: Scene,
+) -> None:
+    """Reject machine-detectable exact facts invented during an existing-source lookup.
+
+    Prompt rules cover the general semantic case. This conservative hard guard catches
+    the most damaging structured literals (addresses, phones, dates, codes) before they
+    cross the publication/canon boundary.
+    """
+    retrieval = build_gm_knowledge_retrieval(scene=scene)
+    if not retrieval:
+        return
+
+    fillable_scopes = gm_lookup_fillable_scopes(scene=scene)
+    explicit_fillable = any(
+        not scope.startswith("AUTO OPERATIONAL SOURCE:")
+        for scope in fillable_scopes
+    )
+    auto_operational = any(
+        scope.startswith("AUTO OPERATIONAL SOURCE:")
+        for scope in fillable_scopes
+    )
+
+    # Explicit author-controlled GM_FILLABLE is a deliberate broad exception for
+    # its matching subject. Automatic operational filling is narrower: it may
+    # establish routine dated/current working data, but it must not accidentally
+    # authorize unrelated addresses, phones, passwords, case numbers, etc.
+    if explicit_fillable:
+        return
+
+    corpus = _normalize_fact_literal(build_gm_authoritative_fact_corpus(scene=scene))
+    padded_corpus = f" {corpus} "
+    response_text = "\n".join(
+        [
+            response.public,
+            *[
+                str(item.get("content", "") or "")
+                for item in response.private
+            ],
+        ]
+    )
+    for pattern_index, pattern in enumerate(_PREEXISTING_EXACT_FACT_PATTERNS):
+        if auto_operational and pattern_index == 2:
+            # A date printed on a current weather/watch/operational sheet is routine
+            # metadata and may be established with the rest of that source.
+            continue
+        for match in pattern.finditer(response_text):
+            literal = match.group(0).strip()
+            normalized = _normalize_fact_literal(literal)
+            if normalized and f" {normalized} " not in padded_corpus:
+                raise ValidationError(
+                    "GM response introduced an unsupported exact datum while resolving "
+                    f"an existing-source lookup: {literal!r}. Add it to authoritative "
+                    "lore/memory/history first or answer that the datum is unavailable."
+                )
+
+
 def gm_response_contract() -> str:
     return (
         'Return ONLY one JSON object: '
         '{"action":"TURN|NARRATE|WAIT","public":"...",'
-        '"private":[{"player_id":123,"content":"..."}],"turn_targets":[123]}. '
+        '"private":[{"player_id":123,"content":"..."}],"turn_targets":[123],'
+        '"scene_transition":null}. '
         "TURN publishes the GM beat and opens a normal player turn. NARRATE publishes "
         "without calling players. WAIT publishes nothing. Player references must use the "
-        "numeric player_id values from the application context."
+        "numeric player_id values from the application context. scene_transition must be "
+        "null unless movement or a materially changed situation makes the live Scene label/state "
+        'false; then use {"name":"New scene label","description":"concise current-state description",'
+        '"memory":"compact durable scene memory after the transition"}. description and memory are '
+        "required on a transition so stale pre-transition state is not kept as CURRENT SCENE."
     )
 
 
@@ -73,12 +168,75 @@ def gm_execution_request(scene: Scene) -> str:
         "The absence of new canon messages since the previous synchronization does not by itself "
         "justify WAIT. Use TURN when this beat should be followed by player action, NARRATE when "
         "the beat should enter canon without immediately opening a player turn, and WAIT only when "
-        "the established fiction specifically requires the GM to take no action at this moment."
+        "the established fiction specifically requires the GM to take no action at this moment.\n\n"
+        "AUTHORITATIVE-SOURCE GUARD: distinguish protected pre-existing sources from routine current "
+        "operational data. For READ_EXISTING_SOURCE and RECALL_EXISTING_FACT involving dossiers, "
+        "correspondence, archives, memories, logs, passwords, evidence, hidden cargo, prior events, or "
+        "other plot-significant history, never invent missing content unless authoritative context supports "
+        "it. Exact addresses, names, phone/registration numbers, dates, message contents, passwords, codes, "
+        "case numbers, prior links/events, and protected existing-object properties remain guarded. "
+        "A matching author-controlled [[GM_FILLABLE]]...[[/GM_FILLABLE]] scope explicitly permits filling "
+        "its missing details. Routine USE_OPERATIONAL_DATA may also receive an automatic narrow fillable "
+        "scope for current weather, watch sheets, ordinary schedules/manifests, instrument-derived values, "
+        "navigation inputs, and similar non-mystery working data. PROFESSIONAL_ACTION by itself is not a "
+        "source lookup and must not be blocked. Any invented fillable detail becomes fixed canon when "
+        "published and may not be freely changed later.\n\n"
+        "SCENE TRANSITION LIFECYCLE: when scene_transition is necessary, do not change only the label. "
+        "Return a concise new current-state description and a durable memory summary in the transition "
+        "object. The memory should carry forward relevant durable facts from the prior state while replacing "
+        "stale current-location/current-situation wording. The old scene description may remain in history, "
+        "but it must not continue to describe the live CURRENT SCENE after the transition.\n\n"
+        "PLAYER DECLARATION SEMANTICS: a PLAYER message is authoritative for that character's "
+        "voluntary action, speech, thought/intent, perception, estimate, or report. A player's claim "
+        "about NPC behavior, external consequences, exact measurements, or world state is not objective "
+        "GM confirmation unless earlier canon already establishes it. Preserve assessments as assessments "
+        "until the GM confirms the world-state result.\n\n"
+        "PACING: do not simulate every minute of stable repetitive work. If no meaningful decision or "
+        "change is pending, compress routine time to the next natural change. Meaningful changes include "
+        "new information/tasks/constraints/opportunities, changed conditions, problems, NPC decisions, "
+        "relationship shifts, conflicts of interest, messages, faults, important objects, or significant "
+        "results. Do not manufacture complications because a scene is calm, and do not skip across a "
+        "moment where the player could make an important choice. NPCs may naturally end conversations "
+        "and return to their own duties when their reason to keep talking is exhausted.\n\n"
+        "PROFESSIONAL COMPETENCE: once a character has demonstrated baseline competence, do not keep "
+        "forcing elementary training exchanges. Let routine professional work proceed independently; "
+        "senior NPCs should supervise outcomes and intervene for mistakes, unusual conditions, or "
+        "vehicle-specific concerns. Technical detail should create decisions or texture, not repetitive "
+        "textbook loops.\n\n"
+        "NPC CAUSALITY: do not create suspicious, dramatic, or plot-significant NPC behavior merely "
+        "because the player is nearby or because a GM beat is required. Such behavior needs support "
+        "in NPC goals/knowledge, scene state, an ongoing event, or a direct consequence. Ordinary "
+        "background life remains allowed. Do NOT use this constraint as a reason to prefer WAIT when "
+        "there is an immediate observable consequence or a natural beat the player can react to."
     )
 
     participants = list(
         scene.scene_participants.select_related("player").order_by("order", "pk")
     )
+    if scene.mode == TurnMode.ROUND:
+        order = list(scene.round_order or [])
+        active_id = None
+        if order and 0 <= scene.active_player_index < len(order):
+            active_id = order[scene.active_player_index]
+        active_participation = next(
+            (
+                item
+                for item in participants
+                if item.player_id == active_id
+            ),
+            None,
+        )
+        if active_participation is not None:
+            active_player = active_participation.player
+            text += (
+                "\n\nROUND CONTROL: the active player for the next player turn is "
+                f"{active_player.display_name} (player_id={active_player.pk}). "
+                "Frame the immediate beat so this active player has a clear opportunity "
+                "to react or act. Do not make an inactive participant the sole required "
+                "responder unless the fiction specifically requires an urgent out-of-turn "
+                "intervention. Because this scene is ROUND, TURN must always return "
+                "turn_targets=[]; the application owns round order and rejects explicit targets."
+            )
     if (
         scene.mode == TurnMode.MANUAL
         and len(participants) == 1
@@ -92,6 +250,9 @@ def gm_execution_request(scene: Scene) -> str:
             f"you must use TURN with turn_targets=[{player_id}]. "
             "Use NARRATE only when you intentionally want no immediate player response."
         )
+    retrieval = build_gm_knowledge_retrieval(scene=scene)
+    if retrieval:
+        text += "\n\n" + retrieval
     return text
 
 
@@ -120,6 +281,7 @@ def _normalize_model_gm_response(
         public=response.public,
         private=response.private,
         turn_targets=[participants[0].player_id],
+        scene_transition=response.scene_transition,
     )
     _validate_gm_response(normalized, scene=scene)
     return normalized
@@ -144,6 +306,61 @@ def get_latest_gm_execution(scene: Scene) -> GameMasterExecution | None:
         .order_by("-created_at", "-pk")
         .first()
     )
+
+
+def maybe_start_auto_gm(*, scene: Scene) -> GameMasterExecution | None:
+    """Start the next GM beat after a completed public HUMAN turn when enabled.
+
+    This helper is intentionally best-effort: a player's accepted move must stay
+    accepted even if the automatic GM continuation cannot start because another
+    turn/execution appeared concurrently or the scene/configuration changed.
+    """
+    scene = Scene.objects.select_related("campaign").get(pk=scene.pk)
+    config = (
+        GameMasterConfig.objects.filter(campaign=scene.campaign)
+        .select_related("model_config", "fallback_model_config")
+        .first()
+    )
+    if (
+        scene.is_closed
+        or config is None
+        or not config.enabled
+        or not config.auto_continue
+        or config.review_before_publish
+    ):
+        return None
+    if (
+        config.transport == GameMasterTransport.MANUAL_CHAT
+        and not (config.manual_chat_url or "").strip()
+    ):
+        return None
+
+    latest_public_turn = (
+        scene.turns.filter(is_private=False)
+        .prefetch_related("executions")
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    if latest_public_turn is not None and latest_public_turn.state == TurnState.COMPLETED:
+        actions = [
+            (execution.action_type or "").strip().upper()
+            for execution in latest_public_turn.executions.all()
+        ]
+        if actions and all(action == "PASS" for action in actions):
+            # Safety brake: an all-PASS public turn contains no player action for
+            # autoplay to react to. Starting another automatic GM beat here can
+            # create a self-sustaining GM -> PASS -> GM loop.
+            return None
+
+    if scene.turns.filter(state=TurnState.RUNNING).exists():
+        return None
+    if get_active_gm_execution(scene) is not None:
+        return None
+
+    try:
+        return start_gm_execution(scene=scene)
+    except ValidationError:
+        return None
 
 
 def start_gm_execution(*, scene: Scene) -> GameMasterExecution:
@@ -285,6 +502,7 @@ def submit_external_gm_response(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "raw_response",
                 "external_synced_message_ids",
@@ -350,6 +568,7 @@ def publish_gm_execution(
         locked.public_draft = response.public
         locked.private_drafts = response.private
         locked.turn_targets = response.turn_targets
+        locked.scene_transition = response.scene_transition or {}
         locked.error = ""
         locked.save(
             update_fields=[
@@ -358,18 +577,40 @@ def publish_gm_execution(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "updated_at",
             ]
         )
 
     published_turn = None
+    original_scene_state = {
+        "name": scene.name,
+        "description": scene.description,
+        "memory_summary": scene.memory_summary,
+    }
+    transitioned = False
     try:
         private_map = {
             int(item["player_id"]): item["content"]
             for item in response.private
             if item.get("content", "").strip()
         }
+
+        if response.scene_transition:
+            new_name = response.scene_transition["name"]
+            new_description = response.scene_transition["description"]
+            new_memory = response.scene_transition["memory"]
+            Scene.objects.filter(pk=scene.pk).update(
+                name=new_name,
+                description=new_description,
+                memory_summary=new_memory,
+                updated_at=timezone.now(),
+            )
+            scene.name = new_name
+            scene.description = new_description
+            scene.memory_summary = new_memory
+            transitioned = True
 
         if response.action == GameMasterAction.TURN:
             selected_players = _players_from_ids(scene, response.turn_targets)
@@ -406,6 +647,16 @@ def publish_gm_execution(
             raise ValidationError(f"Unsupported GM action: {response.action}")
 
     except Exception as exc:
+        if transitioned:
+            Scene.objects.filter(pk=scene.pk).update(
+                name=original_scene_state["name"],
+                description=original_scene_state["description"],
+                memory_summary=original_scene_state["memory_summary"],
+                updated_at=timezone.now(),
+            )
+            scene.name = original_scene_state["name"]
+            scene.description = original_scene_state["description"]
+            scene.memory_summary = original_scene_state["memory_summary"]
         GameMasterExecution.objects.filter(pk=execution.pk).update(
             state=GameMasterExecutionState.DRAFT,
             error=str(exc),
@@ -489,6 +740,33 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
         seen_private.add(player_id)
         private.append({"player_id": player_id, "content": content})
 
+    scene_transition_raw = obj.get("scene_transition", None)
+    scene_transition = None
+    if scene_transition_raw not in (None, {}):
+        if not isinstance(scene_transition_raw, dict):
+            raise ValidationError('GM field "scene_transition" must be null or an object.')
+        name = str(scene_transition_raw.get("name", "") or "").strip()
+        description = str(scene_transition_raw.get("description", "") or "").strip()
+        memory = str(scene_transition_raw.get("memory", "") or "").strip()
+        if not name:
+            raise ValidationError('GM scene_transition requires a non-empty "name".')
+        if len(name) > 200:
+            raise ValidationError("GM scene_transition name is too long.")
+        if not description:
+            raise ValidationError(
+                'GM scene_transition requires a concise non-empty "description" of the new current state.'
+            )
+        if not memory:
+            raise ValidationError(
+                'GM scene_transition requires a non-empty "memory" summary for durable scene state.'
+            )
+        if name != scene.name or description != scene.description or memory != scene.memory_summary:
+            scene_transition = {
+                "name": name,
+                "description": description,
+                "memory": memory,
+            }
+
     targets_raw = obj.get("turn_targets", [])
     if targets_raw is None:
         targets_raw = []
@@ -507,12 +785,35 @@ def parse_gm_response(raw_text: str, *, scene: Scene) -> GameMasterResponse:
         public=public,
         private=private,
         turn_targets=targets,
+        scene_transition=scene_transition,
     )
     _validate_gm_response(response, scene=scene)
+    _validate_existing_source_exact_literals(response, scene=scene)
     return response
 
 
 def _validate_gm_response(response: GameMasterResponse, *, scene: Scene) -> None:
+    if response.scene_transition:
+        transition_name = str(response.scene_transition.get("name", "") or "").strip()
+        transition_description = str(
+            response.scene_transition.get("description", "") or ""
+        ).strip()
+        transition_memory = str(
+            response.scene_transition.get("memory", "") or ""
+        ).strip()
+        if not transition_name:
+            raise ValidationError('GM scene_transition requires a non-empty "name".')
+        if len(transition_name) > 200:
+            raise ValidationError("GM scene_transition name is too long.")
+        if not transition_description:
+            raise ValidationError(
+                'GM scene_transition requires a concise non-empty "description" of the new current state.'
+            )
+        if not transition_memory:
+            raise ValidationError(
+                'GM scene_transition requires a non-empty "memory" summary for durable scene state.'
+            )
+
     if response.action not in {
         GameMasterAction.TURN,
         GameMasterAction.NARRATE,
@@ -533,9 +834,14 @@ def _validate_gm_response(response: GameMasterResponse, *, scene: Scene) -> None
         )
 
     if response.action == GameMasterAction.WAIT:
-        if response.public or response.private or response.turn_targets:
+        if (
+            response.public
+            or response.private
+            or response.turn_targets
+            or response.scene_transition
+        ):
             raise ValidationError(
-                "WAIT must have empty public, private, and turn_targets fields."
+                "WAIT must have empty public, private, turn_targets, and scene_transition fields."
             )
         return
 
@@ -549,9 +855,9 @@ def _validate_gm_response(response: GameMasterResponse, *, scene: Scene) -> None
     if not response.public:
         raise ValidationError("TURN requires a non-empty public GM beat.")
 
-    if scene.mode == TurnMode.MANUAL and not response.turn_targets:
+    if scene.mode in (TurnMode.MANUAL, TurnMode.SOFT_ROUND) and not response.turn_targets:
         raise ValidationError(
-            "TURN in MANUAL mode requires at least one turn target."
+            f"TURN in {scene.mode} mode requires at least one turn target."
         )
     if scene.mode == TurnMode.ROUND and response.turn_targets:
         raise ValidationError(
@@ -584,6 +890,7 @@ def _response_from_execution(
         turn_targets=list(
             turn_target_ids if turn_target_ids is not None else execution.turn_targets or []
         ),
+        scene_transition=(execution.scene_transition or None),
     )
 
 
@@ -596,6 +903,7 @@ def _apply_response_to_execution(
     execution.public_draft = response.public
     execution.private_drafts = response.private
     execution.turn_targets = response.turn_targets
+    execution.scene_transition = response.scene_transition or {}
     execution.error = ""
     execution.raw_response = response.raw_text
 
@@ -651,6 +959,7 @@ def _run_provider_execution(
                 "public_draft",
                 "private_drafts",
                 "turn_targets",
+                "scene_transition",
                 "error",
                 "raw_response",
                 "latency_ms",
@@ -758,6 +1067,8 @@ def _build_manual_chat_prompt(
     control = [
         f"Scene: {scene.name}",
         f"Turn mode: {scene.mode}",
+        "The CURRENT SCENE CONTROL below supersedes stale pre-transition location/state wording "
+        "that may still appear in older conversation history.",
     ]
     if scene.description.strip():
         control.append("Scene description:\n" + scene.description.strip())
@@ -767,6 +1078,11 @@ def _build_manual_chat_prompt(
         control.append(
             f"Round order IDs: {list(scene.round_order or [])}; "
             f"active index: {scene.active_player_index}"
+        )
+    elif scene.mode == TurnMode.SOFT_ROUND:
+        control.append(
+            "SOFT_ROUND: target only participant line(s) that have a meaningful beat now; "
+            "do not alternate mechanically."
         )
 
     prompt = (
@@ -825,6 +1141,11 @@ def _manual_history_message(message: Message) -> str:
     else:
         author = message.author_type
     action = f" [{message.action_type}]" if message.action_type else ""
+    if message.author_type == AuthorType.PLAYER:
+        return (
+            f"[{scope}] {author}{action} [PLAYER DECLARATION; external-world claims "
+            f"are not objective GM confirmation]:\n{message.content}"
+        )
     return f"[{scope}] {author}{action}:\n{message.content}"
 
 

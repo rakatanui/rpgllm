@@ -1,163 +1,125 @@
 {% load rpg_extras %}
-<section class="human-status-card">
-  <div>
-    <div class="meta">{{ campaign.name }} · {{ scene.name }}</div>
-    <h2>{{ player.display_name }}</h2>
-  </div>
-  <div class="human-status-copy">
-    {% if scene.is_closed %}
-      <span class="chip">SCENE CLOSED</span>
-    {% elif waiting_execution %}
-      <span class="chip waiting_human">YOUR RESPONSE</span>
-      {% if waiting_execution.turn.is_private %}
-        <span class="chip">PRIVATE WITH GM</span>
-      {% elif waiting_execution.turn.mode == "ROUND" %}
-        {% if waiting_execution.player_id == waiting_execution.turn.active_player_id_snapshot %}
-          <span class="chip">ACTIVE ROUND PLAYER</span>
-        {% else %}
-          <span class="chip">INACTIVE ROUND PLAYER</span>
-        {% endif %}
-      {% endif %}
-    {% elif scene.mode == "ROUND" and is_active_round %}
-      <span class="chip">YOU ARE ACTIVE</span>
-      <span class="meta">Waiting for the GM to open the next turn.</span>
-    {% else %}
-      <span class="chip">WAITING</span>
-      <span class="meta">No response requested right now.</span>
-    {% endif %}
-  </div>
-</section>
-
-{% if scene.description %}
-<details id="human-notes"
-         class="panel human-notes"
-         data-human-preserve-open="notes">
-  <summary>Scene notes</summary>
-  <div class="msg-content">{{ scene.description }}</div>
-</details>
-{% endif %}
-
-{% if waiting_execution and not scene.is_closed %}
-<section class="panel human-turn-card">
-  <div class="private-panel-header">
-    <h3>{% if waiting_execution.turn.is_private %}Private reply{% else %}Your move{% endif %}</h3>
-    <span class="meta">Turn #{{ waiting_execution.turn_id }}</span>
-  </div>
-
-  {% if waiting_execution.error %}
-    <div class="execution-error">Not accepted: {{ waiting_execution.error }}</div>
-  {% endif %}
-
-  {% if waiting_execution.turn.mode == "ROUND" and not waiting_execution.turn.is_private %}
-    {% if waiting_execution.player_id == waiting_execution.turn.active_player_id_snapshot %}
-      <p class="meta">You are active. Use ACT for your move, or PASS.</p>
-    {% else %}
-      <p class="meta">
-        You are not active. PASS is the normal choice. ACT_OUT_OF_TURN is only for an
-        urgent intervention that genuinely cannot wait.
-      </p>
-    {% endif %}
-  {% endif %}
-
-  <form method="post"
-        action="{% url 'submit_human_response' access_token waiting_execution.pk %}"
-        class="human-action-form">
-    {% csrf_token %}
-    <div class="human-action-toolbar">
-      <label>
-        Action
-        <select id="human-action-type-{{ waiting_execution.pk }}"
-                name="action_type"
-                hx-preserve>
-          {% for action in allowed_actions %}
-            <option value="{{ action }}">{{ action }}</option>
-          {% endfor %}
-        </select>
-      </label>
-    </div>
-    <textarea id="human-action-{{ waiting_execution.pk }}"
-              name="content"
-              rows="7"
-              hx-preserve
-              placeholder="Write your declaration. PASS may be left empty.">{{ waiting_execution.raw_response }}</textarea>
-    <details id="human-private-note-details-{{ waiting_execution.pk }}"
-             class="human-private-note"
-             data-human-preserve-open="private-note-{{ waiting_execution.pk }}">
-      <summary>Private note to GM</summary>
-      <textarea id="human-private-note-{{ waiting_execution.pk }}"
-                name="private_to_gm"
-                rows="3"
-                hx-preserve
-                placeholder="Optional. The other players will not see this."></textarea>
-    </details>
-    <button class="btn btn-primary human-submit" type="submit">Submit move</button>
-  </form>
-</section>
-{% endif %}
-
-<div class="human-feed-grid">
-  <section class="panel">
-    <h3>Public scene</h3>
-    <div id="human-public-feed"
-         class="human-feed"
-         data-human-preserve-scroll="public">
-      {% for block in public_blocks %}
-        <div class="round-block {{ block.tone }}">
-          {% for m in block.messages %}
-            <article class="msg {% if m.author_type == 'GM' %}gm{% else %}player{% endif %}">
-              <div class="msg-header">
-                <strong>
-                  {% if m.author_type == "GM" %}GM
-                  {% elif m.author_player %}{{ m.author_player.display_name }}
-                  {% else %}System{% endif %}
-                </strong>
-                {% if m.author_type == "PLAYER" and m.action_type %}
-                  <span class="action-tag action-{{ m.action_type|lower }}">[{{ m.action_type }}]</span>
-                {% endif %}
-              </div>
-              {% if m.action_type != "PASS" %}
-                <div class="msg-content">{{ m.content|message_format }}</div>
-              {% endif %}
-            </article>
-          {% endfor %}
-        </div>
-      {% empty %}
-        <p class="meta">No public messages yet.</p>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section class="panel">
-    <h3>Private with GM</h3>
-    <div id="human-private-feed"
-         class="human-feed"
-         data-human-preserve-scroll="private">
-      {% for m in private_messages %}
-        <article class="msg {% if m.author_type == 'GM' %}gm{% else %}private{% endif %}">
-          <div class="msg-header">
-            <strong>{% if m.author_type == "GM" %}GM{% else %}{{ player.display_name }}{% endif %}</strong>
-            {% if m.action_type %}<span class="action-tag">[{{ m.action_type }}]</span>{% endif %}
-          </div>
-          {% if m.action_type != "PASS" %}
-            <div class="msg-content">{{ m.content|message_format }}</div>
+<div id="human-scene-live"
+     class="human-live-region"
+     data-human-live-channel="public"
+     data-latest-message-id="{{ public_latest_id|default:'' }}"
+     data-next-before="{{ public_next_before|default:'' }}"
+     data-has-older="{{ public_has_older|yesno:'1,0' }}"
+     data-waiting-execution-id="{{ waiting_execution.pk|default:'' }}"
+     data-waiting-workspace="{% if waiting_execution %}{% if waiting_execution.turn.is_private %}private{% else %}scene{% endif %}{% endif %}"
+     hx-get="{% url 'human_player_fragment' access_token %}?workspace=scene"
+     hx-trigger="human-scene-poll"
+     hx-swap="outerHTML">
+  <div class="human-workspace-tools human-scene-tools">
+    <section class="human-status-card">
+      <div class="human-status-location">
+        <strong>{{ scene.name }}</strong>
+        <span class="meta">{{ campaign.name }}</span>
+      </div>
+      <div class="human-status-copy">
+        {% if scene.is_closed %}
+          <span class="chip">SCENE CLOSED</span>
+        {% elif waiting_execution %}
+          <span class="chip waiting_human">YOUR RESPONSE</span>
+          {% if waiting_execution.turn.is_private %}
+            <span class="chip">PRIVATE / GM</span>
+          {% elif waiting_execution.turn.mode == "ROUND" %}
+            {% if waiting_execution.player_id == waiting_execution.turn.active_player_id_snapshot %}
+              <span class="chip">ACTIVE ROUND PLAYER</span>
+            {% else %}
+              <span class="chip">INACTIVE ROUND PLAYER</span>
+            {% endif %}
           {% endif %}
-        </article>
-      {% empty %}
-        <p class="meta">No private messages.</p>
-      {% endfor %}
-    </div>
+        {% elif gm_active_execution and gm_active_execution.error %}
+          <span class="chip error">MASTER PAUSED</span>
+          <span class="meta">Bridge attention required.</span>
+        {% elif gm_active_execution %}
+          <span class="chip generating">MASTER THINKING</span>
+        {% elif scene.mode == "ROUND" and is_active_round %}
+          <span class="chip">YOU ARE ACTIVE</span>
+        {% else %}
+          <span class="chip">WAITING</span>
+        {% endif %}
+      </div>
 
-    {% if not scene.is_closed %}
-      <form method="post" action="{% url 'human_send_ooc' access_token %}" class="human-ooc-form">
-        {% csrf_token %}
-        <label>OOC to GM</label>
-        <textarea id="human-ooc-{{ player.pk }}"
-                  name="content"
-                  rows="3"
-                  hx-preserve
-                  placeholder="Meta question or note to the GM."></textarea>
-        <button class="btn" type="submit">Send OOC</button>
-      </form>
+      <button class="human-mobile-deck-toggle"
+              type="button"
+              data-human-mobile-top-toggle
+              aria-expanded="true"
+              aria-label="Collapse upper player controls"
+              title="Trim upper controls">
+        <span class="human-mobile-trim-wheel" aria-hidden="true"></span>
+        <span class="sr-only">Collapse upper player controls</span>
+      </button>
+    </section>
+
+    {% if waiting_execution and not waiting_execution.turn.is_private and not scene.is_closed %}
+      <section class="human-turn-card human-composer-card">
+        <div class="human-composer-heading">
+          <h3>Your move</h3>
+          <span class="meta">Turn #{{ waiting_execution.turn_id }}</span>
+        </div>
+
+        {% if waiting_execution.error %}
+          <div class="execution-error">Not accepted: {{ waiting_execution.error }}</div>
+        {% endif %}
+
+        {% if waiting_execution.turn.mode == "ROUND" %}
+          {% if waiting_execution.player_id == waiting_execution.turn.active_player_id_snapshot %}
+            <p class="meta">You are active. Use ACT for your move, or PASS.</p>
+          {% else %}
+            <p class="meta">Inactive round player: PASS normally, ACT_OUT_OF_TURN only for an urgent intervention.</p>
+          {% endif %}
+        {% endif %}
+
+        <form method="post"
+              action="{% url 'submit_human_response' access_token waiting_execution.pk %}"
+              class="human-action-form">
+          {% csrf_token %}
+          <div class="human-action-toolbar">
+            <label>
+              Action
+              <select id="human-action-type-{{ waiting_execution.pk }}"
+                      name="action_type">
+                {% for action in allowed_actions %}
+                  <option value="{{ action }}">{{ action }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+          <textarea id="human-action-{{ waiting_execution.pk }}"
+                    name="content"
+                    rows="5"
+                    placeholder="Write your declaration. PASS may be left empty.">{{ waiting_execution.raw_response }}</textarea>
+          <details id="human-private-note-details-{{ waiting_execution.pk }}"
+                   class="human-private-note"
+                   data-human-preserve-open="private-note-{{ waiting_execution.pk }}">
+            <summary>Private note to GM</summary>
+            <textarea id="human-private-note-{{ waiting_execution.pk }}"
+                      name="private_to_gm"
+                      rows="3"
+                      placeholder="Optional. Other players will not see this."></textarea>
+          </details>
+          <button class="btn btn-primary human-submit" type="submit">Submit move</button>
+        </form>
+      </section>
     {% endif %}
-  </section>
+  </div>
+
+  {% if scene.description %}
+    <details id="human-notes"
+             class="human-notes-inline"
+             data-human-preserve-open="notes">
+      <summary>Scene notes</summary>
+      <div class="msg-content">{{ scene.description }}</div>
+    </details>
+  {% endif %}
+
+  <div class="human-feed-heading">
+    <h3>Scene</h3>
+    <span class="meta">Newest first · older history below</span>
+  </div>
+  <div class="human-live-messages" data-human-live-messages="public">
+    {% include "rpg/_human_public_messages.html" %}
+  </div>
 </div>

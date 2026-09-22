@@ -1,0 +1,8 @@
+{% if has_older and next_before %}
+<div class="human-history-sentinel"
+     hx-get="{% url 'human_feed_page' access_token channel %}?before={{ next_before }}"
+     hx-trigger="intersect once root:#human-{{ channel }}-scroll threshold:0.15"
+     hx-swap="outerHTML">
+  <span class="meta">Loading older history…</span>
+</div>
+{% endif %}

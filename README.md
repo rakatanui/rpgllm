@@ -158,6 +158,49 @@ universally known facts as `GLOBAL`; route specialist/secret knowledge through
 `SCENE` or `PLAYER` so models do not receive information their characters
 should not know.
 
+
+### Explicit GM-fillable gaps
+
+The model GM normally refuses to invent missing content from an already-existing
+source such as a dossier, log, briefing, archive or remembered prior event. When
+the human author intentionally wants one narrow gap to remain undefined until it
+is first used in play, wrap the scope in:
+
+```text
+[[GM_FILLABLE]]...[[/GM_FILLABLE]]
+```
+
+Example:
+
+```text
+Перед вылетом Halcyon получил метеосводку.
+[[GM_FILLABLE]]
+Метеосводка Halcyon перед вылетом из Буэнос-Айреса: конкретные значения
+ветра, давления, облачности и прогноз по маршруту могут быть установлены
+мастером при первом обращении.
+[[/GM_FILLABLE]]
+```
+
+When a later existing-source lookup matches that scope, the GM may invent the
+missing details inside it while preserving all established canon. The permission
+does not spill into unrelated facts. Once a generated detail is published, it is
+canon and must remain stable. Only author-controlled campaign/scene/lore/player
+configuration fields grant this permission; ordinary chat messages do not.
+Player-model context keeps the readable inner text but strips the control
+markers themselves.
+
+The GM source detector also distinguishes four runtime categories:
+`READ_EXISTING_SOURCE`, `RECALL_EXISTING_FACT`, `USE_OPERATIONAL_DATA`,
+and `PROFESSIONAL_ACTION`. The first two retain the strict fixed-source guard.
+Routine current operational material such as weather, watch sheets, ordinary
+schedules/manifests, instrument-derived navigation inputs, and similar working
+data can receive an automatic narrow GM-fillable scope even without an explicit
+tag. Ordinary professional work does not become a source lookup merely because
+the character checks instruments, calculates a correction, or monitors a system.
+Automatic operational permission is deliberately narrower than an explicit
+author tag and does not authorize unrelated addresses, passwords, evidence, or
+hidden historical facts.
+
 ## Scenes as playable sessions
 
 A `Scene` is now effectively a playable session/thread with an explicit
@@ -167,6 +210,9 @@ participant list and optional predecessor scenes.
 - `PUBLIC` means public to the participants of that scene, not every player in
   the whole campaign.
 - ROUND order must contain every participant of the current scene exactly once.
+- SOFT_ROUND is available for physically separated or loosely coupled character
+  lines. The GM explicitly targets only the line(s) with a meaningful beat,
+  without mechanically rotating through idle participants.
 - A scene may inherit one or more closed predecessor scenes through
   `previous_scenes`. This supports parallel POV threads that later converge.
 - When building context, a player inherits only predecessor scenes in which that
@@ -196,12 +242,27 @@ new session inheriting selected history
 Existing scenes are migrated with every campaign player as a participant so
 pre-upgrade behavior is preserved until those scenes are edited.
 
+A model-GM `scene_transition` is a current-state transition, not just a label
+change. A non-null transition must provide `name`, `description`, and
+`memory`; publication updates all three together. This prevents an old
+description such as "still moored in Buenos Aires" from remaining in CURRENT
+SCENE after the vessel is already under way. Older messages remain historical
+canon, while the new description/memory becomes authoritative current-state
+control.
+
+Player public ACT text is stored as canonical player declaration, but its
+external-world claims are not automatically promoted to objective GM truth.
+Voluntary action, speech, thought/intent, and the fact that a character made a
+perception or professional assessment remain authoritative for that character.
+NPC actions, exact external measurements, consequences, and asserted world
+states require GM confirmation unless they were already established.
+
 ## Architecture
 
 ```
 models
 services/context_builder   # privacy + inherited scene history + bounded context
-services/turn_engine        # MANUAL / ROUND / SIMULTANEOUS / TABLE + state machine
+services/turn_engine        # MANUAL / ROUND / SOFT_ROUND / SIMULTANEOUS / TABLE + state machine
 services/llm                # LLMClient: MockLLMClient | LiteLLMClient
 views / templates           # thin; no business logic in views
 ```

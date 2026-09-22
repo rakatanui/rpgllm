@@ -1,0 +1,31 @@
+{% load rpg_extras %}
+{% for block in public_blocks %}
+  <div class="round-block {{ block.tone }}" data-turn-id="{{ block.turn_id|default:'' }}">
+    {% for m in block.messages %}
+      {% with body=m|message_visible_content label=m|message_type_label %}
+        <article class="msg {% if m.author_type == 'GM' %}gm{% elif m.author_type == 'PLAYER' %}player{% else %}system{% endif %}"
+                 data-message-id="{{ m.pk }}"
+                 data-author-type="{{ m.author_type }}"
+                 data-action-type="{{ m.action_type|default:'' }}">
+          <div class="msg-header">
+            <strong class="author">
+              {% if m.author_type == "GM" %}GM
+              {% elif m.author_player %}{{ m.author_player.display_name }}
+              {% else %}System{% endif %}
+            </strong>
+            {% if label %}
+              <span class="action-tag action-{{ label|lower }}">{{ label }}</span>
+            {% endif %}
+          </div>
+          {% if body %}
+            <div class="msg-content">{{ body|message_format }}</div>
+          {% elif m.action_type == "PASS" %}
+            <div class="pass">Pass.</div>
+          {% endif %}
+        </article>
+      {% endwith %}
+    {% endfor %}
+  </div>
+{% empty %}
+  <p class="meta human-feed-empty">No public messages yet.</p>
+{% endfor %}

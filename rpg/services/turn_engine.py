@@ -135,7 +135,7 @@ def start_turn(
                 active_player_id = (
                     targets[locked_scene.active_player_index].pk if targets else None
                 )
-            elif mode == TurnMode.MANUAL:
+            elif mode in (TurnMode.MANUAL, TurnMode.SOFT_ROUND):
                 targets = _validate_selected_players(locked_scene, selected_players)
                 active_player_id = None
             elif mode == TurnMode.SIMULTANEOUS:
@@ -242,7 +242,12 @@ def start_turn(
         # MANUAL/SIMULTANEOUS/ROUND/private freeze a per-player snapshot.
         # Each player may inherit a different predecessor chain, so one shared
         # message-id list would either lose history or leak another branch.
-        if mode in (TurnMode.MANUAL, TurnMode.SIMULTANEOUS, TurnMode.ROUND) or is_private:
+        if mode in (
+            TurnMode.MANUAL,
+            TurnMode.SOFT_ROUND,
+            TurnMode.SIMULTANEOUS,
+            TurnMode.ROUND,
+        ) or is_private:
             for execution in executions:
                 snapshot_ids = [
                     message.pk
@@ -349,10 +354,10 @@ def start_silent_turn(
     """Run a public turn without creating a GM message.
 
     ROUND calls the full round roster and advances normally when all executions
-    complete. MANUAL calls only the explicitly selected player(s).
+    complete. MANUAL/SOFT_ROUND call only explicitly selected player(s).
     """
-    if scene.mode not in (TurnMode.ROUND, TurnMode.MANUAL):
-        raise ValidationError("Silence is available only in ROUND or MANUAL mode.")
+    if scene.mode not in (TurnMode.ROUND, TurnMode.MANUAL, TurnMode.SOFT_ROUND):
+        raise ValidationError("Silence is available only in ROUND, SOFT_ROUND, or MANUAL mode.")
     return start_turn(
         scene=scene,
         gm_message_text="",
@@ -514,6 +519,18 @@ def regenerate_execution(
 
     if scene.is_closed:
         raise RuntimeError("Cannot regenerate an execution in a closed scene")
+    lines.append(
+        "PLAYER AGENCY / WORLD STATE: control only your character's voluntary actions, speech, "
+        "thoughts, intentions, and reasonable perceptions/assessments. External-world claims, "
+        "NPC actions, exact consequences, and uncertain measurements are not objective facts "
+        "until the GM confirms them. Phrase professional values as estimates when appropriate."
+    )
+    lines.append(
+        "ROUTINE PACING: during stable repetitive work, state the meaningful action, monitoring "
+        "intention, or assessment without inventing minute-by-minute developments. Let the GM "
+        "compress routine time until conditions or decisions meaningfully change."
+    )
+
     if turn.is_private:
         raise RuntimeError("Only public executions can be regenerated here")
     if execution.state != ExecutionState.COMPLETED:

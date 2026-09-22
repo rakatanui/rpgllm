@@ -1,8 +1,38 @@
 const BRIDGE_BUTTON_SELECTOR = ".mraz-browser-bridge-button";
 const STATUS_SELECTOR = ".mraz-browser-bridge-status";
+const AUTOPLAY_SELECTOR = '[data-mraz-gm-autoplay="1"]';
+const AUTOSTART_CARD_SELECTOR = '[data-mraz-bridge-card][data-mraz-bridge-autostart="1"]';
+const MAX_BRIDGE_PROMPT_CHARS = 30000;
 
 function setBridgeReady() {
   document.documentElement.dataset.mrazBrowserBridge = "ready";
+}
+
+function safeRuntimeMessage(message) {
+  try {
+    if (!chrome.runtime || !chrome.runtime.id) {
+      return Promise.resolve(null);
+    }
+    return chrome.runtime.sendMessage(message).catch(() => null);
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+
+function trace(event, details = {}) {
+  const entry = {
+    component: "mraz-page",
+    event,
+    details: {
+      pageUrl: window.location.href,
+      ...details,
+    },
+  };
+  console.log("[MRAZ Bridge source]", event, entry.details);
+  return safeRuntimeMessage({
+    type: "MRAZ_DEBUG_LOG",
+    ...entry,
+  });
 }
 
 function bridgeCardFromButton(button) {
@@ -26,9 +56,10 @@ function makeJobId(card) {
   return kind + ":" + execution;
 }
 
-async function startBridge(button) {
+async function startBridge(button, { manualRetry = false } = {}) {
   const card = bridgeCardFromButton(button);
   if (!card) return false;
+  if (card.dataset.mrazBridgeJob && !manualRetry) return true;
 
   const promptElement = card.querySelector("[data-mraz-bridge-prompt]");
   const responseForm = card.querySelector("[data-mraz-bridge-response-form]");
@@ -52,8 +83,31 @@ async function startBridge(button) {
     return;
   }
 
+  if (prompt.length > MAX_BRIDGE_PROMPT_CHARS) {
+    trace("bridge-prompt-too-large", {
+      kind: card.dataset.mrazBridgeKind || "",
+      execution: card.dataset.mrazBridgeExecution || "",
+      promptLength: prompt.length,
+      limit: MAX_BRIDGE_PROMPT_CHARS,
+    });
+    setStatus(
+      card,
+      "Prompt is too large for automatic browser insertion. Use Copy prompt and paste it manually.",
+      "error"
+    );
+    return;
+  }
+
   const jobId = makeJobId(card);
   card.dataset.mrazBridgeJob = jobId;
+  trace("bridge-start", {
+    jobId,
+    kind: card.dataset.mrazBridgeKind || "",
+    execution: card.dataset.mrazBridgeExecution || "",
+    chatUrl,
+    label,
+    promptLength: prompt.length,
+  });
   button.disabled = true;
   setStatus(card, "Opening external chat…", "running");
 
@@ -64,13 +118,24 @@ async function startBridge(button) {
       prompt,
       chatUrl,
       label,
+      manualRetry,
     });
     if (!result || !result.accepted) {
       throw new Error(result && result.error ? result.error : "Bridge rejected the job.");
     }
+    trace("bridge-start-accepted", {
+      jobId,
+      reused: Boolean(result.reused),
+      state: result.state || "",
+    });
     setStatus(card, "Prompt sent. Waiting for model response…", "running");
   } catch (error) {
+    trace("bridge-start-error", {
+      jobId,
+      error: String(error && error.message ? error.message : error),
+    });
     button.disabled = false;
+    delete card.dataset.mrazBridgeJob;
     setStatus(
       card,
       String(error && error.message ? error.message : error),
@@ -79,7 +144,13 @@ async function startBridge(button) {
   }
 }
 
-function submitBridgeResult(message) {
+async function submitBridgeResult(message) {
+  trace("bridge-result-received", {
+    jobId: message.jobId || "",
+    ok: Boolean(message.ok),
+    responseLength: message.response ? message.response.length : 0,
+    error: message.error || "",
+  });
   const [kind, execution] = String(message.jobId || "").split(":", 2);
   const cards = document.querySelectorAll("[data-mraz-bridge-card]");
   const card = Array.from(cards).find(
@@ -87,47 +158,266 @@ function submitBridgeResult(message) {
       candidate.dataset.mrazBridgeKind === kind &&
       candidate.dataset.mrazBridgeExecution === execution
   );
-  if (!card) return false;
+  if (!card) {
+    trace("bridge-result-card-missing", {
+      jobId: message.jobId || "",
+      kind,
+      execution,
+    });
+    return "source-tab-rejected-result";
+  }
 
   const button = card.querySelector(BRIDGE_BUTTON_SELECTOR);
   if (button) button.disabled = false;
 
   if (!message.ok) {
-    setStatus(card, message.error || "External chat bridge failed.", "error");
-    return true;
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
+    setStatus(
+      card,
+      (message.error || "External chat bridge failed.") +
+        " Automatic retry is paused. Click Send via browser bridge to retry manually.",
+      "error"
+    );
+    trace("bridge-paused-after-external-error", {
+      jobId: message.jobId || "",
+      error: message.error || "",
+    });
+    return message.failureReason || "external-chat-error";
   }
 
   const form = card.querySelector("[data-mraz-bridge-response-form]");
   const response = form && form.querySelector('textarea[name="response"]');
   if (!form || !response) {
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
     setStatus(card, "Response returned, but the import form is missing.", "error");
-    return false;
+    return "source-tab-rejected-result";
   }
 
   response.value = message.response || "";
   response.dispatchEvent(new Event("input", { bubbles: true }));
   setStatus(card, "Response received. Importing…", "done");
 
-  // Let the extension message acknowledgement return before navigation tears
-  // down this content script. The normal Django form remains the authority.
-  window.setTimeout(() => form.requestSubmit(), 0);
-  return true;
+  trace("bridge-import-submit", {
+    jobId: message.jobId || "",
+    responseLength: response.value.length,
+  });
+
+  let importResponse;
+  try {
+    importResponse = await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      credentials: "include",
+      redirect: "follow",
+      cache: "no-store",
+    });
+  } catch (error) {
+    trace("bridge-import-http-error", {
+      jobId: message.jobId || "",
+      error: String(error && error.message ? error.message : error),
+    });
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
+    setStatus(card, "Response arrived, but importing it into MRAZ failed.", "error");
+    return "import-error";
+  }
+
+  const importHtml = await importResponse.text();
+  const finalUrl = importResponse.url || window.location.href;
+
+  trace("bridge-import-http-complete", {
+    jobId: message.jobId || "",
+    status: importResponse.status,
+    ok: importResponse.ok,
+    redirected: importResponse.redirected,
+    finalUrl,
+    responseLength: importHtml.length,
+  });
+
+  if (!importResponse.ok) {
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
+    setStatus(
+      card,
+      "Response arrived, but MRAZ rejected the import with HTTP " +
+        importResponse.status +
+        ". Automatic retry is paused.",
+      "error"
+    );
+    return "import-error";
+  }
+
+  const importedDocument = new DOMParser().parseFromString(importHtml, "text/html");
+  const returnedCards = Array.from(
+    importedDocument.querySelectorAll("[data-mraz-bridge-card]")
+  );
+  const sameExecutionCard = returnedCards.find(
+    (candidate) =>
+      candidate.dataset.mrazBridgeKind === kind &&
+      candidate.dataset.mrazBridgeExecution === execution
+  );
+  const returnedError = sameExecutionCard
+    ? (sameExecutionCard.querySelector(".execution-error")?.textContent || "").trim()
+    : "";
+  const returnedAutostart = Boolean(
+    sameExecutionCard && sameExecutionCard.dataset.mrazBridgeAutostart === "1"
+  );
+
+  trace("bridge-import-server-state", {
+    jobId: message.jobId || "",
+    sameExecutionStillWaiting: Boolean(sameExecutionCard),
+    returnedAutostart,
+    returnedError,
+  });
+
+  if (sameExecutionCard) {
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
+    setStatus(
+      card,
+      (
+        returnedError ||
+        "MRAZ still reports the same execution as waiting after import."
+      ) +
+        " Automatic retry is paused. Inspect the execution and retry manually.",
+      "error"
+    );
+    return "import-error";
+  }
+
+  delete card.dataset.mrazBridgePaused;
+  window.setTimeout(() => {
+    window.location.assign(finalUrl);
+  }, 100);
+  return "";
 }
 
 document.addEventListener("click", (event) => {
   const button = event.target.closest(BRIDGE_BUTTON_SELECTOR);
   if (!button) return;
   event.preventDefault();
-  startBridge(button);
+  const card = bridgeCardFromButton(button);
+  const manualRetry = Boolean(card && card.dataset.mrazBridgePaused === "1");
+  if (card && manualRetry) {
+    delete card.dataset.mrazBridgePaused;
+    delete card.dataset.mrazBridgeJob;
+  }
+  startBridge(button, { manualRetry });
 });
+
+document.addEventListener("submit", (event) => {
+  const form = event.target.closest && event.target.closest(".human-action-form");
+  if (!form) return;
+  const action = form.querySelector('select[name="action_type"]');
+  const content = form.querySelector('textarea[name="content"]');
+  trace("human-submit", {
+    actionUrl: form.action || "",
+    actionType: action ? action.value : "",
+    contentLength: content ? content.value.length : 0,
+  });
+});
+
+function traceHumanWaitingState() {
+  const form = document.querySelector(".human-action-form");
+  if (!form) return;
+  const action = form.querySelector('select[name="action_type"]');
+  trace("human-waiting", {
+    actionUrl: form.action || "",
+    selectedAction: action ? action.value : "",
+    allowedActions: action
+      ? Array.from(action.options).map((option) => option.value)
+      : [],
+  });
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message && message.type === "MRAZ_BRIDGE_RESULT") {
-    sendResponse({ accepted: submitBridgeResult(message) });
-    return false;
+    submitBridgeResult(message)
+      .then((failureReason) => sendResponse({
+        accepted: !failureReason,
+        failureReason,
+      }))
+      .catch((error) => {
+        trace("bridge-result-import-error", {
+          jobId: message.jobId || "",
+          error: String(error && error.message ? error.message : error),
+        });
+        sendResponse({
+          accepted: false,
+          failureReason: "import-error",
+        });
+      });
+    return true;
   }
   return false;
 });
 
+function autoStartBridgeIfPresent() {
+  const card = document.querySelector(AUTOSTART_CARD_SELECTOR);
+  if (!card || card.dataset.mrazBridgeJob) return false;
+  trace("autostart-card-found", {
+    kind: card.dataset.mrazBridgeKind || "",
+    execution: card.dataset.mrazBridgeExecution || "",
+    chatUrl: card.dataset.mrazBridgeChatUrl || "",
+  });
+  const button = card.querySelector(BRIDGE_BUTTON_SELECTOR);
+  if (!button || button.disabled) return false;
+  startBridge(button, { manualRetry: false });
+  return true;
+}
+
+function autoplayEnabled() {
+  return Boolean(document.querySelector(AUTOPLAY_SELECTOR));
+}
+
+async function registerAutoplaySource() {
+  if (!autoplayEnabled()) return;
+  await safeRuntimeMessage({
+    type: "MRAZ_AUTOPLAY_REGISTER",
+    sourceUrl: window.location.href,
+  });
+}
+
+function tickAutoplay() {
+  if (!autoplayEnabled()) return;
+  safeRuntimeMessage({ type: "MRAZ_AUTOPLAY_TICK" });
+}
+
+let autoStartTimer = null;
+
+function scheduleAutoStartBridge(reason = "dom-update") {
+  if (autoStartTimer !== null) return;
+  autoStartTimer = window.setTimeout(() => {
+    autoStartTimer = null;
+    const started = autoStartBridgeIfPresent();
+    if (started) {
+      trace("autostart-after-dom-update", { reason });
+    }
+  }, 50);
+}
+
+document.addEventListener("mraz:gm-panel-updated", () => {
+  scheduleAutoStartBridge("gm-panel-updated");
+});
+
+document.body.addEventListener("htmx:afterSwap", () => {
+  scheduleAutoStartBridge("htmx-after-swap");
+});
+
+const bridgeDomObserver = new MutationObserver(() => {
+  scheduleAutoStartBridge("mutation");
+});
+bridgeDomObserver.observe(document.body, {
+  childList: true,
+  subtree: true,
+});
+
 setBridgeReady();
-chrome.runtime.sendMessage({ type: "MRAZ_SOURCE_READY" }).catch(() => {});
+trace("content-script-ready");
+traceHumanWaitingState();
+autoStartBridgeIfPresent();
+safeRuntimeMessage({ type: "MRAZ_SOURCE_READY" });
+registerAutoplaySource().then(tickAutoplay).catch(() => {});
+window.setInterval(tickAutoplay, 2500);

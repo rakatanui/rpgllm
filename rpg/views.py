@@ -1,4 +1,5 @@
 """Views for MRAZ Master. Business rules live in services."""
+import io
 import mimetypes
 import re
 import uuid
@@ -7,11 +8,14 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
-from django.http import FileResponse, HttpResponse, HttpResponseBadRequest
+from django.http import FileResponse, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+
+import qrcode
 
 from rpg.forms import CharacterImageUploadForm
 from rpg.models import (
@@ -473,6 +477,70 @@ def scene_view_fragment(request, scene):
     )
 
 
+def gm_model_panel(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    players = _scene_players(scene)
+    gm_config = (
+        GameMasterConfig.objects.filter(campaign=scene.campaign)
+        .select_related("model_config", "fallback_model_config")
+        .first()
+    )
+    gm_active_execution = gm_engine.get_active_gm_execution(scene)
+    gm_latest_execution = gm_engine.get_latest_gm_execution(scene)
+    gm_execution = gm_active_execution or gm_latest_execution
+
+    gm_private_drafts = {}
+    gm_target_ids = set()
+    if gm_execution is not None:
+        gm_private_drafts = {
+            int(item.get("player_id")): str(item.get("content", ""))
+            for item in (gm_execution.private_drafts or [])
+            if item.get("player_id") is not None
+        }
+        gm_target_ids = {
+            int(player_id)
+            for player_id in (gm_execution.turn_targets or [])
+        }
+
+    return render(
+        request,
+        "rpg/_gm_model_panel.html",
+        {
+            "scene": scene,
+            "campaign": scene.campaign,
+            "players": players,
+            "gm_config": gm_config,
+            "gm_execution": gm_execution,
+            "gm_active_execution": gm_active_execution,
+            "gm_private_drafts": gm_private_drafts,
+            "gm_target_ids": gm_target_ids,
+            "gm_actions": [
+                ("TURN", "TURN · publish + call players"),
+                ("NARRATE", "NARRATE · publish only"),
+                ("WAIT", "WAIT · publish nothing"),
+            ],
+        },
+    )
+
+
+def gm_model_status(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
+    gm_execution = (
+        gm_engine.get_active_gm_execution(scene)
+        or gm_engine.get_latest_gm_execution(scene)
+    )
+    return JsonResponse(
+        {
+            "execution_id": gm_execution.pk if gm_execution else 0,
+            "state": gm_execution.state if gm_execution else "",
+            "has_error": bool(gm_execution and gm_execution.error),
+            "is_bootstrap": bool(
+                gm_execution and gm_execution.external_is_bootstrap
+            ),
+        }
+    )
+
+
 def players_status(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     players = _scene_players(scene)
@@ -537,6 +605,70 @@ def _secure_human_response(response):
     return response
 
 
+HUMAN_FEED_PAGE_SIZE = 60
+_HUMAN_EMPTY_MESSAGE_MARKERS = {"none", "null", "undefined"}
+
+
+def _human_message_has_visible_content(message: Message) -> bool:
+    if (message.action_type or "").strip().upper() == "PASS":
+        return True
+    content = (message.content or "").strip()
+    return bool(content and content.casefold() not in _HUMAN_EMPTY_MESSAGE_MARKERS)
+
+
+def _human_channel_page(
+    *,
+    scene: Scene,
+    player: Player,
+    channel: str,
+    before_id: int | None = None,
+) -> tuple[list[Message], bool, int | None]:
+    if channel == "public":
+        query = Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PUBLIC,
+        ).select_related("author_player", "execution")
+    elif channel == "private":
+        query = Message.objects.filter(
+            scene=scene,
+            visibility=Visibility.PRIVATE_GM_PLAYER,
+            private_player=player,
+        ).select_related("author_player", "execution", "turn__trigger_message")
+    else:
+        raise ValueError(f"Unsupported human feed channel: {channel}")
+
+    if before_id is not None:
+        query = query.filter(pk__lt=before_id)
+
+    query = query.order_by("-created_at", "-pk")
+
+    # Fetch a little extra so legacy empty/None-like rows can be discarded without
+    # shrinking an ordinary page. The next cursor remains an explicit message id,
+    # and older history is always appended below the newest-first live window.
+    raw = list(query[: HUMAN_FEED_PAGE_SIZE * 2 + 1])
+    visible = [message for message in raw if _human_message_has_visible_content(message)]
+    page = visible[:HUMAN_FEED_PAGE_SIZE]
+
+    next_before = page[-1].pk if page else None
+    has_older = bool(
+        next_before
+        and Message.objects.filter(
+            scene=scene,
+            pk__lt=next_before,
+        )
+        .filter(
+            Q(visibility=Visibility.PUBLIC)
+            if channel == "public"
+            else Q(
+                visibility=Visibility.PRIVATE_GM_PLAYER,
+                private_player=player,
+            )
+        )
+        .exists()
+    )
+    return page, has_older, next_before
+
+
 def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
     appearances = list(player.appearances.all().order_by("order", "pk"))
     participation = (
@@ -560,20 +692,17 @@ def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
                 display_appearance,
             )
 
-    public_messages = list(
-        Message.objects.filter(scene=scene, visibility=Visibility.PUBLIC)
-        .select_related("author_player", "execution")
-        .order_by("-created_at", "-pk")
+    public_messages, public_has_older, public_next_before = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel="public",
     )
-    private_messages = list(
-        Message.objects.filter(
-            scene=scene,
-            visibility=Visibility.PRIVATE_GM_PLAYER,
-            private_player=player,
-        )
-        .select_related("author_player", "execution", "turn__trigger_message")
-        .order_by("-created_at", "-pk")
+    private_messages, private_has_older, private_next_before = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel="private",
     )
+
     waiting = (
         TurnExecution.objects.filter(
             turn__scene=scene,
@@ -590,6 +719,7 @@ def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
         if waiting is not None
         else []
     )
+    active_gm_execution = gm_engine.get_active_gm_execution(scene)
     is_active_round = (
         scene.mode == TurnMode.ROUND
         and _active_round_player_id(scene) == player.pk
@@ -603,9 +733,16 @@ def _human_client_context(scene: Scene, player: Player, request=None) -> dict:
         "display_appearance": display_appearance,
         "public_messages": public_messages,
         "public_blocks": _public_message_blocks(public_messages),
+        "public_latest_id": public_messages[0].pk if public_messages else None,
+        "public_has_older": public_has_older,
+        "public_next_before": public_next_before,
         "private_messages": private_messages,
+        "private_latest_id": private_messages[0].pk if private_messages else None,
+        "private_has_older": private_has_older,
+        "private_next_before": private_next_before,
         "player_color": _player_color_classes(_scene_players(scene)).get(player.pk, ""),
         "waiting_execution": waiting,
+        "gm_active_execution": active_gm_execution,
         "allowed_actions": allowed_actions,
         "is_active_round": is_active_round,
         "access_token": participation.human_access_token if participation else None,
@@ -627,6 +764,40 @@ def _human_visible_messages(scene: Scene, player: Player):
     )
 
 
+def _human_client_share_url(request, access_token) -> str:
+    path = reverse(
+        "human_player_client",
+        kwargs={"access_token": access_token},
+    )
+    public_host = getattr(settings, "PUBLIC_PLAYER_HOST", "").strip()
+    if public_host:
+        return f"https://{public_host}{path}"
+    return request.build_absolute_uri(path)
+
+
+def human_player_qr(request, access_token):
+    scene, player, _ = _human_access_for_token(access_token)
+    target_url = _human_client_share_url(request, access_token)
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=5,
+        border=3,
+    )
+    qr.add_data(target_url)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    response = HttpResponse(buffer.getvalue(), content_type="image/png")
+    response["Content-Disposition"] = (
+        f'inline; filename="mraz-player-{player.pk}-qr.png"'
+    )
+    return _secure_human_response(response)
+
+
 def human_player_client(request, access_token):
     scene, player, _ = _human_access_for_token(access_token)
     response = render(
@@ -637,16 +808,101 @@ def human_player_client(request, access_token):
     return _secure_human_response(response)
 
 
+def human_player_status(request, access_token):
+    scene, player, _ = _human_access_for_token(access_token)
+
+    waiting_execution_id = (
+        TurnExecution.objects.filter(
+            turn__scene=scene,
+            player=player,
+            transport=PlayerTransport.HUMAN,
+            state=ExecutionState.WAITING_HUMAN,
+        )
+        .order_by("-created_at", "-pk")
+        .values_list("pk", flat=True)
+        .first()
+    )
+    public_messages, _, _ = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel="public",
+    )
+    private_messages, _, _ = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel="private",
+    )
+    public_latest_id = public_messages[0].pk if public_messages else None
+    private_latest_id = private_messages[0].pk if private_messages else None
+    gm_execution = gm_engine.get_active_gm_execution(scene)
+
+    response = JsonResponse(
+        {
+            "waiting_execution_id": waiting_execution_id or 0,
+            "public_latest_id": public_latest_id or 0,
+            "private_latest_id": private_latest_id or 0,
+            "gm_execution_id": gm_execution.pk if gm_execution else 0,
+            "gm_execution_state": gm_execution.state if gm_execution else "",
+            "active_round_player_id": _active_round_player_id(scene) or 0,
+            "scene_closed": bool(scene.is_closed),
+        }
+    )
+    return _secure_human_response(response)
+
+
 def human_player_fragment(request, access_token):
     scene, player, _ = _human_access_for_token(access_token)
+    workspace = (request.GET.get("workspace") or "scene").strip().lower()
+    template_by_workspace = {
+        "scene": "rpg/_human_player_panel.html",
+        "private": "rpg/_human_private_panel.html",
+    }
+    template_name = template_by_workspace.get(workspace)
+    if template_name is None:
+        return HttpResponseBadRequest("invalid human workspace")
+
     response = render(
         request,
-        "rpg/_human_player_panel.html",
+        template_name,
         _human_client_context(scene, player, request),
     )
     return _secure_human_response(response)
 
 
+def human_feed_page(request, access_token, channel):
+    scene, player, _ = _human_access_for_token(access_token)
+    channel = (channel or "").strip().lower()
+    if channel not in {"public", "private"}:
+        return HttpResponseBadRequest("invalid human feed channel")
+
+    raw_before = (request.GET.get("before") or "").strip()
+    if not raw_before.isdigit():
+        return HttpResponseBadRequest("missing or invalid history cursor")
+
+    messages, has_older, next_before = _human_channel_page(
+        scene=scene,
+        player=player,
+        channel=channel,
+        before_id=int(raw_before),
+    )
+    context = {
+        "scene": scene,
+        "player": player,
+        "access_token": access_token,
+        "channel": channel,
+        "has_older": has_older,
+        "next_before": next_before,
+    }
+    if channel == "public":
+        context["public_blocks"] = _public_message_blocks(messages)
+    else:
+        context["private_messages"] = messages
+
+    response = render(request, "rpg/_human_feed_page.html", context)
+    return _secure_human_response(response)
+
+
+@csrf_exempt
 @require_http_methods(["POST"])
 def submit_human_response(request, access_token, execution_id):
     scene, player, _ = _human_access_for_token(access_token)
@@ -658,12 +914,17 @@ def submit_human_response(request, access_token, execution_id):
         transport=PlayerTransport.HUMAN,
     )
     try:
-        turn_engine.submit_human_response(
+        result = turn_engine.submit_human_response(
             execution=execution,
             action_type=request.POST.get("action_type") or "",
             public_text=request.POST.get("content") or "",
             private_to_gm=request.POST.get("private_to_gm") or "",
         )
+        if (
+            result.turn.state == TurnState.COMPLETED
+            and not result.turn.is_private
+        ):
+            gm_engine.maybe_start_auto_gm(scene=scene)
     except ValidationError:
         # Keep the player on the client page; the execution stores the rejection
         # and the polling panel displays it above the preserved draft.
@@ -682,6 +943,7 @@ def submit_human_response(request, access_token, execution_id):
     )
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def human_send_ooc(request, access_token):
     scene, player, _ = _human_access_for_token(access_token)
@@ -732,6 +994,7 @@ def human_appearance_image(request, access_token, appearance_id, image_kind):
     return response
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def set_human_current_appearance(request, access_token, appearance_id):
     scene, player, participation = _human_access_for_token(access_token)
@@ -762,6 +1025,7 @@ def human_character_image(request, access_token):
     return response
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def upload_human_character_image(request, access_token):
     _, player, _ = _human_access_for_token(access_token)
@@ -783,6 +1047,7 @@ def upload_human_character_image(request, access_token):
     )
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def remove_human_character_image(request, access_token):
     _, player, _ = _human_access_for_token(access_token)
@@ -855,7 +1120,11 @@ def human_episode_detail(request, access_token, episode_id):
         created_at__lte=current_scene.created_at,
     )
 
-    visible_messages = list(_human_visible_messages(episode, player))
+    visible_messages = [
+        message
+        for message in _human_visible_messages(episode, player)
+        if _human_message_has_visible_content(message)
+    ]
     public_messages = [
         message
         for message in visible_messages
@@ -1049,11 +1318,11 @@ def send_gm_message(request, scene_id):
         selected_players = _selected_players_from_request(request, scene)
         if (
             run_turn_flag
-            and scene.mode == TurnMode.MANUAL
+            and scene.mode in (TurnMode.MANUAL, TurnMode.SOFT_ROUND)
             and not selected_players
         ):
             return HttpResponseBadRequest(
-                "MANUAL mode requires selecting at least one player."
+                f"{scene.mode} mode requires selecting at least one player."
             )
         if run_turn_flag:
             turn_engine.start_turn(
@@ -1081,8 +1350,10 @@ def silent_turn(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("campaign"), pk=scene_id)
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
-    if scene.mode not in (TurnMode.ROUND, TurnMode.MANUAL):
-        return HttpResponseBadRequest("Silence is available only in ROUND or MANUAL mode.")
+    if scene.mode not in (TurnMode.ROUND, TurnMode.MANUAL, TurnMode.SOFT_ROUND):
+        return HttpResponseBadRequest(
+            "Silence is available only in ROUND, SOFT_ROUND, or MANUAL mode."
+        )
 
     try:
         selected_players = _selected_players_from_request(request, scene)
@@ -1092,9 +1363,13 @@ def silent_turn(request, scene_id):
                     "ROUND mode requires a confirmed player order before Silence."
                 )
             selected_players = []
-        elif len(selected_players) != 1:
+        elif scene.mode == TurnMode.MANUAL and len(selected_players) != 1:
             return HttpResponseBadRequest(
                 "MANUAL Silence requires selecting exactly one player."
+            )
+        elif scene.mode == TurnMode.SOFT_ROUND and not selected_players:
+            return HttpResponseBadRequest(
+                "SOFT_ROUND Silence requires selecting at least one player."
             )
 
         turn_engine.start_silent_turn(
@@ -1178,10 +1453,15 @@ def submit_external_response(request, scene_id, execution_id):
     )
     raw = request.POST.get("response") or ""
     try:
-        turn_engine.submit_external_response(
+        result = turn_engine.submit_external_response(
             execution=execution,
             raw_text=raw,
         )
+        if (
+            result.turn.state == TurnState.COMPLETED
+            and not result.turn.is_private
+        ):
+            gm_engine.maybe_start_auto_gm(scene=scene)
     except ValidationError:
         # The service stores the rejection reason on the execution. Redirect back
         # so polling/UI shows it next to the same paste box instead of replacing

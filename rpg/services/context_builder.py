@@ -28,6 +28,8 @@ from typing import Iterable
 from django.conf import settings
 from django.db.models import Q
 
+from rpg.services.gm_fillable import strip_gm_fillable_markers
+
 from rpg.models import (
     AuthorType,
     LoreEntry,
@@ -200,6 +202,18 @@ def build_player_context(
         )
 
     parts.append(
+        "# PLAYER AGENCY AND WORLD-STATE CLAIMS\n"
+        "You control only this player character's voluntary actions, speech, thoughts, intentions, "
+        "and reasonable perceptions/assessments. You may describe what your character observes, "
+        "calculates, estimates, believes, or reports, but do not convert an uncertain assessment "
+        "into an objective external-world fact unless the GM has already established it. Do not "
+        "decide NPC actions, environmental outcomes, exact consequences, or success of an action "
+        "that requires GM adjudication. Phrase professional judgments as the character's estimate "
+        "when appropriate: for example, 'Нед оценивает снос примерно в два процента' rather than "
+        "'объективный снос равен ровно двум процентам' unless that value is already confirmed."
+    )
+
+    parts.append(
         "# DIALOGUE LANGUAGE AND FORMAT\n"
         "Narration and non-spoken action text in your public response must be in Russian. "
         "Direct speech must be written in the language the character is actually speaking "
@@ -268,7 +282,9 @@ def build_player_context(
         "exchange truly requires it. "
         "Reveal only what the character would naturally say or do in this immediate beat. "
         "If you have more to ask or explain than the limits allow, choose the most important "
-        "part now and save the rest for later turns."
+        "part now and save the rest for later turns. During stable repetitive professional work, "
+        "do not pad the declaration with minute-by-minute repetition; state the meaningful action, "
+        "monitoring intention, or assessment and let the GM advance time when nothing changes."
     )
 
     parts.append(
@@ -299,13 +315,14 @@ def build_player_context(
         'paraphrase the public response there.'
     )
 
-    system_prompt = "\n\n".join(parts)
+    system_prompt = strip_gm_fillable_markers("\n\n".join(parts))
 
     # ---- recent message history (chat) ----
     chat: list[dict] = []
     for message in recent_history:
         entry = _message_to_chat(message, player)
         if entry is not None:
+            entry["content"] = strip_gm_fillable_markers(entry.get("content", ""))
             chat.append(entry)
 
     # The trigger must always be present even if a custom caller passed a history
@@ -318,6 +335,7 @@ def build_player_context(
         ):
             entry = _message_to_chat(trigger_message, player)
             if entry is not None:
+                entry["content"] = strip_gm_fillable_markers(entry.get("content", ""))
                 chat.append(entry)
 
     return BuiltContext(system_prompt=system_prompt, messages=chat)
