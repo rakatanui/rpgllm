@@ -164,7 +164,7 @@ async function submitBridgeResult(message) {
       kind,
       execution,
     });
-    return false;
+    return "source-tab-rejected-result";
   }
 
   const button = card.querySelector(BRIDGE_BUTTON_SELECTOR);
@@ -183,14 +183,16 @@ async function submitBridgeResult(message) {
       jobId: message.jobId || "",
       error: message.error || "",
     });
-    return false;
+    return message.failureReason || "external-chat-error";
   }
 
   const form = card.querySelector("[data-mraz-bridge-response-form]");
   const response = form && form.querySelector('textarea[name="response"]');
   if (!form || !response) {
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
     setStatus(card, "Response returned, but the import form is missing.", "error");
-    return false;
+    return "source-tab-rejected-result";
   }
 
   response.value = message.response || "";
@@ -216,8 +218,10 @@ async function submitBridgeResult(message) {
       jobId: message.jobId || "",
       error: String(error && error.message ? error.message : error),
     });
+    card.dataset.mrazBridgePaused = "1";
+    delete card.dataset.mrazBridgeJob;
     setStatus(card, "Response arrived, but importing it into MRAZ failed.", "error");
-    return false;
+    return "import-error";
   }
 
   const importHtml = await importResponse.text();
@@ -242,7 +246,7 @@ async function submitBridgeResult(message) {
         ". Automatic retry is paused.",
       "error"
     );
-    return false;
+    return "import-error";
   }
 
   const importedDocument = new DOMParser().parseFromString(importHtml, "text/html");
@@ -280,14 +284,14 @@ async function submitBridgeResult(message) {
         " Automatic retry is paused. Inspect the execution and retry manually.",
       "error"
     );
-    return false;
+    return "import-error";
   }
 
   delete card.dataset.mrazBridgePaused;
   window.setTimeout(() => {
     window.location.assign(finalUrl);
   }, 100);
-  return true;
+  return "";
 }
 
 document.addEventListener("click", (event) => {
@@ -331,13 +335,19 @@ function traceHumanWaitingState() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message && message.type === "MRAZ_BRIDGE_RESULT") {
     submitBridgeResult(message)
-      .then((accepted) => sendResponse({ accepted }))
+      .then((failureReason) => sendResponse({
+        accepted: !failureReason,
+        failureReason,
+      }))
       .catch((error) => {
         trace("bridge-result-import-error", {
           jobId: message.jobId || "",
           error: String(error && error.message ? error.message : error),
         });
-        sendResponse({ accepted: false });
+        sendResponse({
+          accepted: false,
+          failureReason: "import-error",
+        });
       });
     return true;
   }
