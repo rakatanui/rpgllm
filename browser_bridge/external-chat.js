@@ -151,6 +151,17 @@ function trace(event, details = {}) {
   });
 }
 
+function failureReasonForError(error) {
+  const message = String(error && error.message ? error.message : error);
+  if (/timed out|did not become available/i.test(message)) {
+    return "external-chat-timeout";
+  }
+  if (error && error.code === "MRAZ_INVALID_STRUCTURED_RESPONSE") {
+    return "external-chat-invalid-response";
+  }
+  return "external-chat-error";
+}
+
 function firstElement(selectors, root = document) {
   for (const selector of selectors) {
     const element = root.querySelector(selector);
@@ -656,14 +667,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   runJob(message)
     .catch(async (error) => {
+      const failureReason = failureReasonForError(error);
       trace("job-error", {
         jobId: message.jobId,
         error: String(error && error.message ? error.message : error),
+        failureReason,
       });
       await chrome.runtime.sendMessage({
         type: "MRAZ_EXTERNAL_ERROR",
         jobId: message.jobId,
         error: String(error && error.message ? error.message : error),
+        failureReason,
       });
     })
     .finally(() => {

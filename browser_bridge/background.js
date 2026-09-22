@@ -2,6 +2,7 @@ const JOB_PREFIX = "mraz-bridge-job:";
 const AUTOPLAY_SOURCE_KEY = "mraz-autoplay-source";
 const DEBUG_LOG_KEY = "mraz-bridge-debug-log";
 const DEBUG_LOG_LIMIT = 500;
+const MAX_BRIDGE_PROMPT_LENGTH = 30000;
 
 async function appendDebugLog(component, event, details = {}) {
   const entry = {
@@ -180,18 +181,29 @@ async function notifySource(job, payload) {
       ...payload,
     });
     const accepted = Boolean(response && response.accepted);
+    const failureReason = accepted
+      ? ""
+      : String(
+          (response && response.failureReason) ||
+          (payload && payload.failureReason) ||
+          "source-tab-rejected-result"
+        );
     await appendDebugLog("background", "source-notify", {
       jobId: job.jobId,
       sourceTabId: job.sourceTabId,
       ok: Boolean(payload && payload.ok),
       accepted,
+      failureReason,
       responseLength: payload && payload.response ? payload.response.length : 0,
       error: payload && payload.error ? payload.error : "",
     });
-    return accepted;
+    return { accepted, failureReason };
   } catch (error) {
     console.warn("MRAZ bridge could not notify source tab", error);
-    return false;
+    return {
+      accepted: false,
+      failureReason: "source-tab-rejected-result",
+    };
   }
 }
 
@@ -216,6 +228,20 @@ async function startJob(message, sender) {
     promptLength: (message.prompt || "").length,
   });
 
+  const promptLength = (message.prompt || "").length;
+  if (promptLength > MAX_BRIDGE_PROMPT_LENGTH) {
+    await appendDebugLog("background", "job-rejected-prompt-too-large", {
+      jobId: message.jobId,
+      promptLength,
+      limit: MAX_BRIDGE_PROMPT_LENGTH,
+    });
+    return {
+      accepted: false,
+      failureReason: "prompt-too-large",
+      error: "Bridge prompt exceeds safe size limit.",
+    };
+  }
+
   const existing = await loadJob(message.jobId);
   if (existing) {
     if (existing.state === "paused-result" && message.manualRetry) {
@@ -237,6 +263,7 @@ async function startJob(message, sender) {
           accepted: false,
           reused: true,
           state: existing.state,
+          failureReason: existing.failureReason || "source-tab-rejected-result",
           error: "Bridge job is paused after a failed result/import. Retry it manually.",
         };
       }
@@ -331,6 +358,22 @@ async function tickAutoplay() {
   }
 
   const jobs = await allJobs();
+  if (
+    jobs.some(
+      (job) =>
+        job.sourceTabId === source.sourceTabId &&
+        job.state === "paused-result"
+    )
+  ) {
+    await appendDebugLog("background", "autoplay-blocked-paused-job", {
+      sourceTabId: source.sourceTabId,
+    });
+    return {
+      accepted: true,
+      blocked: true,
+      reason: "paused-result",
+    };
+  }
   if (jobs.some((job) => job.sourceTabId === source.sourceTabId)) {
     return { accepted: true, busy: true };
   }
@@ -466,15 +509,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           job.state === "result-ready" &&
           job.result
         ) {
-          const delivered = await notifySource(job, job.result);
-          if (delivered) {
+          const delivery = await notifySource(job, job.result);
+          if (delivery.accepted) {
             await deleteJob(job.jobId);
           } else {
             job.state = "paused-result";
+            job.failureReason = delivery.failureReason;
             await saveJob(job);
             await appendDebugLog("background", "job-paused-after-source-reject", {
               jobId: job.jobId,
               sourceTabId: job.sourceTabId,
+              failureReason: job.failureReason,
             });
           }
         }
@@ -517,28 +562,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ok: message.type === "MRAZ_EXTERNAL_RESULT",
         response: message.response || "",
         error: message.error || "",
+        failureReason: message.failureReason || "",
       };
+      if (!job.result.ok) {
+        job.failureReason = message.failureReason || "external-chat-error";
+      }
       await saveJob(job);
       await appendDebugLog("background", "external-result-received", {
         jobId: job.jobId,
         ok: job.result.ok,
         responseLength: job.result.response ? job.result.response.length : 0,
         error: job.result.error || "",
+        failureReason: job.failureReason || "",
       });
-      const delivered = await notifySource(job, job.result);
-      if (delivered) {
+      const delivery = await notifySource(job, job.result);
+      if (delivery.accepted) {
         await deleteJob(message.jobId);
       } else {
         job.state = "paused-result";
+        job.failureReason = delivery.failureReason;
         await saveJob(job);
         await appendDebugLog("background", "job-paused-after-source-reject", {
           jobId: job.jobId,
           sourceTabId: job.sourceTabId,
           resultOk: job.result.ok,
           error: job.result.error || "",
+          failureReason: job.failureReason,
         });
       }
-      sendResponse({ accepted: true, delivered, paused: !delivered });
+      sendResponse({
+        accepted: true,
+        delivered: delivery.accepted,
+        paused: !delivery.accepted,
+        failureReason: job.failureReason || "",
+      });
     })();
     return true;
   }

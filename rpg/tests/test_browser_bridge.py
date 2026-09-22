@@ -138,6 +138,44 @@ def test_browser_bridge_pauses_failed_result_instead_of_autoretrying():
     assert "Automatic retry is paused" in source
 
 
+def test_browser_bridge_blocks_autoplay_for_paused_jobs():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    autoplay = background.split("async function tickAutoplay()", 1)[1]
+
+    paused_guard = autoplay.index('job.state === "paused-result"')
+    busy_guard = autoplay.index(
+        "jobs.some((job) => job.sourceTabId === source.sourceTabId)",
+        paused_guard,
+    )
+
+    assert paused_guard < busy_guard
+    assert "autoplay-blocked-paused-job" in autoplay
+    assert 'reason: "paused-result"' in autoplay
+
+
+def test_browser_bridge_rejects_oversized_prompts_in_background():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+
+    guard = background.index("promptLength > MAX_BRIDGE_PROMPT_LENGTH")
+    tab_creation = background.index("chrome.tabs.create", guard)
+
+    assert "MAX_BRIDGE_PROMPT_LENGTH = 30000" in background
+    assert guard < tab_creation
+    assert "job-rejected-prompt-too-large" in background
+    assert 'failureReason: "prompt-too-large"' in background
+
+
+def test_browser_bridge_preserves_machine_readable_failure_reasons():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+
+    assert "job.failureReason = delivery.failureReason" in background
+    assert '"external-chat-timeout"' in external
+    assert '"import-error"' in source
+    assert '"source-tab-rejected-result"' in source
+
+
 def test_browser_bridge_auto_repairs_invalid_structured_responses():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
 
