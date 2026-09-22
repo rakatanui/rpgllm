@@ -59,6 +59,7 @@ function makeJobId(card) {
 async function startBridge(button, { manualRetry = false } = {}) {
   const card = bridgeCardFromButton(button);
   if (!card) return false;
+  if (card.dataset.mrazBridgePaused === "1" && !manualRetry) return false;
   if (card.dataset.mrazBridgeJob && !manualRetry) return true;
 
   const promptElement = card.querySelector("[data-mraz-bridge-prompt]");
@@ -121,6 +122,9 @@ async function startBridge(button, { manualRetry = false } = {}) {
       manualRetry,
     });
     if (!result || !result.accepted) {
+      if (result && result.state === "paused-result") {
+        card.dataset.mrazBridgePaused = "1";
+      }
       throw new Error(result && result.error ? result.error : "Bridge rejected the job.");
     }
     trace("bridge-start-accepted", {
@@ -356,7 +360,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 function autoStartBridgeIfPresent() {
   const card = document.querySelector(AUTOSTART_CARD_SELECTOR);
-  if (!card || card.dataset.mrazBridgeJob) return false;
+  if (
+    !card ||
+    card.dataset.mrazBridgeJob ||
+    card.dataset.mrazBridgePaused === "1"
+  ) {
+    return false;
+  }
   trace("autostart-card-found", {
     kind: card.dataset.mrazBridgeKind || "",
     execution: card.dataset.mrazBridgeExecution || "",

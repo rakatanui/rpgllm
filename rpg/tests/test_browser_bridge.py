@@ -224,3 +224,21 @@ def test_browser_bridge_requires_full_scene_state_on_gm_transition():
     assert "transition.description" in external
     assert "transition.memory" in external
     assert '"description":"current state"' in external
+
+
+def test_browser_bridge_does_not_autostart_paused_cards():
+    source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
+    autostart = source.split("function autoStartBridgeIfPresent()", 1)[1]
+
+    assert 'card.dataset.mrazBridgePaused === "1"' in autostart
+    assert 'result.state === "paused-result"' in source
+
+
+def test_chatgpt_bridge_uses_current_submit_button_and_ready_candidate():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    chatgpt = external.split('"chatgpt.com": {', 1)[1].split('"claude.ai": {', 1)[0]
+
+    assert '"#composer-submit-button"' in chatgpt
+    assert "root.querySelectorAll(selector)" in external
+    assert "sendButtonIsReady" in external
+    assert "MRAZ_SEND_BUTTON_UNAVAILABLE" in external
