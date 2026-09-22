@@ -9,6 +9,7 @@ const ADAPTERS = {
       'div[contenteditable="true"]',
     ],
     send: [
+      "#composer-submit-button",
       'button[data-testid="send-button"]',
       'button[aria-label="Send prompt"]',
       'button[aria-label*="Send"]',
@@ -153,6 +154,9 @@ function trace(event, details = {}) {
 
 function failureReasonForError(error) {
   const message = String(error && error.message ? error.message : error);
+  if (error && error.code === "MRAZ_SEND_BUTTON_UNAVAILABLE") {
+    return "external-chat-send-unavailable";
+  }
   if (/timed out|did not become available/i.test(message)) {
     return "external-chat-timeout";
   }
@@ -162,10 +166,11 @@ function failureReasonForError(error) {
   return "external-chat-error";
 }
 
-function firstElement(selectors, root = document) {
+function firstElement(selectors, root = document, predicate = null) {
   for (const selector of selectors) {
-    const element = root.querySelector(selector);
-    if (element) return element;
+    for (const element of root.querySelectorAll(selector)) {
+      if (!predicate || predicate(element)) return element;
+    }
   }
   return null;
 }
@@ -173,8 +178,8 @@ function firstElement(selectors, root = document) {
 async function waitForElement(selectors, timeoutMs = 180000, predicate = null) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const element = firstElement(selectors);
-    if (element && (!predicate || predicate(element))) return element;
+    const element = firstElement(selectors, document, predicate);
+    if (element) return element;
     await sleep(500);
   }
   throw new Error(
@@ -432,22 +437,28 @@ function pageIsBusy(adapter) {
 }
 
 function sendButtonReady(adapter) {
-  const button = firstElement(adapter.send);
-  return Boolean(
-    button &&
+  return Boolean(firstElement(adapter.send, document, sendButtonIsReady));
+}
+
+function sendButtonIsReady(button) {
+  return (
+    elementIsVisible(button) &&
     !button.disabled &&
     button.getAttribute("aria-disabled") !== "true"
   );
 }
 
 async function waitForSendButton(adapter) {
-  return waitForElement(
-    adapter.send,
-    30000,
-    (button) =>
-      !button.disabled &&
-      button.getAttribute("aria-disabled") !== "true"
-  );
+  try {
+    return await waitForElement(adapter.send, 30000, sendButtonIsReady);
+  } catch {
+    const error = new Error(
+      adapter.name +
+      " send button did not become available after the composer was filled."
+    );
+    error.code = "MRAZ_SEND_BUTTON_UNAVAILABLE";
+    throw error;
+  }
 }
 
 async function waitForFreshResponse(adapter, beforeTexts, jobId) {
