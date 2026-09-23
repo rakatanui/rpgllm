@@ -1,21 +1,66 @@
 # MRAZ Master
 
-A tabletop / text RPG GM interface where one Master orchestrates several
-independent LLM players. Built as a vertical MVP: one Master, many LLM
-players, shared public scene, private GM↔player channels, and a Turn Engine
-that strictly controls who responds and when.
+MRAZ Master is a tabletop/text RPG GM interface where one human Game Master controls a campaign with multiple LLM-powered players.
 
-**Core invariant:** an LLM never initiates a call to another LLM. Saving an
-AI message never triggers a new turn. Only the Turn Engine, after an explicit
-Master action, initiates model calls.
+The application is built around a strict turn model: LLM players never directly call other LLM players, saving a response does not start another turn, and model execution is controlled by the Turn Engine after explicit GM actions.
 
-## Stack
+## Features
 
-- Django 5.2 LTS / Python 3.13 / ASGI / Uvicorn
-- PostgreSQL (named volume)
-- LiteLLM Proxy (separate container) → OpenAI / Anthropic / Gemini / host Ollama
-- Django Templates + HTMX + minimal Alpine.js + plain CSS
-- Docker Compose (all runtime deps in containers; `uv` only at build time)
+- One GM controlling multiple AI players.
+- Public scene communication and private GM ↔ player channels.
+- Multiple turn modes:
+  - MANUAL
+  - ROUND
+  - SOFT_ROUND
+  - SIMULTANEOUS
+  - TABLE
+- Scene-based campaign structure with:
+  - participants
+  - predecessor scenes
+  - inherited memory
+  - controlled visibility
+- World lore management with scoped knowledge:
+  - GLOBAL
+  - SCENE
+  - PLAYER
+- Player memory, scene memory and campaign memory.
+- Model retry and fallback handling.
+- Frozen execution context for deterministic turns.
+- Message revisions, regeneration and restore history.
+- GM tools for nudges, corrections and memory pins.
+- Mock LLM backend for development without external providers.
+- LiteLLM integration for OpenAI, Anthropic, Gemini and local Ollama models.
+
+## Technology stack
+
+- Python 3.13
+- Django 5.2 LTS
+- PostgreSQL
+- ASGI / Uvicorn
+- LiteLLM Proxy
+- Django Templates
+- HTMX
+- Alpine.js
+- Docker Compose
+
+## Project structure
+
+```
+rpgllm/
+├── rpg/
+│   ├── models.py          # campaign, scenes, players, messages and state models
+│   ├── views.py           # web interface and actions
+│   ├── services/
+│   │   ├── context_builder # builds model context with visibility rules
+│   │   ├── turn_engine     # controls turn execution
+│   │   └── llm             # model provider abstraction
+│   ├── templates/          # Django UI
+│   └── tests/              # application tests
+├── mraz/                  # Django project configuration
+├── compose.yaml
+├── Dockerfile
+└── litellm_config.yaml
+```
 
 ## Quick start
 
@@ -24,616 +69,122 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Before opening the app from a Windows browser, add this line to
-`C:\\Windows\\System32\\drivers\\etc\\hosts` as Administrator:
+For Windows browsers add:
 
-```text
+```
 127.0.0.100 mraz.local
 ```
 
-WSL's `/etc/hosts` affects WSL tools only; it does not configure name
-resolution for Windows Chrome/Edge.
+to:
 
-Open <http://mraz.local>.
-
-Checks from WSL:
-
-```bash
-curl -I http://127.0.0.100
-curl -I http://mraz.local      # only if WSL also resolves mraz.local
+```
+C:\Windows\System32\drivers\etc\hosts
 ```
 
-Create an admin user:
+Then open:
+
+```
+http://mraz.local
+```
+
+Create an administrator account:
 
 ```bash
 docker compose exec web python manage.py createsuperuser
 ```
 
-Admin at <http://mraz.local/admin/>.
-
-Load demo data (idempotent):
+Load demo data:
 
 ```bash
 docker compose exec web python manage.py seed_demo
 ```
 
-Creates Campaign **МРАЗь**, Scene **Test scene**, players **Lucien / Mila /
-Mathis** with round order `Lucien → Mila → Mathis`, using MockLLM by default —
-no API keys, no Ollama models required.
+The demo creates a campaign, scene and several players using the mock backend.
 
-## Run the tests
+## LLM backends
 
-Tests run entirely inside Docker (dev dependencies are isolated in a
-`web-test` build target):
+Default development mode:
+
+```env
+LLM_BACKEND=mock
+```
+
+No API keys or local models are required.
+
+For external providers:
+
+```env
+LLM_BACKEND=litellm
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GEMINI_API_KEY=...
+```
+
+Provider aliases are configured through `litellm_config.yaml`.
+
+Host Ollama can be accessed from containers through:
+
+```
+host.docker.internal:11434
+```
+
+## Context handling
+
+Every model call receives a controlled context assembled from:
+
+- campaign instructions
+- allowed lore entries
+- shared memory
+- player character data
+- player memory
+- visible predecessor scene memory
+- current scene state
+- selected recent history
+- GM trigger
+
+The system does not blindly send the entire transcript and all lore with every request.
+Visibility rules are applied before context generation.
+
+## Scene and message model
+
+Scenes represent playable sessions. A scene can inherit previous scenes while keeping character knowledge separated.
+
+Messages support:
+
+- PUBLIC
+- PRIVATE_GM_PLAYER
+- GM_ONLY
+
+Public messages are visible only to current scene participants.
+
+Turn execution uses explicit states:
+
+```
+PENDING → RUNNING → COMPLETED
+             ↓
+           FAILED
+```
+
+Each player execution keeps its own state, allowing retries without replaying successful players.
+
+## Development
+
+Run tests inside Docker:
 
 ```bash
 docker compose run --rm --build web-test pytest
 ```
 
-## Mock mode vs real providers
+## Environment
 
-`LLM_BACKEND=mock` (default in `.env.example`): deterministic, no network.
-`LLM_BACKEND=litellm`: routes through the LiteLLM proxy container.
+Configuration is provided through `.env`.
 
-## Connecting external providers
+Important files:
 
-API keys live **only** in environment variables (`.env`), never in the DB,
-templates, or logs:
+- `.env.example` - available environment variables
+- `compose.yaml` - local services
+- `litellm_config.yaml` - model routing
 
-```env
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-GEMINI_API_KEY=...
-```
+## License
 
-Assign a player a `ModelConfig` in Admin with a `gateway_model` alias defined
-in `litellm_config.yaml` (e.g. `openai-gpt4o`, `anthropic-claude-sonnet`,
-`gemini-pro`). Set `LLM_BACKEND=litellm` and restart.
-
-## Connecting host Ollama
-
-Host Ollama is reached by containers via `host.docker.internal:11434`
-(configured as `OLLAMA_BASE_URL`). The LiteLLM alias `ollama-local` maps to
-`ollama/glm-5.2:cloud` by default — change it in `litellm_config.yaml` to any
-model listed by `ollama list`.
-
-Verified integration path:
-
-```
-Django (LiteLLMClient)
-  → LiteLLM container (:4000)
-    → host.docker.internal:11434
-      → Host Ollama (glm-5.2:cloud)
-```
-
-## Context manager
-
-The app does not send the entire campaign transcript and all world lore on
-every LLM call anymore. Each player context is assembled from:
-
-```
-Campaign.system_prompt
-+ relevant LoreEntry rows
-+ Campaign.shared_memory
-+ Player.character_prompt
-+ Player.character_summary / characteristics / abilities
-+ Player.memory_summary
-+ predecessor Scene.memory_summary values visible to this player
-+ Scene.description
-+ Scene.memory_summary
-+ newest visible message tail across inherited scene history
-+ current GM trigger
-```
-
-`LoreEntry.scope` controls who receives an entry:
-
-- `GLOBAL`: every player in the campaign.
-- `SCENE`: only players being called in one of the entry's assigned scenes.
-- `PLAYER`: only the explicitly assigned players.
-
-Lore is packed by ascending `priority` (lower number = more important) up to
-`CONTEXT_LORE_MAX_CHARS`. Visible chat history is reduced to the newest
-contiguous tail up to `CONTEXT_HISTORY_MAX_CHARS`. Both limits are
-provider-agnostic character budgets so the same behavior works with Ollama,
-OpenAI, Anthropic, Gemini, etc.
-
-Default values:
-
-```env
-CONTEXT_HISTORY_MAX_CHARS=40000
-CONTEXT_LORE_MAX_CHARS=50000
-```
-
-Set either to `0` (or a negative value) to disable that limit.
-
-`Campaign.shared_memory`, `Player.memory_summary`, and
-`Scene.memory_summary` are compact long-term memory fields and are always
-included. In this MVP they are intentionally edited by the GM in Django Admin;
-automatic summarization/roll-up is a later layer. Starting a fresh campaign
-does not require filling them immediately: recent history remains available
-until it reaches the configured budget.
-
-World lore is managed in Admin under **Lore entries**. Keep only foundational,
-universally known facts as `GLOBAL`; route specialist/secret knowledge through
-`SCENE` or `PLAYER` so models do not receive information their characters
-should not know.
-
-
-### Explicit GM-fillable gaps
-
-The model GM normally refuses to invent missing content from an already-existing
-source such as a dossier, log, briefing, archive or remembered prior event. When
-the human author intentionally wants one narrow gap to remain undefined until it
-is first used in play, wrap the scope in:
-
-```text
-[[GM_FILLABLE]]...[[/GM_FILLABLE]]
-```
-
-Example:
-
-```text
-Перед вылетом Halcyon получил метеосводку.
-[[GM_FILLABLE]]
-Метеосводка Halcyon перед вылетом из Буэнос-Айреса: конкретные значения
-ветра, давления, облачности и прогноз по маршруту могут быть установлены
-мастером при первом обращении.
-[[/GM_FILLABLE]]
-```
-
-When a later existing-source lookup matches that scope, the GM may invent the
-missing details inside it while preserving all established canon. The permission
-does not spill into unrelated facts. Once a generated detail is published, it is
-canon and must remain stable. Only author-controlled campaign/scene/lore/player
-configuration fields grant this permission; ordinary chat messages do not.
-Player-model context keeps the readable inner text but strips the control
-markers themselves.
-
-The GM source detector also distinguishes four runtime categories:
-`READ_EXISTING_SOURCE`, `RECALL_EXISTING_FACT`, `USE_OPERATIONAL_DATA`,
-and `PROFESSIONAL_ACTION`. The first two retain the strict fixed-source guard.
-Routine current operational material such as weather, watch sheets, ordinary
-schedules/manifests, instrument-derived navigation inputs, and similar working
-data can receive an automatic narrow GM-fillable scope even without an explicit
-tag. Ordinary professional work does not become a source lookup merely because
-the character checks instruments, calculates a correction, or monitors a system.
-Automatic operational permission is deliberately narrower than an explicit
-author tag and does not authorize unrelated addresses, passwords, evidence, or
-hidden historical facts.
-
-## Scenes as playable sessions
-
-A `Scene` is now effectively a playable session/thread with an explicit
-participant list and optional predecessor scenes.
-
-- `SceneParticipant` defines which campaign players are actually present.
-- `PUBLIC` means public to the participants of that scene, not every player in
-  the whole campaign.
-- ROUND order must contain every participant of the current scene exactly once.
-- SOFT_ROUND is available for physically separated or loosely coupled character
-  lines. The GM explicitly targets only the line(s) with a meaningful beat,
-  without mechanically rotating through idle participants.
-- A scene may inherit one or more closed predecessor scenes through
-  `previous_scenes`. This supports parallel POV threads that later converge.
-- When building context, a player inherits only predecessor scenes in which that
-  player participated. Parallel scenes belonging to other characters remain
-  invisible.
-- Predecessor `memory_summary` fields are also inherited for players who
-  participated in those scenes, so important history survives transcript
-  trimming.
-
-Scenes can be closed from the main scene UI. Closing is one-way in normal play:
-the scene becomes read-only and no new public/private messages or turns may be
-created there. A closed scene can then be used as the predecessor of a new
-scene via **New scene from here**.
-
-This makes the practical flow:
-
-```
-solo/parallel scenes
-        ↓
-shared scene
-        ↓
-close scene
-        ↓
-new session inheriting selected history
-```
-
-Existing scenes are migrated with every campaign player as a participant so
-pre-upgrade behavior is preserved until those scenes are edited.
-
-A model-GM `scene_transition` is a current-state transition, not just a label
-change. A non-null transition must provide `name`, `description`, and
-`memory`; publication updates all three together. This prevents an old
-description such as "still moored in Buenos Aires" from remaining in CURRENT
-SCENE after the vessel is already under way. Older messages remain historical
-canon, while the new description/memory becomes authoritative current-state
-control.
-
-Player public ACT text is stored as canonical player declaration, but its
-external-world claims are not automatically promoted to objective GM truth.
-Voluntary action, speech, thought/intent, and the fact that a character made a
-perception or professional assessment remain authoritative for that character.
-NPC actions, exact external measurements, consequences, and asserted world
-states require GM confirmation unless they were already established.
-
-## Architecture
-
-```
-models
-services/context_builder   # privacy + inherited scene history + bounded context
-services/turn_engine        # MANUAL / ROUND / SOFT_ROUND / SIMULTANEOUS / TABLE + state machine
-services/llm                # LLMClient: MockLLMClient | LiteLLMClient
-views / templates           # thin; no business logic in views
-```
-
-Message visibility: `PUBLIC`, `PRIVATE_GM_PLAYER`, `GM_ONLY`. A single message
-table with visibility rules — not separate chats. `PUBLIC` is scoped to the
-participant list of the scene where the message was created.
-
-Turn states: `PENDING / RUNNING / COMPLETED / FAILED`. Each player call has
-its own `TurnExecution` state (`PENDING / RUNNING / COMPLETED / FAILED /
-INVALID`). Public ROUND/SIMULTANEOUS calls use frozen context snapshots;
-private GM↔player turns never advance the public round. Browser submissions use
-a per-form UUID so duplicate submits are idempotent. Failed executions can be
-retried without replaying successful players.
-
-In ROUND mode an inactive player may declare `ACT_OUT_OF_TURN`. The GM can
-explicitly adjudicate one of those declarations in the next public GM message
-with the **SAOOT** composer control. SAOOT wraps the selected GM text in a
-player-targeted marker and the UI renders it as a highlighted adjudication.
-When several players declared `ACT_OUT_OF_TURN`, the GM selects which player
-the marked text resolves. If the GM proceeds without a SAOOT adjudication for a
-given declaration, that declaration is treated as successful as stated.
-
-The Public and Private panes are display-only newest-first feeds; model context
-continues to use canonical chronological order. Every visible GM/player message
-has a Copy control that copies the author/action header plus the visible message
-text; the HTTP `mraz.local` deployment falls back to the legacy browser copy
-command when the secure Clipboard API is unavailable.
-
-ROUND and MANUAL also expose a **Молчание** (Silence) control. Silence
-creates a real player turn without creating a GM Message. In ROUND it runs the
-normal full round roster from the current active player and advances the round
-once all executions complete. In MANUAL it requires exactly one selected player
-and calls only that player. Models are explicitly told that Silence means the GM
-has yielded the floor and that they must continue only from already established
-scene state/history rather than inventing a new GM event.
-
-Successful public player replies expose GM correction/history controls in the
-message `⋯` menu:
-
-- **OOC** asks the GM for a private meta-comment tied to that exact public
-  declaration. The same player model receives the comment privately and may
-  either keep its declaration or return a full replacement. A replacement
-  updates the existing public Message row in place, so it does not create a new
-  action, new turn, or another ROUND advance.
-- **Regen** asks only that player's model for a fresh variant from the original
-  frozen turn context. The old version is kept in `MessageRevision`; a successful
-  variant replaces the visible Message in place and may later be restored.
-- **Versions / restore** shows every retained declaration version (original,
-  Regen, OOC revision, restore) and lets the GM restore an earlier one.
-- **Debug** shows the exact model alias, latency, frozen history ids, system
-  prompt, request messages, raw provider response, execution state and error.
-- **Memory pins** can append an edited message-derived note directly to shared
-  campaign memory, scene memory, the speaking player's private memory, or a
-  scene-scoped LoreEntry.
-
-The scene toolbar also exposes **Undo last turn**. It removes the most recent
-Turn and its linked messages. When a public ROUND Turn had advanced the round,
-the active player position is restored to the turn's frozen active-player
-snapshot.
-
-### GM workbench
-
-Players can have an optional fallback `ModelConfig`. Failed/invalid executions
-then offer both a same-model retry and a one-off fallback retry without changing
-the player's normal model assignment. A retry of an `INVALID` execution is
-corrective rather than blind: the model receives the exact validator error and
-its previous rejected raw response. For an inactive ROUND player the repair
-prompt explicitly says that ordinary speech/commentary must become `PASS`, not
-be relabelled as `ACT_OUT_OF_TURN`. Provider/runtime `FAILED` retries still
-reuse the frozen request without this model-correction layer.
-
-Each player card also has **Nudge**. A Nudge is a one-shot private GM
-instruction snapshotted into the next execution for that player, then consumed.
-It is never presented as in-fiction dialogue and retries of that same execution
-retain the snapshotted Nudge.
-
-Public ROUND provider calls run concurrently after every participant's context
-has been frozen. ORM/context construction and result persistence remain ordered,
-so one player's response cannot enter another player's same-round context.
-
-The public pane has quick current-scene text/author/action filters plus a
-**History search** page spanning the current scene and its predecessor lineage,
-with text, author, action and visibility filters.
-
-The GM composer has an **IC / OOC** switch. OOC mode stores meta-information in
-the selected player's private context or broadcasts it to all current scene
-participants. It does not create a public event or call a model immediately.
-
-The private pane is wider, collapsible, and keeps its text composers outside the
-polling fragment so typed drafts survive refreshes. Unread player messages still
-show the existing dot beside the player name. By default a newly appearing
-unread dot expands the private pane and selects that player's tab; **auto-open**
-can be disabled and is stored in browser localStorage.
-
-At scene close, **Close…** asks models for a draft public scene summary, open
-hooks, and privacy-filtered per-player memory updates. The draft is editable and
-does not change memory or close the scene until the GM presses **Apply & close**.
-Direct close without summary remains available from the adjacent `⋯` menu.
-
-GM keyboard shortcuts on the scene page:
-`Ctrl+Enter` Send, `Alt+S` Silence, `Alt+R` dialogue formatting, and
-`Alt+O` IC/OOC mode.
-
-ROUND treats `ACT_OUT_OF_TURN` as an exceptional interrupt rather than a
-normal alternate action. Inactive players are explicitly instructed to prefer
-`PASS` unless waiting would make the intervention impossible or materially
-change it. Public model responses are also guarded server-side. A normal public
-`ACT` is limited to 1200 visible characters, 6 paragraphs, and 2 direct
-questions. Models are explicitly told that six paragraphs is only a hard ceiling;
-normal useful ACTs should usually stay around 2-3 paragraphs and must not be
-padded with recaps or repeated exposition. `ACT_OUT_OF_TURN` remains deliberately stricter at 650 visible
-characters, 2 paragraphs, and 1 direct question. Hidden Russian hover
-translations do not count toward the visible-character limit. Violations make
-that execution `INVALID`, so it can be retried without replaying successful
-players.
-
-Each scene may define a `dialogue_language` such as `French` or `Portuguese`.
-The model is instructed to keep narration in Russian while emitting every
-spoken sentence in the actual in-world language using:
-
-```text
-[[SPEECH]]Je vais vérifier la voiture.[[RU]]Я проверю машину.[[/SPEECH]]
-```
-
-The normal scene view shows only the original-language sentence. Hovering or
-keyboard-focusing it displays the Russian translation in a tooltip. The Russian
-GM interface language is not treated as the in-world spoken language.
-
-## Human player client
-
-A Player may use `transport = HUMAN`. The Turn Engine then creates a normal
-frozen execution but does not call LiteLLM and does not generate an external
-prompt. The execution waits in `WAITING_HUMAN` until the living player submits
-through the player-facing client.
-
-The GM player card exposes **Open player client** for HUMAN participants. The
-client is deliberately thin and mobile-friendly:
-
-- a character card with portrait, player-facing summary, characteristics,
-  abilities and that character's private long-term memory summary;
-- portrait upload/replacement/removal directly from the player client
-  (JPEG/PNG/WebP, max 5 MB);
-- episode search across every Scene in which that character participated,
-  including episode title/description/summary plus PUBLIC history and only that
-  character's own PRIVATE_GM_PLAYER history;
-- a privacy-filtered episode detail page with the public transcript and that
-  character's private GM channel;
-- current public scene feed;
-- only that player's private GM channel;
-- clear waiting / active / inactive status;
-- a move composer shown only when an execution is actually waiting for that
-  player;
-- server-derived legal action choices;
-- optional private note attached to the move;
-- standalone OOC message to the GM.
-
-Character-card descriptive fields are maintained by the GM in the Player admin.
-The model-facing `character_prompt` is intentionally not dumped verbatim into
-the human client. The separate `character_summary`, `characteristics` and
-`abilities` fields are safe player-facing sheet data, and they are also added
-to model context. That way the same Player can switch HUMAN ↔ LiteLLM/manual-chat
-without losing the structured character facts. Uploaded portraits are stored in
-a persistent Docker `media_data` volume and served through the player-scoped
-application route rather than as a public static/media directory.
-
-ROUND rules remain authoritative on the server. An active human gets ACT/PASS;
-an inactive human gets PASS/ACT_OUT_OF_TURN. Human submissions pass through the
-same response-length/paragraph/question validation and the same persistence,
-private-message, Turn completion and ROUND advancement paths as model replies.
-Private GM→human response requests stay private.
-
-A scene with a `WAITING_HUMAN` or `WAITING_EXTERNAL` execution refuses to
-start another model turn until the outstanding response is completed. This
-prevents the public scene from advancing underneath a player who still has an
-open execution.
-
-HUMAN access is scene-scoped and tokenized. Every `SceneParticipant` owns a
-random UUID bearer token, and the player client is reached only through
-`/play/<token>/`. The URL does not expose or accept a `scene_id` or
-`player_id`; the server resolves both from the token. A token can be revoked,
-re-enabled, or regenerated from the GM player card. Regeneration invalidates the
-old URL immediately.
-
-The bearer URL is a credential: anyone who has it can act as that character in
-that scene. Player pages and protected character images use private/no-store
-responses, player pages emit `Referrer-Policy: no-referrer`, and an older
-scene token cannot be used to browse episodes created after that scene.
-
-## Public HUMAN player access via Cloudflare Tunnel
-
-The repository includes an optional `public-player` Compose profile for
-Internet access. It deliberately does **not** expose the Django service itself.
-
-The path is:
-
-```
-player browser
-  → HTTPS / Cloudflare
-    → cloudflared (outbound-only tunnel)
-      → player-edge nginx
-        → Django
-```
-
-`player-edge` only proxies `/play/` and `/static/rpg/`. Every other path,
-including `/`, `/scene/`, `/admin/`, debug pages and health endpoints,
-returns 404. Django also has a second host-level guard:
-when a request arrives on `PUBLIC_PLAYER_HOST`, only those same public
-prefixes are accepted. This keeps the GM workbench local even if the Tunnel is
-accidentally pointed directly at Django later.
-
-Cloudflare recommends remotely-managed tunnels for Docker deployments. Create a
-Tunnel in **Cloudflare Dashboard → Networking → Tunnels**, then create a public
-hostname such as `play.example.com`. Configure that hostname's service as:
-
-```text
-http://player-edge:8080
-```
-
-The service name is resolved inside the Compose network by the `cloudflared`
-container. No host port is published for either `player-edge` or
-`cloudflared`.
-
-Then put the public hostname and Tunnel token in the local `.env`:
-
-```env
-PUBLIC_PLAYER_HOST=play.example.com
-CLOUDFLARE_TUNNEL_TOKEN=eyJ...
-```
-
-`PUBLIC_PLAYER_HOST` is a bare hostname: do not include `https://` or a
-path. It is automatically added to Django's `ALLOWED_HOSTS`, and
-`https://<PUBLIC_PLAYER_HOST>` is automatically added to
-`CSRF_TRUSTED_ORIGINS`.
-
-Start the public profile:
-
-```bash
-docker compose --profile public-player up -d --build
-```
-
-The normal local GM URL remains `http://mraz.local`. Only secret player links
-copied from a HUMAN player card should use the public hostname.
-
-Useful checks:
-
-```bash
-docker compose --profile public-player ps
-docker compose logs --tail=100 cloudflared
-docker compose exec player-edge nginx -t
-```
-
-From the Internet-facing hostname, these must behave differently:
-
-```text
-https://play.example.com/play/<valid-token>/   → player client
-https://play.example.com/admin/                 → 404
-https://play.example.com/scene/1/               → 404
-https://play.example.com/                       → 404
-```
-
-The Tunnel token is an account credential. Keep the real value only in
-`.env`; never commit it. The default Compose stack still runs without
-Cloudflare because both public services are behind the `public-player`
-profile.
-
-## Manual external-chat transport
-
-A player can use `transport = MANUAL_CHAT` instead of LiteLLM/API generation.
-This is intentionally a human-in-the-loop bridge for models that are available
-only through a normal web chat.
-
-Configure the Player in Admin with:
-
-- **transport** = `MANUAL_CHAT`
-- optional **manual_chat_label** such as `ChatGPT 5.6`
-- optional **manual_chat_url** pointing at the persistent external conversation
-- **manual_chat_context_mode** = `FULL` or `CHAT_MEMORY`
-
-When that player is invoked, the TurnExecution moves to
-`WAITING_EXTERNAL` instead of calling LiteLLM. The player card shows the exact
-packet plus **Copy prompt**, **Open chat**, and a multiline response paste box.
-The pasted result then goes through the same structured-response parser,
-ROUND-role validation, ACT/ACT_OUT_OF_TURN limits, bilingual speech rendering,
-private_to_gm handling, Turn completion, and ROUND advancement as an API reply.
-A rejected paste leaves the execution in `WAITING_EXTERNAL` with the error and
-raw pasted text still visible for correction. While any manual execution is
-waiting, the Turn Engine blocks starting another model turn in that scene so a
-human cannot accidentally create two overlapping frozen timelines while
-copying things between browser tabs.
-
-`FULL` sends the complete authoritative application prompt and visible history
-on every execution.
-
-`CHAT_MEMORY` performs one complete **BOOTSTRAP** first. After a successful
-bootstrap response is pasted back, the Player is marked synchronized. Later
-executions send **DELTA** packets containing only newly visible public/private
-messages since the last successfully imported external response plus current
-scene/ROUND constraints, GM Silence state, one-shot Nudge, the current compact
-shared/player/scene memories, and the response contract. Every DELTA also
-re-states the **last response actually accepted by the application**. This is
-deliberately redundant: if the GM edited pasted JSON, or the web chat produced a
-rejected draft before the accepted one, the persistent chat is pulled back
-toward application canon instead of trusting its own conversational memory.
-If the last synchronized external execution belongs to a scene outside the current predecessor lineage,
-the bridge falls back to a full bootstrap instead of trusting unrelated branch
-memory.
-
-If the external conversation is replaced, cleared, or no longer remembers its
-bootstrap, use **Reset chat memory** on the player card. The next execution will
-send a fresh full bootstrap. Major out-of-band changes to character/world rules
-should be treated the same way when you want the external chat re-seeded from
-authoritative application context. Retroactive application edits such as Undo,
-Restore, Regen, or an OOC revision that changes public canon automatically mark
-persistent manual-chat players in that scene as needing a fresh bootstrap.
-
-CHAT_MEMORY assumes one persistent external conversation per continuous story
-lineage. If the same character is deliberately played through incompatible
-parallel branches, use separate external chats/URLs for those branches; a later
-bootstrap is authoritative, but a web chat may still remember material from a
-different branch because, unlike our database, it has no shame and no rollback.
-
-General GM **OOC / META** messages and private GM messages naturally enter the
-next DELTA because they are part of that player's visible history. One-shot
-**Nudge** is embedded directly in the pending manual packet and remains frozen
-for that execution.
-
-The API-only per-message **Regen** and immediate **OOC revision** controls are
-hidden for manual-chat declarations rather than silently calling the player's
-old LiteLLM model. Use the persistent external chat plus the normal OOC/meta
-channel for those corrections.
-
-## Browser bridge for MANUAL_CHAT
-
-The optional Chromium/Edge extension in `browser_bridge/` automates the
-existing Copy → Open chat → Paste loop without changing the MANUAL_CHAT
-protocol, parser, or Turn Engine.
-
-Supported adapters currently target ChatGPT, Claude, Gemini, and DeepSeek. When the
-extension is loaded, a waiting MANUAL_CHAT player or manual model-GM card gains
-a **Send via browser bridge** button. One click opens or focuses the configured
-persistent conversation, sends the exact external prompt, waits for the newest
-assistant response to finish, returns the raw text to the original MRAZ scene,
-and submits it through the existing Django import form.
-
-The source scene may HTMX-refresh or reload while the model is thinking.
-Bridge jobs are keyed by execution id and kept in `chrome.storage.session`.
-A completed answer is retained until the matching execution card acknowledges
-that it actually received the result.
-
-Manual Copy/Open/Paste controls remain available as a fallback because web-chat
-DOMs are not stable APIs.
-
-Installation has no build step:
-
-```text
-Edge:   edge://extensions/
-Chrome: chrome://extensions/
-→ Developer mode
-→ Load unpacked
-→ select <repo>/browser_bridge
-→ reload the MRAZ scene page
-```
-
-The bridge intentionally requires one explicit click per execution. It does not
-create an autonomous model-to-model loop. Full permissions and troubleshooting
-notes are in `browser_bridge/README.md`.
-
-## Stop
-
-```bash
-docker compose down            # keep data
-docker compose down -v         # wipe the PostgreSQL volume
-```
+Private project.
