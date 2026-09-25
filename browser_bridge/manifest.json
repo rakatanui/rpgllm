@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MRAZ Browser Bridge",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "description": "Moves MRAZ MANUAL_CHAT prompts into persistent web chats and returns structured responses.",
   "permissions": [
     "tabs",

@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.9"
+    assert manifest["version"] == "0.4.10"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -240,7 +240,9 @@ def test_chatgpt_bridge_uses_current_submit_button_and_ready_candidate():
 
     assert '"#composer-submit-button"' in chatgpt
     assert 'button[data-testid*="send-button"]' in chatgpt
+    assert 'button[type="submit"]' in chatgpt
     assert "button.composer-submit-btn" in chatgpt
+    assert 'button[aria-label="Отправить"]' in chatgpt
     assert "root.querySelectorAll(selector)" in external
     assert "sendButtonIsReady" in external
     assert "sendButtonDiagnostics" in external
@@ -268,3 +270,13 @@ def test_chatgpt_bridge_updates_prosemirror_state_before_sending():
     assert "composed: true" in external
     assert "fillMode," in external
     assert "documentFocused: document.hasFocus()" in external
+
+
+def test_chatgpt_bridge_scopes_submit_button_to_composer_form():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert 'composer.closest("form")' in external
+    assert "sendButtonRoot(composer)" in external
+    assert "waitForSendButton(adapter, composer)" in external
+    assert "waitForSendButton(adapter, repairComposer)" in external
+    assert 'root.querySelectorAll("button")' in external

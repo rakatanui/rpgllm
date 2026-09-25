@@ -11,9 +11,11 @@ const ADAPTERS = {
     send: [
       "#composer-submit-button",
       'button[data-testid*="send-button"]',
+      'button[type="submit"]',
       "button.composer-submit-btn",
       'button[aria-label="Send prompt"]',
       'button[aria-label="Send dictated message"]',
+      'button[aria-label="Отправить"]',
       'button[aria-label*="Send"]',
     ],
     assistant: [
@@ -177,10 +179,15 @@ function firstElement(selectors, root = document, predicate = null) {
   return null;
 }
 
-async function waitForElement(selectors, timeoutMs = 180000, predicate = null) {
+async function waitForElement(
+  selectors,
+  timeoutMs = 180000,
+  predicate = null,
+  root = document
+) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const element = firstElement(selectors, document, predicate);
+    const element = firstElement(selectors, root, predicate);
     if (element) return element;
     await sleep(500);
   }
@@ -484,8 +491,21 @@ function pageIsBusy(adapter) {
   });
 }
 
+function sendButtonRoot(composer) {
+  return (composer && composer.closest("form")) || document;
+}
+
+function findSendButton(adapter, composer = null) {
+  return firstElement(
+    adapter.send,
+    sendButtonRoot(composer),
+    sendButtonIsReady
+  );
+}
+
 function sendButtonReady(adapter) {
-  return Boolean(firstElement(adapter.send, document, sendButtonIsReady));
+  const composer = firstElement(adapter.composer);
+  return Boolean(findSendButton(adapter, composer));
 }
 
 function sendButtonIsReady(button) {
@@ -496,11 +516,12 @@ function sendButtonIsReady(button) {
   );
 }
 
-function sendButtonDiagnostics(adapter) {
+function sendButtonDiagnostics(adapter, composer = null) {
   const candidates = [];
   const seen = new Set();
+  const root = sendButtonRoot(composer);
   for (const selector of adapter.send) {
-    for (const button of document.querySelectorAll(selector)) {
+    for (const button of root.querySelectorAll(selector)) {
       if (seen.has(button)) continue;
       seen.add(button);
       candidates.push({
@@ -508,6 +529,23 @@ function sendButtonDiagnostics(adapter) {
         id: button.id || "",
         testId: button.getAttribute("data-testid") || "",
         ariaLabel: button.getAttribute("aria-label") || "",
+        type: button.getAttribute("type") || "",
+        disabled: Boolean(button.disabled),
+        ariaDisabled: button.getAttribute("aria-disabled") || "",
+        visible: elementIsVisible(button),
+      });
+    }
+  }
+  if (root !== document) {
+    for (const button of root.querySelectorAll("button")) {
+      if (seen.has(button)) continue;
+      seen.add(button);
+      candidates.push({
+        tag: button.tagName,
+        id: button.id || "",
+        testId: button.getAttribute("data-testid") || "",
+        ariaLabel: button.getAttribute("aria-label") || "",
+        type: button.getAttribute("type") || "",
         disabled: Boolean(button.disabled),
         ariaDisabled: button.getAttribute("aria-disabled") || "",
         visible: elementIsVisible(button),
@@ -517,16 +555,21 @@ function sendButtonDiagnostics(adapter) {
   return candidates.slice(0, 10);
 }
 
-async function waitForSendButton(adapter) {
+async function waitForSendButton(adapter, composer = null) {
   try {
-    return await waitForElement(adapter.send, 30000, sendButtonIsReady);
+    return await waitForElement(
+      adapter.send,
+      30000,
+      sendButtonIsReady,
+      sendButtonRoot(composer)
+    );
   } catch {
     const error = new Error(
       adapter.name +
       " send button did not become available after the composer was filled."
     );
     error.code = "MRAZ_SEND_BUTTON_UNAVAILABLE";
-    error.details = { candidates: sendButtonDiagnostics(adapter) };
+    error.details = { candidates: sendButtonDiagnostics(adapter, composer) };
     throw error;
   }
 }
@@ -658,7 +701,7 @@ async function runJob(message) {
     visibleLength: (composer.innerText || composer.value || composer.textContent || "").length,
   });
 
-  const sendButton = await waitForSendButton(adapter);
+  const sendButton = await waitForSendButton(adapter, composer);
   trace("send-button-ready", {
     jobId: message.jobId,
     tag: sendButton.tagName,
@@ -701,7 +744,7 @@ async function runJob(message) {
           error.reason || "invalid-structured-response"
         )
       );
-      const repairSendButton = await waitForSendButton(adapter);
+      const repairSendButton = await waitForSendButton(adapter, repairComposer);
       repairSendButton.click();
       trace("repair-send-clicked", {
         jobId: message.jobId,
