@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.8"
+    assert manifest["version"] == "0.4.9"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -256,3 +256,15 @@ def test_chatgpt_bridge_reuses_custom_gpt_redirect_for_same_conversation():
         'chatgptConversationId(tab.url || "") === desiredConversationId'
         in background
     )
+
+
+def test_chatgpt_bridge_updates_prosemirror_state_before_sending():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert "function selectComposerContents(element)" in external
+    assert 'document.execCommand("insertText", false, prompt)' in external
+    assert "function pasteIntoComposer(element, prompt)" in external
+    assert 'dispatchComposerInput(element, prompt, "insertFromPaste")' in external
+    assert "composed: true" in external
+    assert "fillMode," in external
+    assert "documentFocused: document.hasFocus()" in external

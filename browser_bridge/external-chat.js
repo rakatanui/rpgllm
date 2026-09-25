@@ -199,23 +199,78 @@ function setNativeValue(element, value) {
   }
 }
 
+function selectComposerContents(element) {
+  const selection = window.getSelection();
+  if (!selection) return false;
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+function dispatchComposerInput(element, prompt, inputType = "insertText") {
+  try {
+    element.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType,
+        data: prompt,
+      })
+    );
+  } catch {
+    element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  }
+}
+
+function pasteIntoComposer(element, prompt) {
+  try {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", prompt);
+    const pasteEvent = new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clipboardData,
+    });
+    const handled = !element.dispatchEvent(pasteEvent);
+    return (
+      handled &&
+      Boolean((element.innerText || element.textContent || "").trim())
+    );
+  } catch {
+    return false;
+  }
+}
+
 function fillComposer(element, prompt) {
   element.focus();
+  let fillMode = "native-value";
 
   if (
     element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement
   ) {
     setNativeValue(element, prompt);
+    dispatchComposerInput(element, prompt);
   } else {
     let inserted = false;
+    selectComposerContents(element);
     try {
-      document.execCommand("selectAll", false, null);
       inserted = document.execCommand("insertText", false, prompt);
     } catch {
       inserted = false;
     }
-    if (!inserted || !(element.innerText || "").trim()) {
+    if (inserted && (element.innerText || "").trim()) {
+      fillMode = "exec-command";
+    } else {
+      selectComposerContents(element);
+      inserted = pasteIntoComposer(element, prompt);
+      fillMode = inserted ? "paste-event" : "dom-input-event";
+    }
+    if (!inserted) {
       element.replaceChildren();
       if (element.classList.contains("ProseMirror") || element.tagName === "DIV") {
         const paragraph = document.createElement("p");
@@ -224,21 +279,12 @@ function fillComposer(element, prompt) {
       } else {
         element.textContent = prompt;
       }
+      dispatchComposerInput(element, prompt, "insertFromPaste");
     }
   }
 
-  try {
-    element.dispatchEvent(
-      new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: prompt,
-      })
-    );
-  } catch {
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-  }
   element.dispatchEvent(new Event("change", { bubbles: true }));
+  return fillMode;
 }
 
 function elementIsVisible(element) {
@@ -603,9 +649,11 @@ async function runJob(message) {
     className: String(composer.className || "").slice(0, 200),
   });
 
-  fillComposer(composer, message.prompt);
+  const fillMode = fillComposer(composer, message.prompt);
   trace("composer-filled", {
     jobId: message.jobId,
+    fillMode,
+    documentFocused: document.hasFocus(),
     promptLength: (message.prompt || "").length,
     visibleLength: (composer.innerText || composer.value || composer.textContent || "").length,
   });
