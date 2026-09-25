@@ -10,8 +10,10 @@ const ADAPTERS = {
     ],
     send: [
       "#composer-submit-button",
-      'button[data-testid="send-button"]',
+      'button[data-testid*="send-button"]',
+      "button.composer-submit-btn",
       'button[aria-label="Send prompt"]',
+      'button[aria-label="Send dictated message"]',
       'button[aria-label*="Send"]',
     ],
     assistant: [
@@ -448,6 +450,27 @@ function sendButtonIsReady(button) {
   );
 }
 
+function sendButtonDiagnostics(adapter) {
+  const candidates = [];
+  const seen = new Set();
+  for (const selector of adapter.send) {
+    for (const button of document.querySelectorAll(selector)) {
+      if (seen.has(button)) continue;
+      seen.add(button);
+      candidates.push({
+        tag: button.tagName,
+        id: button.id || "",
+        testId: button.getAttribute("data-testid") || "",
+        ariaLabel: button.getAttribute("aria-label") || "",
+        disabled: Boolean(button.disabled),
+        ariaDisabled: button.getAttribute("aria-disabled") || "",
+        visible: elementIsVisible(button),
+      });
+    }
+  }
+  return candidates.slice(0, 10);
+}
+
 async function waitForSendButton(adapter) {
   try {
     return await waitForElement(adapter.send, 30000, sendButtonIsReady);
@@ -457,6 +480,7 @@ async function waitForSendButton(adapter) {
       " send button did not become available after the composer was filled."
     );
     error.code = "MRAZ_SEND_BUTTON_UNAVAILABLE";
+    error.details = { candidates: sendButtonDiagnostics(adapter) };
     throw error;
   }
 }
@@ -683,6 +707,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         jobId: message.jobId,
         error: String(error && error.message ? error.message : error),
         failureReason,
+        diagnostics: error && error.details ? error.details : null,
       });
       await chrome.runtime.sendMessage({
         type: "MRAZ_EXTERNAL_ERROR",

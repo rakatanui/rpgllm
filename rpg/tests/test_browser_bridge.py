@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.7"
+    assert manifest["version"] == "0.4.8"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -239,6 +239,20 @@ def test_chatgpt_bridge_uses_current_submit_button_and_ready_candidate():
     chatgpt = external.split('"chatgpt.com": {', 1)[1].split('"claude.ai": {', 1)[0]
 
     assert '"#composer-submit-button"' in chatgpt
+    assert 'button[data-testid*="send-button"]' in chatgpt
+    assert "button.composer-submit-btn" in chatgpt
     assert "root.querySelectorAll(selector)" in external
     assert "sendButtonIsReady" in external
+    assert "sendButtonDiagnostics" in external
     assert "MRAZ_SEND_BUTTON_UNAVAILABLE" in external
+
+
+def test_chatgpt_bridge_reuses_custom_gpt_redirect_for_same_conversation():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+
+    assert "function chatgptConversationId(url)" in background
+    assert 'parsed.pathname.match(/\\/c\\/([^/?#]+)/)' in background
+    assert (
+        'chatgptConversationId(tab.url || "") === desiredConversationId'
+        in background
+    )
