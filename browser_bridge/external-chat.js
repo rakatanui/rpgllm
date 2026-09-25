@@ -20,6 +20,10 @@ const ADAPTERS = {
     ],
     assistant: [
       '[data-message-author-role="assistant"]',
+      '[data-testid^="conversation-turn-"][data-turn="assistant"]',
+      'article[data-turn="assistant"]',
+      'section[data-turn="assistant"]',
+      ".agent-turn",
     ],
     responseBody: [
       ".markdown",
@@ -30,6 +34,7 @@ const ADAPTERS = {
       'button[data-testid="stop-button"]',
       'button[aria-label*="Stop generating"]',
       'button[aria-label*="Stop"]',
+      'button[aria-label*="Остановить"]',
     ],
   },
   "claude.ai": {
@@ -579,6 +584,7 @@ async function waitForFreshResponse(adapter, beforeTexts, jobId) {
   const started = Date.now();
   let lastText = "";
   let stablePolls = 0;
+  let nextStatusAt = started + 5000;
 
   while (Date.now() - started < timeoutMs) {
     const candidates = assistantCandidates(adapter);
@@ -645,6 +651,20 @@ async function waitForFreshResponse(adapter, beforeTexts, jobId) {
           throw error;
         }
       }
+    }
+
+    if (Date.now() >= nextStatusAt) {
+      trace("response-wait-status", {
+        jobId,
+        assistantCount: candidates.length,
+        candidateFound: Boolean(candidate && candidate.text),
+        latestCandidateLength: candidate && candidate.text ? candidate.text.length : 0,
+        busy: pageIsBusy(adapter),
+        turnShellCount: document.querySelectorAll(
+          '[data-testid^="conversation-turn-"]'
+        ).length,
+      });
+      nextStatusAt = Date.now() + 15000;
     }
 
     await sleep(1000);

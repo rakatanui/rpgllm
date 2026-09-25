@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.10"
+    assert manifest["version"] == "0.4.11"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -280,3 +280,18 @@ def test_chatgpt_bridge_scopes_submit_button_to_composer_form():
     assert "waitForSendButton(adapter, composer)" in external
     assert "waitForSendButton(adapter, repairComposer)" in external
     assert 'root.querySelectorAll("button")' in external
+
+
+def test_chatgpt_bridge_detects_current_assistant_turn_shells():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    chatgpt = external.split('"chatgpt.com": {', 1)[1].split('"claude.ai": {', 1)[0]
+
+    assert (
+        '[data-testid^="conversation-turn-"][data-turn="assistant"]'
+        in chatgpt
+    )
+    assert 'article[data-turn="assistant"]' in chatgpt
+    assert 'section[data-turn="assistant"]' in chatgpt
+    assert 'button[aria-label*="Остановить"]' in chatgpt
+    assert 'trace("response-wait-status"' in external
+    assert "turnShellCount" in external
