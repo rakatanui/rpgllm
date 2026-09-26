@@ -24,11 +24,13 @@ const ADAPTERS = {
       'article[data-turn="assistant"]',
       'section[data-turn="assistant"]',
       ".agent-turn",
+      '[class^="MarkdownRoot-"], [class*=" MarkdownRoot-"]',
     ],
     responseBody: [
       ".markdown",
       '[class*="markdown"]',
       '[class*="prose"]',
+      '[class^="MarkdownRoot-"], [class*=" MarkdownRoot-"]',
     ],
     busy: [
       'button[data-testid="stop-button"]',
