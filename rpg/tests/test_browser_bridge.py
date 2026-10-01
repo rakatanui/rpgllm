@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.12"
+    assert manifest["version"] == "0.4.13"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -262,12 +262,21 @@ def test_chatgpt_bridge_reuses_custom_gpt_redirect_for_same_conversation():
 
 def test_chatgpt_bridge_updates_prosemirror_state_before_sending():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    chatgpt = external.split('"chatgpt.com": {', 1)[1].split('"claude.ai": {', 1)[0]
 
+    assert 'div.ProseMirror[contenteditable="true"]' in chatgpt
     assert "function selectComposerContents(element)" in external
-    assert 'document.execCommand("insertText", false, prompt)' in external
-    assert "function pasteIntoComposer(element, prompt)" in external
-    assert 'dispatchComposerInput(element, prompt, "insertFromPaste")' in external
-    assert "composed: true" in external
+    assert "function plainTextAsProseMirrorHtml(prompt)" in external
+    assert "function composerMatchesPrompt(element, prompt)" in external
+    assert "function replaceChatGptComposer(element, prompt)" in external
+    assert 'mode: "prosemirror-insert-html"' in external
+    assert 'command: "insertHTML"' in external
+    assert 'mode: "prosemirror-insert-text"' in external
+    assert 'command: "insertText"' in external
+    assert 'adapter.name === "ChatGPT"' in external
+    assert "MRAZ_COMPOSER_INSERT_FAILED" in external
+    assert '"external-chat-composer-insert-failed"' in external
+    assert "fillComposer(composer, message.prompt, adapter)" in external
     assert "fillMode," in external
     assert "documentFocused: document.hasFocus()" in external
 

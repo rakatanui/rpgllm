@@ -5,6 +5,7 @@ const ADAPTERS = {
     name: "ChatGPT",
     composer: [
       "#prompt-textarea",
+      'div.ProseMirror[contenteditable="true"]',
       '[contenteditable="true"][data-virtualkeyboard="true"]',
       'div[contenteditable="true"]',
     ],
@@ -168,6 +169,9 @@ function failureReasonForError(error) {
   if (error && error.code === "MRAZ_SEND_BUTTON_UNAVAILABLE") {
     return "external-chat-send-unavailable";
   }
+  if (error && error.code === "MRAZ_COMPOSER_INSERT_FAILED") {
+    return "external-chat-composer-insert-failed";
+  }
   if (/timed out|did not become available/i.test(message)) {
     return "external-chat-timeout";
   }
@@ -223,6 +227,75 @@ function selectComposerContents(element) {
   return true;
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function plainTextAsProseMirrorHtml(prompt) {
+  return String(prompt)
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line ? "<p>" + escapeHtml(line) + "</p>" : "<p><br></p>")
+    .join("");
+}
+
+function composerComparableText(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function composerMatchesPrompt(element, prompt) {
+  const current = element.innerText || element.textContent || "";
+  return composerComparableText(current) === composerComparableText(prompt);
+}
+
+function replaceChatGptComposer(element, prompt) {
+  const attempts = [
+    {
+      mode: "prosemirror-insert-html",
+      command: "insertHTML",
+      value: plainTextAsProseMirrorHtml(prompt),
+    },
+    {
+      mode: "prosemirror-insert-text",
+      command: "insertText",
+      value: prompt,
+    },
+  ];
+
+  for (const attempt of attempts) {
+    element.focus();
+    selectComposerContents(element);
+    let inserted = false;
+    try {
+      inserted = document.execCommand(attempt.command, false, attempt.value);
+    } catch {
+      inserted = false;
+    }
+    if (inserted && composerMatchesPrompt(element, prompt)) {
+      return attempt.mode;
+    }
+  }
+
+  const error = new Error(
+    "ChatGPT composer rejected ProseMirror replacement; automatic send was stopped before leaving stale visible text."
+  );
+  error.code = "MRAZ_COMPOSER_INSERT_FAILED";
+  error.details = {
+    tag: element.tagName,
+    id: element.id || "",
+    className: String(element.className || "").slice(0, 200),
+    visibleLength: (element.innerText || element.textContent || "").length,
+    promptLength: String(prompt || "").length,
+  };
+  throw error;
+}
+
 function dispatchComposerInput(element, prompt, inputType = "insertText") {
   try {
     element.dispatchEvent(
@@ -259,7 +332,7 @@ function pasteIntoComposer(element, prompt) {
   }
 }
 
-function fillComposer(element, prompt) {
+function fillComposer(element, prompt, adapter = null) {
   element.focus();
   let fillMode = "native-value";
 
@@ -269,6 +342,12 @@ function fillComposer(element, prompt) {
   ) {
     setNativeValue(element, prompt);
     dispatchComposerInput(element, prompt);
+  } else if (
+    adapter &&
+    adapter.name === "ChatGPT" &&
+    element.isContentEditable
+  ) {
+    fillMode = replaceChatGptComposer(element, prompt);
   } else {
     let inserted = false;
     selectComposerContents(element);
@@ -714,7 +793,7 @@ async function runJob(message) {
     className: String(composer.className || "").slice(0, 200),
   });
 
-  const fillMode = fillComposer(composer, message.prompt);
+  const fillMode = fillComposer(composer, message.prompt, adapter);
   trace("composer-filled", {
     jobId: message.jobId,
     fillMode,
@@ -764,7 +843,8 @@ async function runJob(message) {
         structuredRepairPrompt(
           message.jobId,
           error.reason || "invalid-structured-response"
-        )
+        ),
+        adapter
       );
       const repairSendButton = await waitForSendButton(adapter, repairComposer);
       repairSendButton.click();
