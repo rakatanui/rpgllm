@@ -87,6 +87,14 @@ The extension requests tab/storage access plus host permissions only for:
 - `gemini.google.com`
 - `chat.deepseek.com`
 
+For ChatGPT, the bridge also requests `clipboardRead` and `clipboardWrite`.
+Current ChatGPT builds use a ProseMirror composer whose application state can
+ignore synthetic DOM insertion even while the text is visibly present. The
+bridge therefore prefers the browser's paste command for ChatGPT, matching the
+manual Ctrl+V path. It snapshots the clipboard and restores it on a best-effort
+basis immediately after the paste; the older DOM/input-event path remains the
+fallback if clipboard paste is unavailable.
+
 It does not request `<all_urls>`.
 
 If the local GM UI moves to a different hostname, add that hostname to both
