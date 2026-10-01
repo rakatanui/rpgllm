@@ -3,6 +3,7 @@ const activeJobs = new Set();
 const ADAPTERS = {
   "chatgpt.com": {
     name: "ChatGPT",
+    preferClipboardPaste: true,
     composer: [
       "#prompt-textarea",
       '[contenteditable="true"][data-virtualkeyboard="true"]',
@@ -259,7 +260,94 @@ function pasteIntoComposer(element, prompt) {
   }
 }
 
-function fillComposer(element, prompt) {
+async function snapshotClipboard() {
+  try {
+    if (
+      navigator.clipboard &&
+      typeof navigator.clipboard.read === "function" &&
+      typeof navigator.clipboard.write === "function"
+    ) {
+      return {
+        kind: "items",
+        value: await navigator.clipboard.read(),
+      };
+    }
+  } catch {
+    // Fall back to text-only preservation below.
+  }
+
+  try {
+    if (
+      navigator.clipboard &&
+      typeof navigator.clipboard.readText === "function"
+    ) {
+      return {
+        kind: "text",
+        value: await navigator.clipboard.readText(),
+      };
+    }
+  } catch {
+    // Clipboard preservation is best effort only.
+  }
+
+  return null;
+}
+
+async function restoreClipboard(snapshot) {
+  if (!snapshot || !navigator.clipboard) return;
+  try {
+    if (
+      snapshot.kind === "items" &&
+      typeof navigator.clipboard.write === "function"
+    ) {
+      await navigator.clipboard.write(snapshot.value);
+      return;
+    }
+    if (
+      snapshot.kind === "text" &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
+      await navigator.clipboard.writeText(snapshot.value);
+    }
+  } catch {
+    // Do not fail a successfully inserted prompt just because restoration failed.
+  }
+}
+
+async function pasteViaExtensionClipboard(element, prompt) {
+  if (
+    !navigator.clipboard ||
+    typeof navigator.clipboard.writeText !== "function"
+  ) {
+    return false;
+  }
+
+  const snapshot = await snapshotClipboard();
+  try {
+    await navigator.clipboard.writeText(prompt);
+    element.focus();
+    if (!selectComposerContents(element)) return false;
+
+    let pasted = false;
+    try {
+      pasted = document.execCommand("paste");
+    } catch {
+      pasted = false;
+    }
+    if (!pasted) return false;
+
+    // Let ProseMirror consume the browser paste event before restoring the user's
+    // clipboard. Long prompts may be converted into ChatGPT's pasted-text card.
+    await sleep(250);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await restoreClipboard(snapshot);
+  }
+}
+
+async function fillComposer(element, prompt, adapter = null) {
   element.focus();
   let fillMode = "native-value";
 
@@ -270,6 +358,15 @@ function fillComposer(element, prompt) {
     setNativeValue(element, prompt);
     dispatchComposerInput(element, prompt);
   } else {
+    if (
+      adapter &&
+      adapter.preferClipboardPaste &&
+      await pasteViaExtensionClipboard(element, prompt)
+    ) {
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      return "clipboard-paste";
+    }
+
     let inserted = false;
     selectComposerContents(element);
     try {
@@ -714,7 +811,7 @@ async function runJob(message) {
     className: String(composer.className || "").slice(0, 200),
   });
 
-  const fillMode = fillComposer(composer, message.prompt);
+  const fillMode = await fillComposer(composer, message.prompt, adapter);
   trace("composer-filled", {
     jobId: message.jobId,
     fillMode,
@@ -759,12 +856,13 @@ async function runJob(message) {
 
       responseBaseline = snapshotAssistantTexts(adapter);
       const repairComposer = await waitForElement(adapter.composer);
-      fillComposer(
+      await fillComposer(
         repairComposer,
         structuredRepairPrompt(
           message.jobId,
           error.reason || "invalid-structured-response"
-        )
+        ),
+        adapter
       );
       const repairSendButton = await waitForSendButton(adapter, repairComposer);
       repairSendButton.click();

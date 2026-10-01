@@ -14,6 +14,8 @@ def test_browser_bridge_manifest_is_loadable_and_scoped():
     assert manifest["background"]["service_worker"] == "background.js"
     assert "tabs" in manifest["permissions"]
     assert "storage" in manifest["permissions"]
+    assert "clipboardRead" in manifest["permissions"]
+    assert "clipboardWrite" in manifest["permissions"]
     assert "<all_urls>" not in manifest["host_permissions"]
     assert "https://chatgpt.com/*" in manifest["host_permissions"]
     assert "https://claude.ai/*" in manifest["host_permissions"]
@@ -85,7 +87,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.12"
+    assert manifest["version"] == "0.4.13"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -270,6 +272,20 @@ def test_chatgpt_bridge_updates_prosemirror_state_before_sending():
     assert "composed: true" in external
     assert "fillMode," in external
     assert "documentFocused: document.hasFocus()" in external
+
+
+def test_chatgpt_bridge_prefers_real_clipboard_paste():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    chatgpt = external.split('"chatgpt.com": {', 1)[1].split('"claude.ai": {', 1)[0]
+
+    assert "preferClipboardPaste: true" in chatgpt
+    assert "async function snapshotClipboard()" in external
+    assert "async function pasteViaExtensionClipboard(element, prompt)" in external
+    assert 'navigator.clipboard.writeText(prompt)' in external
+    assert 'document.execCommand("paste")' in external
+    assert 'return "clipboard-paste"' in external
+    assert "await restoreClipboard(snapshot)" in external
+    assert "await fillComposer(composer, message.prompt, adapter)" in external
 
 
 def test_chatgpt_bridge_scopes_submit_button_to_composer_form():

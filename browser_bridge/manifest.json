@@ -1,11 +1,13 @@
 {
   "manifest_version": 3,
   "name": "MRAZ Browser Bridge",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "description": "Moves MRAZ MANUAL_CHAT prompts into persistent web chats and returns structured responses.",
   "permissions": [
     "tabs",
-    "storage"
+    "storage",
+    "clipboardRead",
+    "clipboardWrite"
   ],
   "host_permissions": [
     "http://mraz.local/*",
