@@ -85,7 +85,7 @@ def test_browser_bridge_exposes_persistent_debug_log_popup():
     external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
     source = (BRIDGE / "mraz-page.js").read_text(encoding="utf-8")
 
-    assert manifest["version"] == "0.4.7"
+    assert manifest["version"] == "0.4.12"
     assert manifest["action"]["default_popup"] == "popup.html"
     assert (BRIDGE / "popup.html").is_file()
     assert (BRIDGE / "popup.js").is_file()
@@ -239,6 +239,67 @@ def test_chatgpt_bridge_uses_current_submit_button_and_ready_candidate():
     chatgpt = external.split('"chatgpt.com": {', 1)[1].split('"claude.ai": {', 1)[0]
 
     assert '"#composer-submit-button"' in chatgpt
+    assert 'button[data-testid*="send-button"]' in chatgpt
+    assert 'button[type="submit"]' in chatgpt
+    assert "button.composer-submit-btn" in chatgpt
+    assert 'button[aria-label="Отправить"]' in chatgpt
     assert "root.querySelectorAll(selector)" in external
     assert "sendButtonIsReady" in external
+    assert "sendButtonDiagnostics" in external
     assert "MRAZ_SEND_BUTTON_UNAVAILABLE" in external
+
+
+def test_chatgpt_bridge_reuses_custom_gpt_redirect_for_same_conversation():
+    background = (BRIDGE / "background.js").read_text(encoding="utf-8")
+
+    assert "function chatgptConversationId(url)" in background
+    assert 'parsed.pathname.match(/\\/c\\/([^/?#]+)/)' in background
+    assert (
+        'chatgptConversationId(tab.url || "") === desiredConversationId'
+        in background
+    )
+
+
+def test_chatgpt_bridge_updates_prosemirror_state_before_sending():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert "function selectComposerContents(element)" in external
+    assert 'document.execCommand("insertText", false, prompt)' in external
+    assert "function pasteIntoComposer(element, prompt)" in external
+    assert 'dispatchComposerInput(element, prompt, "insertFromPaste")' in external
+    assert "composed: true" in external
+    assert "fillMode," in external
+    assert "documentFocused: document.hasFocus()" in external
+
+
+def test_chatgpt_bridge_scopes_submit_button_to_composer_form():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+
+    assert 'composer.closest("form")' in external
+    assert "sendButtonRoot(composer)" in external
+    assert "waitForSendButton(adapter, composer)" in external
+    assert "waitForSendButton(adapter, repairComposer)" in external
+    assert 'root.querySelectorAll("button")' in external
+
+
+def test_chatgpt_bridge_detects_current_assistant_turn_shells():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    chatgpt = external.split('"chatgpt.com": {', 1)[1].split('"claude.ai": {', 1)[0]
+
+    assert (
+        '[data-testid^="conversation-turn-"][data-turn="assistant"]'
+        in chatgpt
+    )
+    assert 'article[data-turn="assistant"]' in chatgpt
+    assert 'section[data-turn="assistant"]' in chatgpt
+    assert 'button[aria-label*="Остановить"]' in chatgpt
+    assert 'trace("response-wait-status"' in external
+    assert "turnShellCount" in external
+
+
+def test_chatgpt_bridge_detects_hash_scoped_markdown_responses():
+    external = (BRIDGE / "external-chat.js").read_text(encoding="utf-8")
+    chatgpt = external.split('"chatgpt.com": {', 1)[1].split('"claude.ai": {', 1)[0]
+
+    assert '[class^="MarkdownRoot-"]' in chatgpt
+    assert '[class*=" MarkdownRoot-"]' in chatgpt

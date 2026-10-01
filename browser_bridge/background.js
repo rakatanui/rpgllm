@@ -95,6 +95,17 @@ function normalizeUrl(url) {
   }
 }
 
+function chatgptConversationId(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.toLowerCase() !== "chatgpt.com") return "";
+    const match = parsed.pathname.match(/\/c\/([^/?#]+)/);
+    return match ? match[1] : "";
+  } catch {
+    return "";
+  }
+}
+
 function supportedExternalHost(url) {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -111,6 +122,14 @@ async function findExistingTargetTab(chatUrl) {
   const tabs = await chrome.tabs.query({});
   const exact = tabs.find((tab) => normalizeUrl(tab.url || "") === target);
   if (exact) return exact;
+
+  const desiredConversationId = chatgptConversationId(chatUrl);
+  if (desiredConversationId) {
+    const conversationTab = tabs.find(
+      (tab) => chatgptConversationId(tab.url || "") === desiredConversationId
+    );
+    if (conversationTab) return conversationTab;
+  }
 
   try {
     const desired = new URL(chatUrl);

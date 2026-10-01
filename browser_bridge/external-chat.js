@@ -10,22 +10,33 @@ const ADAPTERS = {
     ],
     send: [
       "#composer-submit-button",
-      'button[data-testid="send-button"]',
+      'button[data-testid*="send-button"]',
+      'button[type="submit"]',
+      "button.composer-submit-btn",
       'button[aria-label="Send prompt"]',
+      'button[aria-label="Send dictated message"]',
+      'button[aria-label="Отправить"]',
       'button[aria-label*="Send"]',
     ],
     assistant: [
       '[data-message-author-role="assistant"]',
+      '[data-testid^="conversation-turn-"][data-turn="assistant"]',
+      'article[data-turn="assistant"]',
+      'section[data-turn="assistant"]',
+      ".agent-turn",
+      '[class^="MarkdownRoot-"], [class*=" MarkdownRoot-"]',
     ],
     responseBody: [
       ".markdown",
       '[class*="markdown"]',
       '[class*="prose"]',
+      '[class^="MarkdownRoot-"], [class*=" MarkdownRoot-"]',
     ],
     busy: [
       'button[data-testid="stop-button"]',
       'button[aria-label*="Stop generating"]',
       'button[aria-label*="Stop"]',
+      'button[aria-label*="Остановить"]',
     ],
   },
   "claude.ai": {
@@ -175,10 +186,15 @@ function firstElement(selectors, root = document, predicate = null) {
   return null;
 }
 
-async function waitForElement(selectors, timeoutMs = 180000, predicate = null) {
+async function waitForElement(
+  selectors,
+  timeoutMs = 180000,
+  predicate = null,
+  root = document
+) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const element = firstElement(selectors, document, predicate);
+    const element = firstElement(selectors, root, predicate);
     if (element) return element;
     await sleep(500);
   }
@@ -197,23 +213,78 @@ function setNativeValue(element, value) {
   }
 }
 
+function selectComposerContents(element) {
+  const selection = window.getSelection();
+  if (!selection) return false;
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+function dispatchComposerInput(element, prompt, inputType = "insertText") {
+  try {
+    element.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType,
+        data: prompt,
+      })
+    );
+  } catch {
+    element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  }
+}
+
+function pasteIntoComposer(element, prompt) {
+  try {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", prompt);
+    const pasteEvent = new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clipboardData,
+    });
+    const handled = !element.dispatchEvent(pasteEvent);
+    return (
+      handled &&
+      Boolean((element.innerText || element.textContent || "").trim())
+    );
+  } catch {
+    return false;
+  }
+}
+
 function fillComposer(element, prompt) {
   element.focus();
+  let fillMode = "native-value";
 
   if (
     element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement
   ) {
     setNativeValue(element, prompt);
+    dispatchComposerInput(element, prompt);
   } else {
     let inserted = false;
+    selectComposerContents(element);
     try {
-      document.execCommand("selectAll", false, null);
       inserted = document.execCommand("insertText", false, prompt);
     } catch {
       inserted = false;
     }
-    if (!inserted || !(element.innerText || "").trim()) {
+    if (inserted && (element.innerText || "").trim()) {
+      fillMode = "exec-command";
+    } else {
+      selectComposerContents(element);
+      inserted = pasteIntoComposer(element, prompt);
+      fillMode = inserted ? "paste-event" : "dom-input-event";
+    }
+    if (!inserted) {
       element.replaceChildren();
       if (element.classList.contains("ProseMirror") || element.tagName === "DIV") {
         const paragraph = document.createElement("p");
@@ -222,21 +293,12 @@ function fillComposer(element, prompt) {
       } else {
         element.textContent = prompt;
       }
+      dispatchComposerInput(element, prompt, "insertFromPaste");
     }
   }
 
-  try {
-    element.dispatchEvent(
-      new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: prompt,
-      })
-    );
-  } catch {
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-  }
   element.dispatchEvent(new Event("change", { bubbles: true }));
+  return fillMode;
 }
 
 function elementIsVisible(element) {
@@ -436,8 +498,21 @@ function pageIsBusy(adapter) {
   });
 }
 
+function sendButtonRoot(composer) {
+  return (composer && composer.closest("form")) || document;
+}
+
+function findSendButton(adapter, composer = null) {
+  return firstElement(
+    adapter.send,
+    sendButtonRoot(composer),
+    sendButtonIsReady
+  );
+}
+
 function sendButtonReady(adapter) {
-  return Boolean(firstElement(adapter.send, document, sendButtonIsReady));
+  const composer = firstElement(adapter.composer);
+  return Boolean(findSendButton(adapter, composer));
 }
 
 function sendButtonIsReady(button) {
@@ -448,15 +523,60 @@ function sendButtonIsReady(button) {
   );
 }
 
-async function waitForSendButton(adapter) {
+function sendButtonDiagnostics(adapter, composer = null) {
+  const candidates = [];
+  const seen = new Set();
+  const root = sendButtonRoot(composer);
+  for (const selector of adapter.send) {
+    for (const button of root.querySelectorAll(selector)) {
+      if (seen.has(button)) continue;
+      seen.add(button);
+      candidates.push({
+        tag: button.tagName,
+        id: button.id || "",
+        testId: button.getAttribute("data-testid") || "",
+        ariaLabel: button.getAttribute("aria-label") || "",
+        type: button.getAttribute("type") || "",
+        disabled: Boolean(button.disabled),
+        ariaDisabled: button.getAttribute("aria-disabled") || "",
+        visible: elementIsVisible(button),
+      });
+    }
+  }
+  if (root !== document) {
+    for (const button of root.querySelectorAll("button")) {
+      if (seen.has(button)) continue;
+      seen.add(button);
+      candidates.push({
+        tag: button.tagName,
+        id: button.id || "",
+        testId: button.getAttribute("data-testid") || "",
+        ariaLabel: button.getAttribute("aria-label") || "",
+        type: button.getAttribute("type") || "",
+        disabled: Boolean(button.disabled),
+        ariaDisabled: button.getAttribute("aria-disabled") || "",
+        visible: elementIsVisible(button),
+      });
+    }
+  }
+  return candidates.slice(0, 10);
+}
+
+async function waitForSendButton(adapter, composer = null) {
   try {
-    return await waitForElement(adapter.send, 30000, sendButtonIsReady);
+    return await waitForElement(
+      adapter.send,
+      30000,
+      sendButtonIsReady,
+      sendButtonRoot(composer)
+    );
   } catch {
     const error = new Error(
       adapter.name +
       " send button did not become available after the composer was filled."
     );
     error.code = "MRAZ_SEND_BUTTON_UNAVAILABLE";
+    error.details = { candidates: sendButtonDiagnostics(adapter, composer) };
     throw error;
   }
 }
@@ -466,6 +586,7 @@ async function waitForFreshResponse(adapter, beforeTexts, jobId) {
   const started = Date.now();
   let lastText = "";
   let stablePolls = 0;
+  let nextStatusAt = started + 5000;
 
   while (Date.now() - started < timeoutMs) {
     const candidates = assistantCandidates(adapter);
@@ -534,6 +655,20 @@ async function waitForFreshResponse(adapter, beforeTexts, jobId) {
       }
     }
 
+    if (Date.now() >= nextStatusAt) {
+      trace("response-wait-status", {
+        jobId,
+        assistantCount: candidates.length,
+        candidateFound: Boolean(candidate && candidate.text),
+        latestCandidateLength: candidate && candidate.text ? candidate.text.length : 0,
+        busy: pageIsBusy(adapter),
+        turnShellCount: document.querySelectorAll(
+          '[data-testid^="conversation-turn-"]'
+        ).length,
+      });
+      nextStatusAt = Date.now() + 15000;
+    }
+
     await sleep(1000);
   }
 
@@ -579,14 +714,16 @@ async function runJob(message) {
     className: String(composer.className || "").slice(0, 200),
   });
 
-  fillComposer(composer, message.prompt);
+  const fillMode = fillComposer(composer, message.prompt);
   trace("composer-filled", {
     jobId: message.jobId,
+    fillMode,
+    documentFocused: document.hasFocus(),
     promptLength: (message.prompt || "").length,
     visibleLength: (composer.innerText || composer.value || composer.textContent || "").length,
   });
 
-  const sendButton = await waitForSendButton(adapter);
+  const sendButton = await waitForSendButton(adapter, composer);
   trace("send-button-ready", {
     jobId: message.jobId,
     tag: sendButton.tagName,
@@ -629,7 +766,7 @@ async function runJob(message) {
           error.reason || "invalid-structured-response"
         )
       );
-      const repairSendButton = await waitForSendButton(adapter);
+      const repairSendButton = await waitForSendButton(adapter, repairComposer);
       repairSendButton.click();
       trace("repair-send-clicked", {
         jobId: message.jobId,
@@ -683,6 +820,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         jobId: message.jobId,
         error: String(error && error.message ? error.message : error),
         failureReason,
+        diagnostics: error && error.details ? error.details : null,
       });
       await chrome.runtime.sendMessage({
         type: "MRAZ_EXTERNAL_ERROR",
