@@ -115,7 +115,6 @@ const ADAPTERS = {
       '[data-test-id="model-response"]',
     ],
     responseBody: [
-      ".model-response-text",
       ".markdown",
       '[class*="response-content"]',
     ],
