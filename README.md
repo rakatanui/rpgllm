@@ -81,17 +81,17 @@ to:
 C:\Windows\System32\drivers\etc\hosts
 ```
 
-Then open:
-
-```
-http://mraz.local
-```
-
-Create an administrator account:
+Create an administrator account before signing in:
 
 ```bash
 docker compose exec web python manage.py createsuperuser
 ```
+
+Open `http://mraz.local/`. The GM workbench redirects to `/auth/login/`.
+Only active Django staff accounts can access it. The superuser above qualifies.
+Game Master sessions use Django's authentication and a POST-only logout form;
+HUMAN players continue using their existing scene-scoped bearer links without login.
+Django Admin remains at `/admin/` and applies its own model permissions.
 
 Load demo data:
 
@@ -166,6 +166,64 @@ PENDING → RUNNING → COMPLETED
 ```
 
 Each player execution keeps its own state, allowing retries without replaying successful players.
+
+
+## Security and multiple Game Masters
+
+MRAZ supports more than one Game Master with campaign-level ownership.
+
+- Create accounts in Django Admin (or `createsuperuser` for the initial administrator).
+- Grant `is_staff` to a Game Master. A regular staff account can sign into the
+  workbench and edit **only campaigns that it owns**, including their scenes,
+  characters, lore, turns and messages through Django Admin.
+- Campaign owners are assigned in Django Admin by a superuser. Newly created
+  campaigns automatically belong to the staff member who creates them.
+- Superusers have global access. Shared `ModelConfig` aliases are editable
+  **only** by superusers, but masters can select existing aliases.
+- An existing campaign without an owner is visible only to superusers. Before
+  using the new multi-master workbench, assign owners in `/admin/rpg/campaign/`.
+  **No legacy campaigns are automatically assigned to an arbitrary staff user.**
+- The demonstration data may be assigned with
+  `python manage.py seed_demo --owner USERNAME`.
+
+Failed login attempts are tracked by **django-axes** in PostgreSQL for both the
+GM login and Django Admin. Default: 5 failed attempts, then a one-hour lockout.
+Attempts are keyed by username plus client IP (not globally per IP, which\nwould lock out unrelated masters behind a shared reverse proxy). The limiter\nuses `REMOTE_ADDR`, not untrusted forwarding headers. Configure the upstream\nproxy consistently; a shared proxy IP still limits each username separately.
+
+### HTTPS and secure sessions
+
+Local `http://mraz.local` development is intentionally unchanged. To deploy
+behind HTTPS, set these in the server's **private** `.env`:
+
+```env
+DJANGO_HTTPS_ENABLED=True
+TRUST_PROXY_SSL_HEADER=True
+ALLOWED_HOSTS=gm.example.org,players.example.org
+CSRF_TRUSTED_ORIGINS=https://gm.example.org
+PUBLIC_PLAYER_HOST=players.example.org
+SECRET_KEY=<long-random-secret>
+```
+
+Important: `TRUST_PROXY_SSL_HEADER=True` is safe **only** when the reverse
+proxy strips incoming `X-Forwarded-Proto` and supplies its own verified
+`https` value, and Django is unreachable directly from the internet.
+Otherwise leave this flag off and terminate TLS directly at the app.
+`DJANGO_HTTPS_ENABLED` enables SSL redirects, secure session and CSRF cookies
+and initial one-hour HSTS; start with a short HSTS duration, and enable
+subdomain HSTS only after confirming every subdomain is HTTPS-only.
+The internal `/health/` path is exempt from HTTPS redirect for container checks.
+
+Run before production rollout:
+
+```sh
+python manage.py migrate
+python manage.py check --deploy
+python -m pytest rpg/tests/test_gm_authentication.py rpg/tests/test_production_auth_security.py
+```
+
+Bearer-link HUMAN players continue without GM accounts. Never publish the GM
+workbench through `player-edge`. Brute-force protection does not replace proxy
+rate limiting, monitoring, or careful secret management.
 
 ## Development
 
