@@ -121,7 +121,10 @@ def test_browser_bridge_validates_structured_response_before_import():
     assert "missing-gm-action" in external
     assert "missing-player-action" in external
     assert "response-contract-invalid" in external
-    assert "waitForFreshResponse(adapter, beforeTexts, message.jobId)" in external
+    assert "waitForFreshResponse(" in external
+    assert "responseBaseline," in external
+    assert "message.jobId" in external
+    assert "structuredRepairPrompt(" in external
     assert "human-waiting" in source
     assert "human-submit" in source
 
