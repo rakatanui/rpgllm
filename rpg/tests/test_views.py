@@ -2483,7 +2483,9 @@ def test_human_client_preserves_disclosures_scroll_and_focus_across_polling():
     assert "humanRegionIsEditing" in html
     assert "humanPreserveEvictedMessages" in html
     assert "humanCompactHistory" in html
-    assert "window.setInterval(humanPollAll, 2000)" in html
+    assert "window.setInterval(() => humanCheckStatus(false), 1200)" in html
+    assert "window.setInterval(() => humanPollAll(false), 10000)" in html
+    assert "humanPollAll(true)" in html
     assert "selectionStart" in html
     assert "sessionStorage" in html
 
