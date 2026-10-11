@@ -7,7 +7,8 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles import finders
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client, RequestFactory, override_settings
+from django.test import Client as AnonymousClient, RequestFactory, override_settings
+from rpg.tests.auth_helpers import gm_client as Client
 from django.urls import reverse
 
 from rpg.models import (
@@ -2123,7 +2124,7 @@ def test_human_bearer_token_post_does_not_require_csrf():
         selected_players=[human],
     )
     execution = result.turn.executions.get(player=human)
-    csrf_client = Client(enforce_csrf_checks=True)
+    csrf_client = AnonymousClient(enforce_csrf_checks=True)
 
     response = csrf_client.post(
         _human_url(
@@ -2482,7 +2483,9 @@ def test_human_client_preserves_disclosures_scroll_and_focus_across_polling():
     assert "humanRegionIsEditing" in html
     assert "humanPreserveEvictedMessages" in html
     assert "humanCompactHistory" in html
-    assert "window.setInterval(humanPollAll, 2000)" in html
+    assert "window.setInterval(() => humanCheckStatus(false), 1200)" in html
+    assert "window.setInterval(() => humanPollAll(false), 10000)" in html
+    assert "humanPollAll(true)" in html
     assert "selectionStart" in html
     assert "sessionStorage" in html
 
@@ -2523,7 +2526,7 @@ def test_admin_uses_admin_favicon():
         password="test-password",
     )
     client = Client()
-    client.force_login(admin)
+    client.force_login(admin, backend="django.contrib.auth.backends.ModelBackend")
 
     with override_settings(
         STORAGES={

@@ -2,6 +2,7 @@
 from django import forms
 from django.contrib import admin
 from django.core.exceptions import ValidationError
+from rpg.admin_access import OwnedCampaignAdminMixin, OwnedCampaignInlineMixin
 
 from rpg.models import (
     Campaign,
@@ -22,13 +23,30 @@ from rpg.models import (
 
 @admin.register(ModelConfig)
 class ModelConfigAdmin(admin.ModelAdmin):
+    """Provider aliases are shared infrastructure, reserved for superusers."""
+
+    def has_module_permission(self, request):
+        return request.user.is_active and request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return request.user.is_active and request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_superuser
+
     list_display = ("name", "gateway_model", "temperature", "enabled")
     list_editable = ("enabled",)
     list_filter = ("enabled",)
     search_fields = ("name", "gateway_model")
 
 
-class PlayerInline(admin.TabularInline):
+class PlayerInline(OwnedCampaignInlineMixin, admin.TabularInline):
     model = Player
     extra = 1
     fields = (
@@ -43,7 +61,7 @@ class PlayerInline(admin.TabularInline):
     show_change_link = True
 
 
-class SceneInline(admin.TabularInline):
+class SceneInline(OwnedCampaignInlineMixin, admin.TabularInline):
     model = Scene
     extra = 1
     fields = (
@@ -58,7 +76,7 @@ class SceneInline(admin.TabularInline):
     show_change_link = True
 
 
-class GameMasterConfigInline(admin.StackedInline):
+class GameMasterConfigInline(OwnedCampaignInlineMixin, admin.StackedInline):
     model = GameMasterConfig
     extra = 1
     max_num = 1
@@ -78,7 +96,7 @@ class GameMasterConfigInline(admin.StackedInline):
 
 
 @admin.register(GameMasterConfig)
-class GameMasterConfigAdmin(admin.ModelAdmin):
+class GameMasterConfigAdmin(OwnedCampaignAdminMixin):
     list_display = (
         "campaign",
         "enabled",
@@ -99,8 +117,8 @@ class GameMasterConfigAdmin(admin.ModelAdmin):
 
 
 @admin.register(Campaign)
-class CampaignAdmin(admin.ModelAdmin):
-    list_display = ("name", "created_at")
+class CampaignAdmin(OwnedCampaignAdminMixin):
+    list_display = ("name", "owner", "created_at")
     search_fields = ("name",)
     inlines = [GameMasterConfigInline, PlayerInline, SceneInline]
 
@@ -143,7 +161,7 @@ def _scene_reaches(scene: Scene, target_scene_id: int) -> bool:
     return False
 
 
-class SceneParticipantInline(admin.TabularInline):
+class SceneParticipantInline(OwnedCampaignInlineMixin, admin.TabularInline):
     model = SceneParticipant
     extra = 1
     fields = (
@@ -158,7 +176,7 @@ class SceneParticipantInline(admin.TabularInline):
 
 
 @admin.register(Scene)
-class SceneAdmin(admin.ModelAdmin):
+class SceneAdmin(OwnedCampaignAdminMixin):
     form = SceneForm
     list_display = (
         "name",
@@ -206,14 +224,14 @@ class SceneAdmin(admin.ModelAdmin):
 
 
 @admin.register(CharacterAppearance)
-class CharacterAppearanceAdmin(admin.ModelAdmin):
+class CharacterAppearanceAdmin(OwnedCampaignAdminMixin):
     list_display = ("name", "player", "is_primary", "order", "updated_at")
     list_filter = ("player__campaign", "is_primary")
     search_fields = ("name", "player__display_name", "description")
     ordering = ("player", "order", "pk")
 
 
-class CharacterAppearanceInline(admin.StackedInline):
+class CharacterAppearanceInline(OwnedCampaignInlineMixin, admin.StackedInline):
     model = CharacterAppearance
     extra = 1
     fields = (
@@ -228,7 +246,7 @@ class CharacterAppearanceInline(admin.StackedInline):
 
 
 @admin.register(Player)
-class PlayerAdmin(admin.ModelAdmin):
+class PlayerAdmin(OwnedCampaignAdminMixin):
     list_display = (
         "display_name",
         "campaign",
@@ -296,7 +314,7 @@ class PlayerAdmin(admin.ModelAdmin):
 
 
 @admin.register(GameMasterExecution)
-class GameMasterExecutionAdmin(admin.ModelAdmin):
+class GameMasterExecutionAdmin(OwnedCampaignAdminMixin):
     list_display = (
         "pk",
         "scene",
@@ -323,7 +341,7 @@ class GameMasterExecutionAdmin(admin.ModelAdmin):
 
 
 @admin.register(LoreEntry)
-class LoreEntryAdmin(admin.ModelAdmin):
+class LoreEntryAdmin(OwnedCampaignAdminMixin):
     list_display = ("title", "campaign", "category", "scope", "priority", "enabled", "updated_at")
     list_filter = ("campaign", "scope", "enabled", "category")
     search_fields = ("title", "category", "content")
@@ -345,14 +363,14 @@ class LoreEntryAdmin(admin.ModelAdmin):
 
 
 @admin.register(Turn)
-class TurnAdmin(admin.ModelAdmin):
+class TurnAdmin(OwnedCampaignAdminMixin):
     list_display = ("pk", "scene", "mode", "state", "created_at", "error")
     list_filter = ("state", "mode")
     readonly_fields = ("error",)
 
 
 @admin.register(Message)
-class MessageAdmin(admin.ModelAdmin):
+class MessageAdmin(OwnedCampaignAdminMixin):
     list_display = (
         "pk",
         "scene",
@@ -369,7 +387,7 @@ class MessageAdmin(admin.ModelAdmin):
 
 
 @admin.register(TurnExecution)
-class TurnExecutionAdmin(admin.ModelAdmin):
+class TurnExecutionAdmin(OwnedCampaignAdminMixin):
     list_display = ("pk", "turn", "player", "order_index", "state", "action_type", "updated_at")
     list_filter = ("state", "action_type")
     search_fields = ("player__display_name", "error")
@@ -377,7 +395,7 @@ class TurnExecutionAdmin(admin.ModelAdmin):
 
 
 @admin.register(MessageRevision)
-class MessageRevisionAdmin(admin.ModelAdmin):
+class MessageRevisionAdmin(OwnedCampaignAdminMixin):
     list_display = ("message", "revision_index", "reason", "created_at")
     list_filter = ("reason",)
     search_fields = ("message__content", "content")

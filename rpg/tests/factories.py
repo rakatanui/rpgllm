@@ -1,4 +1,5 @@
 """Test factories / helpers shared across test modules."""
+from django.contrib.auth import get_user_model
 from rpg.models import Campaign, ModelConfig, Player, Scene, SceneParticipant, TurnMode
 
 
@@ -8,6 +9,14 @@ def make_campaign(name="Test Campaign", **kw):
         description="",
     )
     defaults.update(kw)
+    if "owner" not in defaults and "owner_id" not in defaults:
+        # Existing GM view tests predate ownership. Bind those campaigns to
+        # their shared authenticated fixture user, never to a real superuser.
+        gm, _ = get_user_model().objects.get_or_create(
+            username="__rpg_test_gm__",
+            defaults={"is_staff": True, "is_active": True},
+        )
+        defaults["owner"] = gm
     return Campaign.objects.create(name=name, **defaults)
 
 

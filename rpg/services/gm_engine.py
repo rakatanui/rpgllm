@@ -172,7 +172,7 @@ def gm_execution_request(scene: Scene) -> str:
         "AUTHORITATIVE-SOURCE GUARD: distinguish protected pre-existing sources from routine current "
         "operational data. For READ_EXISTING_SOURCE and RECALL_EXISTING_FACT involving dossiers, "
         "correspondence, archives, memories, logs, passwords, evidence, hidden cargo, prior events, or "
-        "other plot-significant history, never invent missing content unless authoritative context supports "
+        "other plot-significant history, never invent missing pre-existing content unless authoritative context supports "
         "it. Exact addresses, names, phone/registration numbers, dates, message contents, passwords, codes, "
         "case numbers, prior links/events, and protected existing-object properties remain guarded. "
         "A matching author-controlled [[GM_FILLABLE]]...[[/GM_FILLABLE]] scope explicitly permits filling "

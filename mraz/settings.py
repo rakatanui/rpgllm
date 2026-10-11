@@ -43,9 +43,6 @@ if PUBLIC_PLAYER_HOST:
     if public_player_origin not in CSRF_TRUSTED_ORIGINS:
         CSRF_TRUSTED_ORIGINS.append(public_player_origin)
 
-# Cloudflare Tunnel terminates TLS before forwarding to the local player edge.
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-
 # SECURITY: never allow "*" in ALLOWED_HOSTS in any normal deployment.
 if "*" in ALLOWED_HOSTS:
     raise RuntimeError("ALLOWED_HOSTS must not contain '*'")
@@ -58,6 +55,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "axes",
     "rpg",
 ]
 
@@ -69,8 +67,10 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "rpg.middleware.GameMasterAccessMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",
 ]
 
 ROOT_URLCONF = "mraz.urls"
@@ -114,6 +114,47 @@ if os.environ.get("DB_ENGINE") == "sqlite":
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
     }
+
+LOGIN_URL = "gm_login"
+LOGIN_REDIRECT_URL = "campaigns"
+LOGOUT_REDIRECT_URL = "gm_login"
+
+# django-axes uses the database across workers, covering both /auth/login/
+# and Django Admin. Trust REMOTE_ADDR only; do not accept spoofable XFF data.
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+AXES_CLIENT_IP_CALLABLE = "rpg.security.client_ip_from_remote_addr"
+AXES_FAILURE_LIMIT = int(os.environ.get("AXES_FAILURE_LIMIT", "5"))
+AXES_COOLOFF_TIME = int(os.environ.get("AXES_COOLOFF_HOURS", "1"))
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
+AXES_RESET_ON_SUCCESS = True
+
+# HTTPS is opt-in because local development uses HTTP. Enable this only behind
+# a trusted TLS gateway which removes any client-supplied X-Forwarded-Proto.
+DJANGO_HTTPS_ENABLED = _env_bool("DJANGO_HTTPS_ENABLED", False)
+TRUST_PROXY_SSL_HEADER = _env_bool("TRUST_PROXY_SSL_HEADER", False)
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https") if TRUST_PROXY_SSL_HEADER else None
+)
+SECURE_SSL_REDIRECT = DJANGO_HTTPS_ENABLED
+SECURE_REDIRECT_EXEMPT = [r"^health/$"]
+SESSION_COOKIE_SECURE = DJANGO_HTTPS_ENABLED
+CSRF_COOKIE_SECURE = DJANGO_HTTPS_ENABLED
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_AGE = int(os.environ.get("GM_SESSION_AGE_SECONDS", "43200"))
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SECURE_HSTS_SECONDS = (
+    int(os.environ.get("SECURE_HSTS_SECONDS", "3600")) if DJANGO_HTTPS_ENABLED else 0
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
+SECURE_HSTS_PRELOAD = False
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "no-referrer"
+X_FRAME_OPTIONS = "DENY"
 
 # Password hashing
 AUTH_PASSWORD_VALIDATORS = [

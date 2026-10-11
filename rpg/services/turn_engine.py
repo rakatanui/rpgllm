@@ -519,17 +519,6 @@ def regenerate_execution(
 
     if scene.is_closed:
         raise RuntimeError("Cannot regenerate an execution in a closed scene")
-    lines.append(
-        "PLAYER AGENCY / WORLD STATE: control only your character's voluntary actions, speech, "
-        "thoughts, intentions, and reasonable perceptions/assessments. External-world claims, "
-        "NPC actions, exact consequences, and uncertain measurements are not objective facts "
-        "until the GM confirms them. Phrase professional values as estimates when appropriate."
-    )
-    lines.append(
-        "ROUTINE PACING: during stable repetitive work, state the meaningful action, monitoring "
-        "intention, or assessment without inventing minute-by-minute developments. Let the GM "
-        "compress routine time until conditions or decisions meaningfully change."
-    )
 
     if turn.is_private:
         raise RuntimeError("Only public executions can be regenerated here")
@@ -995,6 +984,18 @@ def _manual_delta_constraints(execution: TurnExecution, *, out_of_turn: bool) ->
         )
     if scene.memory_summary.strip():
         lines.append("Current scene memory:\n" + scene.memory_summary.strip())
+
+    lines.append(
+        "PLAYER AGENCY / WORLD STATE: control only your character's voluntary actions, speech, "
+        "thoughts, intentions, and reasonable perceptions/assessments. External-world claims, "
+        "NPC actions, exact consequences, and uncertain measurements are not objective facts "
+        "until the GM confirms them. Phrase professional values as estimates when appropriate."
+    )
+    lines.append(
+        "ROUTINE PACING: during stable repetitive work, state the meaningful action, monitoring "
+        "intention, or assessment without inventing minute-by-minute developments. Let the GM "
+        "compress routine time until conditions or decisions meaningfully change."
+    )
 
     if turn.is_private:
         lines.append(

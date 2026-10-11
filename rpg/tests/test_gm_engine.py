@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from django.core.exceptions import ValidationError
-from django.test import Client
+from rpg.tests.auth_helpers import gm_client as Client
 from django.urls import reverse
 
 from rpg.models import (

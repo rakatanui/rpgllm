@@ -580,6 +580,12 @@
   <nav>
     <a href="/">Home</a>
     <a href="/admin/">Admin</a>
+    {% if user.is_authenticated and user.is_staff %}
+    <form class="inline" method="post" action="{% url 'gm_logout' %}">
+      {% csrf_token %}
+      <button class="btn btn-small" type="submit">Log out</button>
+    </form>
+    {% endif %}
   </nav>
   {% endblock %}
   <div style="margin-left:auto" class="meta">{% block meta %}{% endblock %}</div>
