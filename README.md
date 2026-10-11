@@ -188,7 +188,10 @@ MRAZ supports more than one Game Master with campaign-level ownership.
 
 Failed login attempts are tracked by **django-axes** in PostgreSQL for both the
 GM login and Django Admin. Default: 5 failed attempts, then a one-hour lockout.
-Attempts are keyed by username plus client IP (not globally per IP, which\nwould lock out unrelated masters behind a shared reverse proxy). The limiter\nuses `REMOTE_ADDR`, not untrusted forwarding headers. Configure the upstream\nproxy consistently; a shared proxy IP still limits each username separately.
+Attempts are keyed by username plus client IP (not globally per IP, which
+would lock out unrelated masters behind a shared reverse proxy). The limiter
+uses `REMOTE_ADDR`, not untrusted forwarding headers. Configure the upstream
+proxy consistently; a shared proxy IP still limits each username separately.
 
 ### HTTPS and secure sessions
 
@@ -224,6 +227,62 @@ python -m pytest rpg/tests/test_gm_authentication.py rpg/tests/test_production_a
 Bearer-link HUMAN players continue without GM accounts. Never publish the GM
 workbench through `player-edge`. Brute-force protection does not replace proxy
 rate limiting, monitoring, or careful secret management.
+
+## Public player access hardening
+
+HUMAN players authenticate with a scene-specific UUID bearer link under `/play/`.
+The token is **equivalent to a password** for that scene: never publish it in
+tickets, screenshots, analytics, monitoring traces or public chat messages.
+The GM can revoke or regenerate it at any time. Player routes always resolve
+the scene and player from the token, then check related object IDs. A token
+from one scene cannot reveal another player's private messages or future scenes.
+
+**Token safety.** All `/play/` responses (including failures, redirects,
+images and QR codes) use `Cache-Control: private, no-store`,
+`Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
+Tokenized browser POSTs reject foreign `Origin` and cross-site
+`Sec-Fetch-Site`; the bearer URL itself remains sufficient without a CSRF
+cookie. Django application logs redact the UUIDs. The Docker Uvicorn startup
+disables access logging; the public Nginx player-edge also suppresses request
+logs for `/play/`. Other reverse proxies, CDN analytics and error-reporting
+services must **also** avoid recording full URLs with bearer credentials.
+
+**Abuse limits.** Writes and QR generation use database-backed fixed-window
+counters shared across Django workers; counters store SHA-256 token/action
+bucket digests, not raw tokens. Defaults per bearer token:
+
+- Human turn: 12 submissions/minute
+- OOC: 10 messages/minute (each message limited to 8,000 characters)
+- Appearance change: 20 requests/minute
+- Upload or removal: 3 requests/5 minutes
+- QR generation: 30 requests/minute
+
+Gameplay submissions cannot exceed 16,000 total characters between public and
+private text; history search and pagination reject pathological input.
+The read-only `/play/` status and fragment polling remains unlimited by
+these database quotas. For protection against invalid-token floods and GET
+traffic, configure rate limits at the public reverse proxy/CDN, with a
+**trusted** real-client-IP source; do not key a limit against the cloudflared
+container IP shared by every player.
+
+**Portrait uploads.** Accept JPEG, PNG and WebP up to 5 MB / 12 megapixels.
+The server decodes and re-encodes approved images to strip EXIF and embedded
+metadata; it does not save the original upload. Read-only closed scenes cannot
+upload or remove portraits. Media remains behind token-gated Django routes,
+not a public `/media/` mapping.
+
+Database rate counter rows expire logically after their window. Schedule
+maintenance **daily** as part of production operations:
+
+```sh
+docker compose exec web python manage.py cleanup_player_rate_buckets
+```
+
+After deploying this branch, apply migrations before serving player requests:
+
+```sh
+docker compose exec web python manage.py migrate --noinput
+```
 
 ## Development
 
