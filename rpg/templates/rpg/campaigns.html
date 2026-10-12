@@ -45,22 +45,25 @@
         <div class="campaign-tile-header">
           <div>
             <h3>{{ campaign.name }}</h3>
-            {% if user.is_superuser %}
-              <div class="meta">Owner: {% if campaign.owner %}{{ campaign.owner.username }}{% else %}Unassigned{% endif %}</div>
+            {% if user.is_superuser or campaign.owner_id != user.pk %}
+              <div class="meta">Owner: {% if campaign.owner %}{{ campaign.owner.username }}{% else %}Unassigned{% endif %}{% if not user.is_superuser and campaign.owner_id != user.pk %} · Shared with you{% endif %}</div>
             {% endif %}
           </div>
           <div class="campaign-workbench-action" style="display:flex;gap:7px;flex-wrap:wrap">
             <a class="btn btn-primary" href="{% url 'campaign_detail' campaign.pk %}">Open</a>
             <a class="btn campaign-actions" href="{% url 'campaign_edit' campaign.pk %}">Settings</a>
+            <a class="btn campaign-actions" href="{% url 'campaign_team' campaign.pk %}">Game Masters</a>
           </div>
         </div>
         {% if campaign.description %}
           <p class="campaign-description">{{ campaign.description|truncatechars:260 }}</p>
         {% endif %}
-        <div class="campaign-lifecycle-buttons">
-          <a class="btn" href="{% url 'campaign_lifecycle' campaign.pk 'archive' %}">Archive</a>
-          <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'delete' %}">Delete…</a>
-        </div>
+        {% if user.is_superuser or campaign.owner_id == user.pk %}
+          <div class="campaign-lifecycle-buttons">
+            <a class="btn" href="{% url 'campaign_lifecycle' campaign.pk 'archive' %}">Archive</a>
+            <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'delete' %}">Delete…</a>
+          </div>
+        {% endif %}
         {% with scenes=campaign.scenes.all %}
           <div class="meta">{{ scenes|length }} scene{{ scenes|length|pluralize }}</div>
           {% if scenes %}
@@ -99,8 +102,10 @@
         </div>
         <div class="campaign-row-actions">
           <a class="btn" href="{% url 'campaign_detail' campaign.pk %}">Read</a>
-          <a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'unarchive' %}">Restore</a>
-          <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'delete' %}">Delete…</a>
+          {% if user.is_superuser or campaign.owner_id == user.pk %}
+            <a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'unarchive' %}">Restore</a>
+            <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'delete' %}">Delete…</a>
+          {% endif %}
         </div>
       </div>
     {% endfor %}
