@@ -4,6 +4,7 @@ from django.core.exceptions import PermissionDenied
 
 from rpg.models import (
     Campaign,
+    CampaignPlan,
     CharacterAppearance,
     GameMasterConfig,
     GameMasterExecution,
@@ -20,6 +21,7 @@ from rpg.models import (
 
 OWNERSHIP_PATHS = {
     Campaign: "owner_id",
+    CampaignPlan: "campaign__owner_id",
     GameMasterConfig: "campaign__owner_id",
     Scene: "campaign__owner_id",
     Player: "campaign__owner_id",
