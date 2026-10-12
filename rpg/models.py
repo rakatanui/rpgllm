@@ -148,6 +148,14 @@ class Campaign(models.Model):
     # timezone and the real-world wall clock.
     world_date = models.DateField(null=True, blank=True)
     world_time = models.TimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Archived campaigns remain readable to their GM but cannot be played or edited.",
+    )
+    deleted_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Soft-deleted campaigns are hidden outside the owner's recycle bin.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
