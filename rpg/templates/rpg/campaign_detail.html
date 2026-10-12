@@ -63,6 +63,13 @@
               <div>
                 <strong><a href="{% url 'scene' scene.pk %}">{{ scene.name }}</a></strong>
                 <span class="meta">{{ scene.get_mode_display }} · {% if scene.is_closed %}Closed{% else %}Open{% endif %}</span>
+                {% with predecessors=scene.previous_scenes.all %}
+                  {% if predecessors %}
+                    <span class="campaign-workbench-small">Inherits:
+                      {% for previous in predecessors %}{{ previous.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                    </span>
+                  {% endif %}
+                {% endwith %}
                 <span class="campaign-workbench-small">Participants:
                   {% for participant in scene.scene_participants.all %}{{ participant.player.display_name }}{% if not forloop.last %}, {% endif %}{% empty %}none{% endfor %}
                 </span>
@@ -70,7 +77,10 @@
               {% if not scene.is_closed %}
                 <a class="btn" href="{% url 'campaign_scene_edit' campaign.pk scene.pk %}">Edit</a>
               {% else %}
-                <span class="meta">Read-only</span>
+                <div style="display:grid;gap:7px">
+                  <a class="btn" href="{% url 'campaign_scene_create' campaign.pk %}?from_scene={{ scene.pk }}">Continue…</a>
+                  <span class="meta">Read-only</span>
+                </div>
               {% endif %}
             </li>
           {% endfor %}
