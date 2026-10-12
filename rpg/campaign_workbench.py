@@ -8,14 +8,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 
 from rpg.models import Campaign, Player, Scene, SceneParticipant
+from rpg.campaign_access import visible_campaigns
 from rpg.services.context_builder import get_scene_lineage
 
 
 def _campaign_for_master(request, campaign_id):
-    campaigns = Campaign.objects.all()
-    if not request.user.is_superuser:
-        campaigns = campaigns.filter(owner=request.user)
-    return get_object_or_404(campaigns, pk=campaign_id)
+    return get_object_or_404(visible_campaigns(request.user), pk=campaign_id)
 
 
 class PlayerWorkbenchForm(forms.ModelForm):
