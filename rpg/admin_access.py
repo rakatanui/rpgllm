@@ -37,13 +37,14 @@ OWNERSHIP_PATHS = {
 
 
 def scoped_queryset(user, queryset):
-    """Restrict admin lists, object lookups and FK/M2M selectors to owned data."""
-    if user.is_superuser:
-        return queryset
+    """Hide recycled data and isolate active/archived objects by GM owner."""
     owner_path = OWNERSHIP_PATHS.get(queryset.model)
     if owner_path is None:
-        # Globally configured provider aliases are managed by superusers.
-        return queryset.none()
+        return queryset if user.is_superuser else queryset.none()
+    prefix = "" if owner_path == "owner_id" else owner_path.rsplit("__", 1)[0] + "__"
+    queryset = queryset.filter(**{prefix + "deleted_at__isnull": True})
+    if user.is_superuser:
+        return queryset
     return queryset.filter(**{owner_path: user.pk})
 
 
