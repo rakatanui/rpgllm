@@ -1,0 +1,52 @@
+{% extends "rpg/base.html" %}
+{% block title %}{% if campaign %}Edit {{ campaign.name }}{% else %}New campaign{% endif %} · MRAZ Master{% endblock %}
+{% block content %}
+<style>
+  .campaign-editor { max-width:920px; margin:0 auto; }
+  .campaign-editor-header { margin-bottom:18px; }
+  .campaign-editor-header h2 { margin:8px 0; font-size:23px; }
+  .campaign-editor-header p { margin:0; color:var(--muted); line-height:1.5; }
+  .campaign-editor-form { padding:24px; display:grid; gap:22px; }
+  .campaign-field { display:grid; gap:7px; min-width:0; }
+  .campaign-field label { font-size:14px; font-weight:600; }
+  .campaign-field textarea { line-height:1.5; font-size:13px; min-height:100px; }
+  .campaign-field input[type=text] { font-size:15px; }
+  .campaign-field-help { color:var(--muted); margin:0; font-size:12px; line-height:1.5; }
+  .campaign-field-error { color:var(--err); margin:0; }
+  .campaign-form-error { padding:12px; border:1px solid var(--err); border-radius:6px; color:var(--err); }
+  .campaign-editor-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding-top:12px; border-top:1px solid var(--border); }
+  .campaign-editor-footer { margin-top:14px; color:var(--muted); line-height:1.6; }
+  @media(max-width:640px) { .campaign-editor-form { padding:16px; } }
+</style>
+<div class="campaign-editor">
+  <header class="campaign-editor-header" style="display:block;background:transparent;border:0;padding:0">
+    <a href="{% url 'campaigns' %}">← All campaigns</a>
+    <h2>{% if campaign %}Edit campaign{% else %}New campaign{% endif %}</h2>
+    <p>{% if campaign %}Update the details and shared context for <strong>{{ campaign.name }}</strong>.{% else %}Set up the campaign. Characters and scenes can be added separately.{% endif %}</p>
+  </header>
+  <form method="post" class="panel campaign-editor-form" novalidate>
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="campaign-form-error" role="alert">{{ form.non_field_errors }}</div>
+    {% endif %}
+    {% for field in form %}
+      <div class="campaign-field">
+        <label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
+        {{ field }}
+        {% if field.help_text %}<p class="campaign-field-help">{{ field.help_text }}</p>{% endif %}
+        {% for error in field.errors %}
+          <p class="campaign-field-error" role="alert">{{ error }}</p>
+        {% endfor %}
+      </div>
+    {% endfor %}
+    <div class="campaign-editor-actions">
+      <button class="btn btn-primary" type="submit">{% if campaign %}Save changes{% else %}Create campaign{% endif %}</button>
+      <a class="btn" href="{% url 'campaigns' %}">Cancel</a>
+    </div>
+  </form>
+  <p class="campaign-editor-footer">
+    Ownership is managed by the administrator. Scenes, characters, lore and model settings
+    are still configured through Django Admin until the next campaign-management steps.
+  </p>
+</div>
+{% endblock %}
