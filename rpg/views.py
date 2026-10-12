@@ -297,6 +297,9 @@ def search_history(request, scene_id):
 def campaigns(request):
     campaigns = Campaign.objects.prefetch_related("scenes").all()
     scenes = Scene.objects.all()
+    if not request.user.is_superuser:
+        campaigns = campaigns.filter(owner=request.user)
+        scenes = scenes.filter(campaign__owner=request.user)
     return render(request, "rpg/campaigns.html", {"campaigns": campaigns, "scenes": scenes})
 
 

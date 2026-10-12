@@ -1,6 +1,7 @@
 """Regression tests for the Internet-facing HUMAN player hostname boundary."""
 import pytest
 from django.test import Client, override_settings
+from rpg.tests.auth_helpers import gm_client
 from django.urls import reverse
 
 from rpg.models import PlayerTransport, TurnMode
@@ -58,7 +59,7 @@ def test_local_gm_hostname_remains_available_when_public_host_is_enabled():
         participants=[player],
     )
 
-    response = Client(HTTP_HOST="mraz.local").get(
+    response = gm_client(HTTP_HOST="mraz.local").get(
         reverse("scene", kwargs={"scene_id": scene.pk})
     )
 
@@ -82,7 +83,7 @@ def test_gm_scene_copies_public_https_player_link_when_configured():
     )
     token = scene.scene_participants.get(player=human).human_access_token
 
-    response = Client(HTTP_HOST="mraz.local").get(
+    response = gm_client(HTTP_HOST="mraz.local").get(
         reverse("scene", kwargs={"scene_id": scene.pk})
     )
     html = response.content.decode()

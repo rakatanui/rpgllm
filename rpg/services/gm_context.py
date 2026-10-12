@@ -176,7 +176,17 @@ def classify_latest_player_information_action(scene: Scene) -> tuple[Message | N
         return None, None
 
     text = (message.content or "").strip().lower()
-    has_lookup_verb = any(stem in text for stem in _KNOWLEDGE_LOOKUP_VERB_STEMS)
+    # "чит" as an arbitrary substring matches "рассчитывает", incorrectly
+    # turning routine navigation work into a guarded document lookup.
+    # Reading stems must begin at a word boundary (or with a valid prefix).
+    has_lookup_verb = (
+        any(
+            stem in text
+            for stem in _KNOWLEDGE_LOOKUP_VERB_STEMS
+            if stem != "чит"
+        )
+        or bool(re.search(r"\b(?:чит|прочит|перечит|зачит)\w*", text))
+    )
     has_source = any(stem in text for stem in _KNOWLEDGE_SOURCE_STEMS)
     has_recall = any(stem in text for stem in _RECALL_STEMS)
     has_operational = any(stem in text for stem in _OPERATIONAL_SOURCE_STEMS)

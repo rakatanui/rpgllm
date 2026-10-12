@@ -1,0 +1,56 @@
+name: Security and RPG regression tests
+
+on:
+  push:
+    branches: ["security/gm-authentication"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mraz
+          POSTGRES_USER: mraz
+          POSTGRES_PASSWORD: ci_only_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mraz -d mraz"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: mraz
+      POSTGRES_USER: mraz
+      POSTGRES_PASSWORD: ci_only_password
+      SECRET_KEY: ci-only-test-secret-not-for-deployment-gm-auth-security-123
+      ALLOWED_HOSTS: testserver,mraz.local,127.0.0.100
+      CSRF_TRUSTED_ORIGINS: http://mraz.local
+      LLM_BACKEND: mock
+      DJANGO_HTTPS_ENABLED: "False"
+      TRUST_PROXY_SSL_HEADER: "False"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install ".[dev]"
+      - run: python manage.py check
+      - run: python manage.py makemigrations --check --dry-run
+      - name: Authentication and campaign isolation tests
+        run: python -m pytest -q rpg/tests/test_gm_authentication.py rpg/tests/test_production_auth_security.py rpg/tests/test_public_player_host.py
+      - name: Full regression suite
+        run: python -m pytest -q

@@ -1,5 +1,6 @@
 """Idempotent seed command creating the demo campaign and players."""
-from django.core.management.base import BaseCommand
+from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from rpg.models import Campaign, ModelConfig, Player, Scene, SceneParticipant, TurnMode
@@ -15,8 +16,19 @@ PLAYERS = [
 class Command(BaseCommand):
     help = "Seed demo Campaign (МРАЗь), Scene and players (Lucien/Mila/Mathis). Idempotent."
 
+    def add_arguments(self, parser):
+        parser.add_argument("--owner", help="Username of the active Game Master")
+
     @transaction.atomic
     def handle(self, *args, **options):
+        owner = None
+        if options["owner"]:
+            owner = get_user_model().objects.filter(
+                username=options["owner"], is_active=True, is_staff=True
+            ).first()
+            if owner is None:
+                raise CommandError("--owner must identify an active staff user.")
+
         campaign, created = Campaign.objects.get_or_create(
             name="МРАЗь",
             defaults={
@@ -28,6 +40,15 @@ class Command(BaseCommand):
                 ),
             },
         )
+        if owner is not None and campaign.owner_id is None:
+            campaign.owner = owner
+            campaign.save(update_fields=["owner", "updated_at"])
+        elif owner is not None and campaign.owner_id != owner.pk:
+            raise CommandError("Demo campaign has another owner; change it via Django Admin.")
+        if campaign.owner_id is None:
+            self.stdout.write(
+                self.style.WARNING("Demo campaign is unassigned: use --owner USER or Django Admin.")
+            )
         self.stdout.write(f"Campaign: {campaign.name} ({'created' if created else 'exists'})")
 
         # Mock model config

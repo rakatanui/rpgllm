@@ -1,0 +1,21 @@
+{% extends "rpg/base.html" %}
+{% block title %}Game Master login · MRAZ Master{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<section style="max-width:420px; margin:48px auto; border:1px solid var(--border); padding:24px; border-radius:8px;">
+  <h2>Game Master login</h2>
+  <p class="meta">Sign in with an authorized staff account to manage campaigns.</p>
+  {% if form.non_field_errors %}
+    <div class="execution-error" role="alert">{{ form.non_field_errors }}</div>
+  {% endif %}
+  <form method="post" action="{% url 'gm_login' %}">
+    {% csrf_token %}
+    <label for="{{ form.username.id_for_label }}">Username</label>
+    {{ form.username }}
+    <label for="{{ form.password.id_for_label }}">Password</label>
+    {{ form.password }}
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    <button type="submit" class="btn btn-primary" style="margin-top:14px;">Sign in</button>
+  </form>
+</section>
+{% endblock %}
