@@ -44,6 +44,8 @@
   {% for message in messages %}
     <div class="campaign-workbench-flash" role="status">{{ message }}</div>
   {% endfor %}
+  {% include "rpg/_campaign_clock_widget.html" %}
+  {% include "rpg/_campaign_clock_alerts.html" %}
   <div class="campaign-workbench-grid">
     <section class="panel campaign-workbench-section">
       <header><h3>Characters</h3><span class="meta">{{ players|length }} total</span></header>

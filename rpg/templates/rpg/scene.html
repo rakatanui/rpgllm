@@ -71,6 +71,9 @@
   {% endif %}
 </div>
 
+{% include "rpg/_campaign_clock_widget.html" %}
+{% include "rpg/_campaign_clock_alerts.html" %}
+
 <div id="round-setup" class="round-setup" {% if scene.mode != "ROUND" or scene.is_closed %}hidden{% endif %}>
   <form method="post" action="{% url 'set_mode' scene.pk %}" onsubmit="return validateRoundOrder(this)">
     {% csrf_token %}

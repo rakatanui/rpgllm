@@ -70,5 +70,7 @@ jobs:
         run: python -m pytest -q rpg/tests/test_campaign_lifecycle.py
       - name: Multi-Game Master collaboration and permission tests
         run: python -m pytest -q rpg/tests/test_campaign_collaboration.py
+      - name: GM inline campaign clock and reminders
+        run: python -m pytest -q rpg/tests/test_campaign_clock.py
       - name: Full regression suite
         run: python -m pytest -q -m "not browser"

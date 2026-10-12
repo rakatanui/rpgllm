@@ -20,6 +20,7 @@ import qrcode
 
 from rpg.forms import CampaignForm, CharacterImageUploadForm
 from rpg.campaign_access import visible_campaigns
+from rpg.campaign_clock import clock_widget_context, next_hour_plans
 from rpg.player_security import throttle_player_request
 from rpg.models import (
     AuthorType,
@@ -441,12 +442,16 @@ def scene_view(request, scene_id):
             }
             for message in private_messages
         ]
+    upcoming_story_plans = next_hour_plans(scene.campaign)
     return render(
         request,
         "rpg/scene.html",
         {
             "scene": scene,
             "campaign": scene.campaign,
+            **clock_widget_context(scene.campaign, scene=scene),
+            "clock_alerts": upcoming_story_plans[:6],
+            "extra_alerts": max(0, len(upcoming_story_plans) - 6),
             "players": players,
             "public_messages": public_messages,
             "public_blocks": public_blocks,
