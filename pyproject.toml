@@ -20,6 +20,7 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-django>=4.9",
+    "playwright>=1.55,<2",
 ]
 
 [build-system]
