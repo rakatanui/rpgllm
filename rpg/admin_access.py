@@ -47,6 +47,26 @@ def scoped_queryset(user, queryset):
     return queryset.filter(**{owner_path: user.pk})
 
 
+def _campaign_state_is_editable(obj):
+    """Admin must not bypass the workbench's archive/recycle safety."""
+    if obj is None:
+        return True
+    owner_path = OWNERSHIP_PATHS.get(type(obj))
+    if owner_path is None:
+        return False
+    if owner_path == "owner_id":
+        prefix = ""
+    else:
+        prefix = owner_path.rsplit("__", 1)[0] + "__"
+    return type(obj)._default_manager.filter(
+        pk=obj.pk,
+        **{
+            prefix + "archived_at__isnull": True,
+            prefix + "deleted_at__isnull": True,
+        },
+    ).exists()
+
+
 def is_owned_by(user, obj):
     if user.is_superuser:
         return True
@@ -92,10 +112,30 @@ class OwnedCampaignAdminMixin(OwnedRelatedFieldsMixin, admin.ModelAdmin):
         return self.has_module_permission(request)
 
     def has_change_permission(self, request, obj=None):
-        return self.has_view_permission(request, obj)
+        return (
+            self.has_view_permission(request, obj)
+            and _campaign_state_is_editable(obj)
+        )
 
     def has_delete_permission(self, request, obj=None):
-        return self.has_view_permission(request, obj)
+        # Removing a campaign must go through confirmation, recycle bin, then
+        # a superuser-only purge, never Django Admin's cascade delete.
+        if self.model is Campaign:
+            return False
+        return (
+            self.has_view_permission(request, obj)
+            and _campaign_state_is_editable(obj)
+        )
+
+    def delete_model(self, request, obj):
+        if not self.has_delete_permission(request, obj):
+            raise PermissionDenied
+        super().delete_model(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        if not all(self.has_delete_permission(request, obj) for obj in queryset):
+            raise PermissionDenied
+        super().delete_queryset(request, queryset)
 
     def get_list_filter(self, request):
         filters = super().get_list_filter(request)
@@ -148,7 +188,7 @@ class OwnedCampaignInlineMixin(OwnedRelatedFieldsMixin):
         return self._allowed(request, obj)
 
     def has_change_permission(self, request, obj=None):
-        return self._allowed(request, obj)
+        return self._allowed(request, obj) and _campaign_state_is_editable(obj)
 
     def has_delete_permission(self, request, obj=None):
-        return self._allowed(request, obj)
+        return self._allowed(request, obj) and _campaign_state_is_editable(obj)
