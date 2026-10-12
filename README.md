@@ -198,6 +198,26 @@ converge. The GM can see the combined history. Editing links is possible only
 before play, and never after a successor already depends on the scene. Foreign,
 open, self-referencing or cyclic predecessor selections are rejected.
 
+**Campaign archival, recovery and deletion:** The campaign list separates active
+campaigns, a read-only archive and a recycle bin. The owner can archive an
+idle campaign and later restore it without changing scenes, historical
+messages, player tokens, portraits, NPC plans or the story clock. Archived
+campaigns remain readable to the GM; all GM write endpoints and public player
+bearer links are disabled until restoration. Deleting a campaign normally means
+**moving it into the recycle bin**, not destroying data. Owners can recover
+these records: a previously archived campaign returns to the archive rather
+than resuming gameplay. These operations refuse to proceed while turns or
+LLM executions are pending, running or waiting for player/external input.
+Destructive actions require typing the exact campaign name and use POST/CSRF.
+
+Only a **superuser** can deliberately erase a campaign forever, and only after
+the campaign has first been moved to the recycle bin. This destroys related
+database objects and schedules cleanup of image files after successful commit,
+skipping files still referenced by other campaigns. Permanent erasure cannot
+be reversed; make a tested off-server backup first. There is no automatic
+recycle-bin expiry or timed purge. Archived and recycled campaigns can still
+occupy storage until explicitly erased.
+
 The **Campaign timeline** is a GM-only Outlook-style story calendar, available
 from the campaign workspace and the GM scene toolbar. It has month, week and
 day views. Its manually controlled **campaign date and time** are independent
