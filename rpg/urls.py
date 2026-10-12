@@ -1,13 +1,17 @@
 """URLs for the rpg app."""
 from django.urls import path
 from django.contrib.admin.views.decorators import staff_member_required
-from . import views, campaign_workbench
+from . import views, campaign_workbench, campaign_timeline
 
 urlpatterns = [
     path("", views.campaigns, name="campaigns"),
     path("campaign/new/", views.create_campaign, name="campaign_create"),
     path("campaign/<int:campaign_id>/edit/", views.edit_campaign, name="campaign_edit"),
     path("campaign/<int:campaign_id>/", campaign_workbench.campaign_detail, name="campaign_detail"),
+    path("campaign/<int:campaign_id>/calendar/", campaign_timeline.campaign_timeline, name="campaign_timeline"),
+    path("campaign/<int:campaign_id>/calendar/clock/", campaign_timeline.campaign_clock_update, name="campaign_clock_update"),
+    path("campaign/<int:campaign_id>/calendar/new/", campaign_timeline.campaign_plan_create, name="campaign_plan_create"),
+    path("campaign/<int:campaign_id>/calendar/<int:plan_id>/edit/", campaign_timeline.campaign_plan_edit, name="campaign_plan_edit"),
     path("campaign/<int:campaign_id>/characters/new/", campaign_workbench.player_create, name="campaign_player_create"),
     path("campaign/<int:campaign_id>/characters/<int:player_id>/edit/", campaign_workbench.player_edit, name="campaign_player_edit"),
     path("campaign/<int:campaign_id>/scenes/new/", campaign_workbench.scene_create, name="campaign_scene_create"),
