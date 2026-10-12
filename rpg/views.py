@@ -19,6 +19,7 @@ from django.views.decorators.http import require_http_methods
 import qrcode
 
 from rpg.forms import CampaignForm, CharacterImageUploadForm
+from rpg.campaign_access import visible_campaigns
 from rpg.player_security import throttle_player_request
 from rpg.models import (
     AuthorType,
@@ -297,16 +298,18 @@ def search_history(request, scene_id):
 
 
 def _visible_campaigns(user):
-    """Never let a regular GM discover or edit another master's campaign."""
-    queryset = Campaign.objects.all()
-    return queryset if user.is_superuser else queryset.filter(owner=user)
+    """All campaigns this master owns or co-masters."""
+    return visible_campaigns(user)
 
 
 def campaigns(request):
     visible = _visible_campaigns(request.user).select_related("owner")
     active = visible.filter(archived_at__isnull=True, deleted_at__isnull=True).prefetch_related("scenes")
     archived = visible.filter(archived_at__isnull=False, deleted_at__isnull=True).prefetch_related("scenes")
-    deleted = visible.filter(deleted_at__isnull=False).order_by("-deleted_at")
+    deleted = Campaign.objects.filter(deleted_at__isnull=False)
+    if not request.user.is_superuser:
+        deleted = deleted.filter(owner=request.user)
+    deleted = deleted.select_related("owner").order_by("-deleted_at")
     return render(request, "rpg/campaigns.html", {
         "campaigns": active,
         "archived_campaigns": archived,
