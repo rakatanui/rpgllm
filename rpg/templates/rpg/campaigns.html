@@ -19,11 +19,19 @@
   .campaign-empty h3 { color:var(--text); font-size:18px; text-transform:none; }
   .campaign-empty p { color:var(--muted); }
   .campaign-flash { border:1px solid var(--ok); background:var(--panel); border-radius:8px; padding:12px 16px; margin-bottom:18px; }
+  .campaign-lifecycle-buttons { display:flex; gap:7px; margin-top:13px; flex-wrap:wrap; }
+  .campaign-muted { opacity:.86; }
+  .campaign-section-title { margin:30px 0 12px; font-size:19px; }
+  .campaign-section-info { color:var(--muted); margin:5px 0 15px; }
+  .campaign-danger-action { border-color:var(--err); color:var(--err); }
+  .campaign-list-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; border-top:1px solid var(--border); padding:12px 0; }
+  .campaign-row-actions { display:flex; gap:7px; flex-wrap:wrap; }
+
 </style>
 <div class="campaigns-heading">
   <div>
     <h2>Campaigns</h2>
-    <p>Manage your worlds, campaign rules and shared memories.</p>
+    <p>Active worlds, read-only archives and recoverable deleted campaigns.</p>
   </div>
   <a class="btn btn-primary" href="{% url 'campaign_create' %}">+ New campaign</a>
 </div>
@@ -49,6 +57,10 @@
         {% if campaign.description %}
           <p class="campaign-description">{{ campaign.description|truncatechars:260 }}</p>
         {% endif %}
+        <div class="campaign-lifecycle-buttons">
+          <a class="btn" href="{% url 'campaign_lifecycle' campaign.pk 'archive' %}">Archive</a>
+          <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'delete' %}">Delete…</a>
+        </div>
         {% with scenes=campaign.scenes.all %}
           <div class="meta">{{ scenes|length }} scene{{ scenes|length|pluralize }}</div>
           {% if scenes %}
@@ -69,9 +81,50 @@
   </div>
 {% else %}
   <section class="panel campaign-empty">
-    <h3>No campaigns yet</h3>
-    <p>Create your first campaign, then add characters and scenes from the campaign workspace.</p>
+    <h3>No active campaigns</h3>
+    <p>Create a campaign or restore one from the archive or recycle bin below.</p>
     <a href="{% url 'campaign_create' %}" class="btn btn-primary">Create a campaign</a>
+  </section>
+{% endif %}
+
+{% if archived_campaigns %}
+  <h2 class="campaign-section-title">Archive</h2>
+  <p class="campaign-section-info">Archived campaigns keep their data but cannot be played or changed. You can read their history and restore them.</p>
+  <section class="panel campaign-tile campaign-muted">
+    {% for campaign in archived_campaigns %}
+      <div class="campaign-list-row">
+        <div>
+          <strong>{{ campaign.name }}</strong>
+          <span class="meta">Archived: {{ campaign.archived_at|date:"d M Y H:i" }}</span>
+        </div>
+        <div class="campaign-row-actions">
+          <a class="btn" href="{% url 'campaign_detail' campaign.pk %}">Read</a>
+          <a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'unarchive' %}">Restore</a>
+          <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'delete' %}">Delete…</a>
+        </div>
+      </div>
+    {% endfor %}
+  </section>
+{% endif %}
+
+{% if deleted_campaigns %}
+  <h2 class="campaign-section-title">Recycle bin</h2>
+  <p class="campaign-section-info">Deleted campaigns are inaccessible to players but their data remains recoverable. Permanent erasure is superuser-only.</p>
+  <section class="panel campaign-tile campaign-muted">
+    {% for campaign in deleted_campaigns %}
+      <div class="campaign-list-row">
+        <div>
+          <strong>{{ campaign.name }}</strong>
+          <span class="meta">Removed: {{ campaign.deleted_at|date:"d M Y H:i" }}</span>
+        </div>
+        <div class="campaign-row-actions">
+          <a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'recover' %}">Recover</a>
+          {% if user.is_superuser %}
+            <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'purge' %}">Erase forever…</a>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
   </section>
 {% endif %}
 {% endblock %}
