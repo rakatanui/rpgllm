@@ -11,17 +11,24 @@
   .campaign-edit-field textarea { min-height:100px; line-height:1.5; }
   .campaign-edit-field .help { color:var(--muted); font-size:12px; }
   .campaign-edit-field .error { color:var(--err); }
-  .campaign-edit-field #id_participants { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; padding:10px; border:1px solid var(--border); border-radius:7px; }
-  .campaign-edit-field #id_participants label { display:flex; align-items:center; gap:7px; font-weight:400; }
+  .campaign-edit-field #id_participants, .campaign-edit-field #id_previous_scenes { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; padding:10px; border:1px solid var(--border); border-radius:7px; }
+  .campaign-edit-field #id_previous_scenes { max-height:280px; overflow-y:auto; }
+  .campaign-edit-note { border-left:3px solid var(--accent); background:var(--panel); border-radius:4px; padding:12px 14px; color:var(--muted); line-height:1.6; }
+  .campaign-edit-field #id_participants label, .campaign-edit-field #id_previous_scenes label { display:flex; align-items:center; gap:7px; font-weight:400; }
   .campaign-edit-actions { display:flex; gap:12px; align-items:center; flex-wrap:wrap; border-top:1px solid var(--border); padding-top:14px; }
   @media(max-width:640px) { .campaign-edit-shell form { padding:15px; } }
 </style>
 <div class="campaign-edit-shell">
   <a href="{% url 'campaign_detail' campaign.pk %}">← {{ campaign.name }}</a>
   <h2>{% if scene %}Edit scene{% else %}New scene{% endif %}</h2>
-  <p class="editor-subtitle">Choose scene participants and configure the turn mode. ROUND order is confirmed separately in the live scene.</p>
-  {% if scene and scene.turns.exists or scene and scene.messages.exists %}
-    <p class="editor-subtitle">The cast is locked once a scene has gameplay history. Create a follow-up scene to change it.</p>
+  <p class="editor-subtitle">Choose the cast, the turn mode and any closed scenes whose history this scene should inherit. ROUND order is confirmed separately in the live scene.</p>
+  <div class="campaign-edit-note">
+    <strong>How inheritance works:</strong> You can connect multiple completed scenes, including parallel story branches. The new scene inherits relevant earlier history and compact summaries by reference, without duplicating messages or mixing private memories. Each character sees only the predecessor scenes they actually participated in, and only their permitted messages. The GM can see the wider history. A new scene gets its own separate memory and new player access links.
+  </div>
+  {% if scene and scene.turns.exists or scene and scene.messages.exists or scene and scene.gm_executions.exists %}
+    <p class="editor-subtitle">The cast and inherited history are locked after play begins. Create a follow-up scene to change them.</p>
+  {% elif scene and scene.next_scenes.exists %}
+    <p class="editor-subtitle">This scene already has successors, so its inherited history is locked to preserve their continuity.</p>
   {% endif %}
   <form class="panel" method="post" novalidate>
     {% csrf_token %}
