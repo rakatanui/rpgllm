@@ -172,6 +172,14 @@ Each player execution keeps its own state, allowing retries without replaying su
 
 MRAZ supports more than one Game Master with campaign-level ownership.
 
+The workbench's **Campaigns** home page now provides **New campaign** and
+**Settings** for basic campaign metadata: name, description, global system
+rules, and shared memory. New campaigns are always owned by the signed-in GM;
+the form never accepts a user-supplied owner. Regular GMs can edit only their
+own campaigns. Superusers can edit unassigned or other-owned campaigns without
+silently changing their ownership. Owner transfers and advanced character,
+scene, and lore editing remain in Django Admin.
+
 - Create accounts in Django Admin (or `createsuperuser` for the initial administrator).
 - Grant `is_staff` to a Game Master. A regular staff account can sign into the
   workbench and edit **only campaigns that it owns**, including their scenes,
