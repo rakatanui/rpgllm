@@ -1,0 +1,43 @@
+{% extends "rpg/base.html" %}
+{% block title %}{{ details.heading }} · {{ campaign.name }} · MRAZ Master{% endblock %}
+{% block content %}
+<style>
+  .lifecycle-shell { max-width:790px; margin:28px auto; }
+  .lifecycle-shell h2 { margin:10px 0; font-size:24px; }
+  .lifecycle-explanation { line-height:1.7; color:var(--muted); }
+  .lifecycle-form { display:grid; gap:17px; padding:24px; margin-top:18px; }
+  .lifecycle-form label { display:grid; gap:8px; font-weight:600; }
+  .lifecycle-form input { width:100%; padding:12px; font-size:16px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:7px; }
+  .lifecycle-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .lifecycle-danger { border:1px solid var(--err); padding:14px; border-radius:8px; }
+  .lifecycle-error { color:var(--err); }
+</style>
+<div class="lifecycle-shell">
+  <a href="{% url 'campaigns' %}">← Campaigns</a>
+  <h2>{{ details.heading }}</h2>
+  <h3>{{ campaign.name }}</h3>
+  <p class="lifecycle-explanation">{{ details.explanation }}</p>
+  {% if action == 'purge' %}
+    <div class="lifecycle-danger">
+      <strong>Permanent deletion cannot be reversed.</strong> Every linked campaign record will be erased.
+      Ensure you have a separate backup before continuing. Other campaigns and shared model providers remain intact.
+    </div>
+  {% elif action == 'delete' %}
+    <div class="lifecycle-danger">This removes player access until the campaign is recovered from the recycle bin.</div>
+  {% endif %}
+  <form method="post" class="panel lifecycle-form">
+    {% csrf_token %}
+    {% if error %}<p class="lifecycle-error" role="alert">{{ error }}</p>{% endif %}
+    {% if needs_name %}
+      <label for="confirm_name">
+        Type the exact campaign name to confirm: <strong>{{ campaign.name }}</strong>
+        <input type="text" id="confirm_name" name="confirm_name" autocomplete="off" spellcheck="false" required>
+      </label>
+    {% endif %}
+    <div class="lifecycle-actions">
+      <button class="btn {% if action == 'purge' or action == 'delete' %}btn-danger{% else %}btn-primary{% endif %}" type="submit">{{ details.verb }}</button>
+      <a class="btn" href="{% url 'campaigns' %}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
