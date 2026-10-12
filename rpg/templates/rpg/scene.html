@@ -41,7 +41,8 @@
       <a class="chip" href="{% url 'scene' previous.pk %}">{{ previous.name }}</a>
     {% endfor %}
   {% endif %}
-  <a class="btn" href="/">Home</a>
+  <a class="btn" href="{% url 'campaign_detail' campaign.pk %}">Campaign</a>
+        <a class="btn" href="/">Home</a>
   <a class="btn" href="/admin/rpg/scene/{{ scene.pk }}/change/">Edit</a>
 
   {% if not scene.is_closed %}
