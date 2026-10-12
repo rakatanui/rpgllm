@@ -121,7 +121,7 @@ def test_browser_create_character_scene_clock_archive_and_restore(
         page.get_by_role("link", name="Restore campaign").click()
         page.get_by_role("button", name="Restore", exact=True).click()
         page.wait_for_url(live_server.url + reverse("campaigns"))
-        assert page.get_by_text("Browser campaign").is_visible()
+        assert page.get_by_role("heading", name="Browser campaign", exact=True).is_visible()
         assert db_call(lambda: Campaign.objects.get(name="Browser campaign").archived_at) is None
     finally:
         context.close()
