@@ -60,5 +60,7 @@ jobs:
         run: python -m pytest -q rpg/tests/test_campaign_workbench.py
       - name: Scene inheritance and privacy tests
         run: python -m pytest -q rpg/tests/test_campaign_inheritance.py rpg/tests/test_scene_sessions.py
+      - name: Private campaign timeline tests
+        run: python -m pytest -q rpg/tests/test_campaign_timeline.py
       - name: Full regression suite
         run: python -m pytest -q
