@@ -358,3 +358,76 @@ def test_admin_cannot_edit_archived_campaign_or_create_related_objects_for_it():
         scene_admin.delete_model(request, scene)
     campaign.refresh_from_db()
     assert campaign.scenes.count() == 1
+
+
+@pytest.mark.django_db
+def test_archived_campaigns_reject_direct_turn_and_model_gm_service_calls():
+    from django.core.exceptions import ValidationError
+    from rpg.services import gm_engine, turn_engine
+
+    owner = staff("frozen-engine")
+    campaign, player, scene = make_playable(owner)
+    client = login(owner)
+    assert client.post(target(campaign, "archive"), {
+        "confirm_name": campaign.name,
+    }).status_code == 302
+    scene.refresh_from_db()
+    with pytest.raises(ValidationError, match="archived or in the recycle bin"):
+        turn_engine.start_turn(
+            scene=scene, gm_message_text="Should not be played",
+            selected_players=[player],
+        )
+    with pytest.raises(ValidationError, match="archived or in the recycle bin"):
+        gm_engine.start_gm_execution(scene=scene)
+    assert not scene.turns.exists()
+    assert not scene.gm_executions.exists()
+
+
+@pytest.mark.django_db
+def test_recycled_campaigns_hidden_in_admin_querysets():
+    from django.contrib import admin
+    from django.test import RequestFactory
+    from rpg.models import Scene as SceneModel
+
+    owner = staff("admin-recycled")
+    campaign, player, scene = make_playable(owner)
+    assert login(owner).post(
+        target(campaign, "delete"), {"confirm_name": campaign.name},
+    ).status_code == 302
+    request = RequestFactory().get("/admin/rpg/campaign/")
+    request.user = owner
+    assert not admin.site._registry[Campaign].get_queryset(request).filter(
+        pk=campaign.pk,
+    ).exists()
+    assert not admin.site._registry[SceneModel].get_queryset(request).filter(
+        pk=scene.pk,
+    ).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_purge_keeps_image_file_when_another_campaign_still_references_it(tmp_path, settings):
+    from django.core.files.storage import default_storage
+
+    settings.MEDIA_ROOT = str(tmp_path)
+    root = staff("shared-file-root", superuser=True)
+    first = make_campaign("Shared portrait one", owner=root)
+    second = make_campaign("Shared portrait two", owner=root)
+    p1 = make_player(first, "Original portrait")
+    p2 = make_player(second, "Other character")
+
+    p1.character_image.save("shared.png", ContentFile(b"shared-image"), save=True)
+    filename = p1.character_image.name
+    p2.character_image.name = filename
+    p2.save(update_fields=["character_image"])
+
+    client = login(root)
+    assert client.post(target(first, "delete"), {
+        "confirm_name": first.name,
+    }).status_code == 302
+    assert client.post(target(first, "purge"), {
+        "confirm_name": first.name,
+    }).status_code == 302
+    assert not Campaign.objects.filter(pk=first.pk).exists()
+    assert Campaign.objects.filter(pk=second.pk).exists()
+    assert default_storage.exists(filename)
+    assert second.players.get(pk=p2.pk).character_image.name == filename
