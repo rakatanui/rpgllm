@@ -852,3 +852,14 @@ class Message(models.Model):
             )
         if self.author_type == AuthorType.PLAYER and self.author_player is None:
             raise ValidationError({"author_player": "PLAYER author requires author_player."})
+
+
+class PlayerRateBucket(models.Model):
+    """Fixed-window request counter. Keys are SHA-256 digests, never bearer URLs."""
+
+    key = models.CharField(max_length=64, primary_key=True)
+    count = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        ordering = ["expires_at"]

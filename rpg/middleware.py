@@ -86,3 +86,62 @@ class GameMasterAccessMiddleware:
                 return HttpResponseNotFound("Not found.")
 
         return self.get_response(request)
+
+
+class PlayerTokenSafetyMiddleware:
+    """No caching, URL referrals or browser cross-origin POSTs for bearer links.
+
+    The bearer URL remains the player's credential: POSTs intentionally do not
+    require a separate Django session or CSRF cookie. Cross-site browser forms
+    must not be able to exercise leaked or guessed bearer links.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if not request.path_info.startswith("/play/"):
+            return self.get_response(request)
+        if request.method not in ("GET", "HEAD", "POST", "OPTIONS"):
+            return self._protect(HttpResponseForbidden("Method not allowed."))
+
+        if request.method == "POST":
+            origin = request.headers.get("Origin", "")
+            fetch_site = request.headers.get("Sec-Fetch-Site", "")
+            if fetch_site == "cross-site":
+                return self._protect(HttpResponseForbidden("Cross-site POST denied."))
+            if origin and not self._same_origin(request, origin):
+                return self._protect(HttpResponseForbidden("Cross-origin POST denied."))
+
+        return self._protect(self.get_response(request))
+
+    @staticmethod
+    def _same_origin(request, origin):
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(origin)
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            return False
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return False
+        # request.get_host() is validated by Django ALLOWED_HOSTS.
+        if (parsed.scheme, parsed.netloc.lower()) == (
+            "https" if request.is_secure() else "http", request.get_host().lower()
+        ):
+            return True
+        public_host = getattr(settings, "PUBLIC_PLAYER_HOST", "")
+        return bool(
+            public_host
+            and parsed.scheme == "https"
+            and parsed.netloc.lower() == public_host
+            and request.get_host().split(":", 1)[0].lower() == public_host
+        )
+
+    @staticmethod
+    def _protect(response):
+        response["Cache-Control"] = "private, no-store"
+        response["Pragma"] = "no-cache"
+        response["Referrer-Policy"] = "no-referrer"
+        response["X-Robots-Tag"] = "noindex, nofollow"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response

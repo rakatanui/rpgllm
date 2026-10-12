@@ -50,4 +50,4 @@ RUN mkdir -p /app/staticfiles
 EXPOSE 8000
 
 # Entrypoint: run migrations then start uvicorn
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput && uvicorn mraz.asgi:application --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput && uvicorn mraz.asgi:application --host 0.0.0.0 --port 8000 --no-access-log"]

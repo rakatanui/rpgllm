@@ -11,6 +11,8 @@ server {
     # from the service URL, so force the configured public hostname before
     # forwarding to Django.
     location ^~ /play/ {
+        # Bearer URLs are credentials: never include them in nginx access logs.
+        access_log off;
         proxy_pass http://web:8000;
         proxy_http_version 1.1;
         proxy_set_header Host ${PUBLIC_PLAYER_HOST};
