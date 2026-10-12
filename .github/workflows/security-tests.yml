@@ -56,5 +56,7 @@ jobs:
         run: python -m pytest -q rpg/tests/test_player_access_security.py
       - name: Campaign management tests
         run: python -m pytest -q rpg/tests/test_campaign_management.py
+      - name: Campaign character and scene tests
+        run: python -m pytest -q rpg/tests/test_campaign_workbench.py
       - name: Full regression suite
         run: python -m pytest -q
