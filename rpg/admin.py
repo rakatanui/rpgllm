@@ -6,6 +6,7 @@ from rpg.admin_access import OwnedCampaignAdminMixin, OwnedCampaignInlineMixin
 
 from rpg.models import (
     Campaign,
+    CampaignPlan,
     CharacterAppearance,
     GameMasterConfig,
     GameMasterExecution,
@@ -114,6 +115,13 @@ class GameMasterConfigAdmin(OwnedCampaignAdminMixin):
         "manual_chat_context_mode",
     )
     search_fields = ("campaign__name", "system_prompt", "manual_chat_label")
+
+
+@admin.register(CampaignPlan)
+class CampaignPlanAdmin(OwnedCampaignAdminMixin):
+    list_display = ("title", "campaign", "npc_name", "scheduled_date", "scheduled_time", "status")
+    list_filter = ("kind", "status")
+    search_fields = ("title", "npc_name", "description", "planned_outcome", "actual_outcome")
 
 
 @admin.register(Campaign)
