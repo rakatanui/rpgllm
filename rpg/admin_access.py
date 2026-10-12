@@ -1,6 +1,7 @@
 """Consistent campaign ownership checks for Django Admin and related choices."""
 from django.contrib import admin
 from django.core.exceptions import PermissionDenied
+from django.db.models import Q
 
 from rpg.models import (
     Campaign,
@@ -37,7 +38,9 @@ OWNERSHIP_PATHS = {
 
 
 def scoped_queryset(user, queryset):
-    """Hide recycled data and isolate active/archived objects by GM owner."""
+    """Only owned or shared campaigns; never expose recycled objects."""
+    if not user.is_authenticated or not user.is_active or not user.is_staff:
+        return queryset.none()
     owner_path = OWNERSHIP_PATHS.get(queryset.model)
     if owner_path is None:
         return queryset if user.is_superuser else queryset.none()
@@ -45,7 +48,10 @@ def scoped_queryset(user, queryset):
     queryset = queryset.filter(**{prefix + "deleted_at__isnull": True})
     if user.is_superuser:
         return queryset
-    return queryset.filter(**{owner_path: user.pk})
+    return queryset.filter(
+        Q(**{owner_path: user.pk})
+        | Q(**{prefix + "collaborators__user_id": user.pk})
+    ).distinct()
 
 
 def _campaign_state_is_editable(obj):
@@ -69,16 +75,16 @@ def _campaign_state_is_editable(obj):
 
 
 def is_owned_by(user, obj):
-    if user.is_superuser:
-        return True
+    """Legacy name: means GM access, including explicitly invited co-masters."""
+    if not user.is_authenticated or not user.is_active or not user.is_staff:
+        return False
     if obj is None:
         return True
-    owner_path = OWNERSHIP_PATHS.get(type(obj))
-    if owner_path is None:
-        return False
-    return type(obj)._default_manager.filter(
-        pk=obj.pk, **{owner_path: user.pk}
-    ).exists()
+    if user.is_superuser:
+        return True
+    return scoped_queryset(
+        user, type(obj)._default_manager.all()
+    ).filter(pk=obj.pk).exists()
 
 
 class OwnedRelatedFieldsMixin:
@@ -174,9 +180,14 @@ class OwnedCampaignAdminMixin(OwnedRelatedFieldsMixin, admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         if self.model is Campaign:
-            if not request.user.is_superuser:
+            if change and not request.user.is_superuser:
+                # A collaborator may edit campaign content, never ownership.
+                obj.owner_id = Campaign.objects.values_list(
+                    "owner_id", flat=True
+                ).get(pk=obj.pk)
+            elif not change and not request.user.is_superuser:
                 obj.owner = request.user
-            elif obj.owner_id is None:
+            elif not change and obj.owner_id is None:
                 obj.owner = request.user
         elif not is_owned_by(request.user, obj) and change:
             raise PermissionDenied
@@ -200,7 +211,7 @@ class OwnedCampaignInlineMixin(OwnedRelatedFieldsMixin):
         return self._allowed(request, obj)
 
     def has_add_permission(self, request, obj=None):
-        return self._allowed(request, obj)
+        return self._allowed(request, obj) and _campaign_state_is_editable(obj)
 
     def has_change_permission(self, request, obj=None):
         return self._allowed(request, obj) and _campaign_state_is_editable(obj)
