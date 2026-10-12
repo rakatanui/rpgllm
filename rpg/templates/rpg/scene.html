@@ -42,6 +42,7 @@
     {% endfor %}
   {% endif %}
   <a class="btn" href="{% url 'campaign_detail' campaign.pk %}">Campaign</a>
+  <a class="btn" href="{% url 'campaign_timeline' campaign.pk %}">Timeline (GM)</a>
         <a class="btn" href="/">Home</a>
   <a class="btn" href="/admin/rpg/scene/{{ scene.pk }}/change/">Edit</a>
 
