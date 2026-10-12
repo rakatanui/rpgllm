@@ -5,6 +5,7 @@ import re
 import uuid
 
 from django.conf import settings
+from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
@@ -17,7 +18,8 @@ from django.views.decorators.http import require_http_methods
 
 import qrcode
 
-from rpg.forms import CharacterImageUploadForm
+from rpg.forms import CampaignForm, CharacterImageUploadForm
+from rpg.campaign_access import visible_campaigns
 from rpg.player_security import throttle_player_request
 from rpg.models import (
     AuthorType,
@@ -295,13 +297,51 @@ def search_history(request, scene_id):
     )
 
 
+def _visible_campaigns(user):
+    """All campaigns this master owns or co-masters."""
+    return visible_campaigns(user)
+
+
 def campaigns(request):
-    campaigns = Campaign.objects.prefetch_related("scenes").all()
-    scenes = Scene.objects.all()
+    visible = _visible_campaigns(request.user).select_related("owner")
+    active = visible.filter(archived_at__isnull=True, deleted_at__isnull=True).prefetch_related("scenes")
+    archived = visible.filter(archived_at__isnull=False, deleted_at__isnull=True).prefetch_related("scenes")
+    deleted = Campaign.objects.filter(deleted_at__isnull=False)
     if not request.user.is_superuser:
-        campaigns = campaigns.filter(owner=request.user)
-        scenes = scenes.filter(campaign__owner=request.user)
-    return render(request, "rpg/campaigns.html", {"campaigns": campaigns, "scenes": scenes})
+        deleted = deleted.filter(owner=request.user)
+    deleted = deleted.select_related("owner").order_by("-deleted_at")
+    return render(request, "rpg/campaigns.html", {
+        "campaigns": active,
+        "archived_campaigns": archived,
+        "deleted_campaigns": deleted,
+    })
+
+
+@require_http_methods(["GET", "POST"])
+def create_campaign(request):
+    form = CampaignForm(request.POST if request.method == "POST" else None)
+    if request.method == "POST" and form.is_valid():
+        campaign = form.save(commit=False)
+        campaign.owner = request.user
+        campaign.save()
+        messages.success(request, f"Campaign “{campaign.name}” created.")
+        return redirect("campaigns")
+    return render(request, "rpg/campaign_form.html", {
+        "form": form, "campaign": None,
+    })
+
+
+@require_http_methods(["GET", "POST"])
+def edit_campaign(request, campaign_id):
+    campaign = get_object_or_404(_visible_campaigns(request.user), pk=campaign_id)
+    form = CampaignForm(request.POST if request.method == "POST" else None, instance=campaign)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Campaign “{campaign.name}” updated.")
+        return redirect("campaigns")
+    return render(request, "rpg/campaign_form.html", {
+        "form": form, "campaign": campaign,
+    })
 
 
 def scene_view(request, scene_id):

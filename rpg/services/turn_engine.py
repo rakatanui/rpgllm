@@ -95,6 +95,8 @@ def start_turn(
             .get(pk=scene.pk)
         )
 
+        if locked_scene.campaign.archived_at or locked_scene.campaign.deleted_at:
+            raise ValidationError("The campaign is archived or in the recycle bin.")
         if locked_scene.is_closed:
             raise ValidationError("This scene is closed and read-only.")
 

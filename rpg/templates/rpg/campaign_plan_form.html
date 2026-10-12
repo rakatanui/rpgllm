@@ -1,0 +1,49 @@
+{% extends "rpg/base.html" %}
+{% block title %}{% if plan %}Edit plan{% else %}New calendar entry{% endif %} · {{ campaign.name }}{% endblock %}
+{% block content %}
+<style>
+  .plan-editor { max-width:940px; margin:0 auto; }
+  .plan-editor h2 { margin:12px 0; font-size:22px; }
+  .plan-editor-intro { color:var(--muted); line-height:1.6; max-width:750px; }
+  .plan-editor-form { margin-top:18px; padding:22px; display:grid; gap:17px; }
+  .plan-editor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  .plan-editor-field { display:grid; gap:7px; min-width:0; }
+  .plan-editor-field label { font-size:13px; font-weight:600; }
+  .plan-editor-field select, .plan-editor-field input { padding:8px; width:100%; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
+  .plan-editor-field textarea { line-height:1.5; }
+  .plan-editor-help { font-size:12px; color:var(--muted); line-height:1.5; }
+  .plan-editor-error { color:var(--err); font-size:12px; }
+  .plan-editor-heading { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; margin:5px 0 0; border-top:1px solid var(--border); padding-top:17px; }
+  .plan-editor-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px; border-top:1px solid var(--border); padding-top:16px; }
+  @media(max-width:640px) { .plan-editor-grid { grid-template-columns:1fr; } .plan-editor-form { padding:16px; } }
+</style>
+<div class="plan-editor">
+  <a href="{% url 'campaign_timeline' campaign.pk %}">← Campaign calendar</a>
+  <h2>{% if plan %}Edit calendar entry{% else %}Plan an NPC action or story event{% endif %}</h2>
+  <p class="plan-editor-intro">
+    These entries are visible only to the Game Master. Record what an NPC would do without interference,
+    then mark it as changed, cancelled or completed when the story catches up. Setting a date does
+    not run events or advance the game automatically.
+  </p>
+  <form method="post" class="panel plan-editor-form" novalidate>
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="plan-editor-error" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="plan-editor-grid">
+      {% for field in form %}
+        {% if forloop.counter == 8 %}</div><p class="plan-editor-heading">Planned story</p><div class="plan-editor-grid">{% endif %}
+        {% if forloop.counter == 10 %}</div><p class="plan-editor-heading">When player actions affect the plan</p><div class="plan-editor-grid">{% endif %}
+        <div class="plan-editor-field" {% if field.name == 'description' or field.name == 'planned_outcome' or field.name == 'actual_outcome' %}style="grid-column:1/-1"{% endif %}>
+          <label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
+          {{ field }}
+          {% if field.help_text %}<span class="plan-editor-help">{{ field.help_text }}</span>{% endif %}
+          {% for error in field.errors %}<span class="plan-editor-error" role="alert">{{ error }}</span>{% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+    <div class="plan-editor-actions">
+      <button class="btn btn-primary" type="submit">{% if plan %}Save plan{% else %}Add to calendar{% endif %}</button>
+      <a href="{% url 'campaign_timeline' campaign.pk %}" class="btn">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

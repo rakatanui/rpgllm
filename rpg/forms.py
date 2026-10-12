@@ -7,6 +7,8 @@ from PIL import Image, UnidentifiedImageError
 from django import forms
 from django.contrib.auth.forms import AuthenticationForm
 
+from rpg.models import Campaign
+
 
 MAX_CHARACTER_IMAGE_BYTES = 5 * 1024 * 1024
 ALLOWED_CHARACTER_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
@@ -60,6 +62,32 @@ class CharacterImageUploadForm(forms.Form):
         return ContentFile(
             sanitized.getvalue(), name="portrait" + output_extension
         )
+
+
+class CampaignForm(forms.ModelForm):
+    """Editable campaign content. Ownership is assigned by the view, never POST data."""
+
+    class Meta:
+        model = Campaign
+        fields = ("name", "description", "system_prompt", "shared_memory")
+        labels = {
+            "name": "Campaign name",
+            "description": "Description",
+            "system_prompt": "Campaign rules / system prompt",
+            "shared_memory": "Shared campaign memory",
+        }
+        widgets = {
+            "name": forms.TextInput(attrs={
+                "placeholder": "Campaign name", "autocomplete": "off",
+            }),
+            "description": forms.Textarea(attrs={"rows": 4}),
+            "system_prompt": forms.Textarea(attrs={"rows": 10}),
+            "shared_memory": forms.Textarea(attrs={"rows": 8}),
+        }
+        help_texts = {
+            "system_prompt": "Global rules and instructions shared with all model players.",
+            "shared_memory": "Public facts kept across scenes when older history is trimmed.",
+        }
 
 
 class GameMasterAuthenticationForm(AuthenticationForm):

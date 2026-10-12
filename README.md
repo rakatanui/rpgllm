@@ -172,17 +172,100 @@ Each player execution keeps its own state, allowing retries without replaying su
 
 MRAZ supports more than one Game Master with campaign-level ownership.
 
+The workbench's **Campaigns** home page now provides **New campaign** and
+**Settings** for basic campaign metadata: name, description, global system
+rules, and shared memory. New campaigns are always owned by the signed-in GM;
+the form never accepts a user-supplied owner. Regular GMs can edit campaigns they own **or are explicitly invited to co-master**.
+Superusers can edit unassigned or other-owned campaigns. Owner transfers and
+advanced lore editing remain in Django Admin.
+
+The **Campaigns → Open** workbench lets the owner, invited co-masters and
+superusers create and edit characters and scenes without leaving the application. Character
+settings include player type (human, API model, or external chat), model
+selection, character sheet, prompts, and private memory. Scene settings include
+its title, description, dialogue language, turn mode, memory, and participant
+roster. All selections are restricted to the current campaign.
+
+**Shared campaigns (co-Game Masters):** Each campaign has one responsible
+owner. The owner's **Game Masters** page lets them grant and revoke access to
+existing active staff accounts by username. Additional Game Masters have the
+same in-campaign workbench access as the owner: scene actions and private
+channels, campaign/player/scene editing, model GM, lore, and the private
+campaign timeline. Membership is campaign-specific and does not change
+ownership. Owners and superusers alone can manage membership or archive,
+restore, trash or purge a campaign; irreversible purging remains superuser-only.
+New account creation and invitations by email are not included.
+An existing authenticated session loses access immediately upon revocation,
+and disabled/nonstaff accounts cannot use an old membership. Archived teams
+are visible but read-only. The recycle bin is owner-only.
+Django Admin uses the same membership checks for read/write and related
+selectors; a co-master cannot transfer campaign ownership.
+
+Scenes can inherit **multiple closed predecessors** in the campaign editor. The
+**Continue…** action on a closed scene opens the scene-creation form with its
+previous-scene link, cast, language, and turn mode preselected. You can add
+additional closed parallel branches. The previous messages and summaries are
+**referenced, not copied** into the new scene, and the new scene has independent
+access tokens and memory. Player context includes only predecessor scenes they
+actually participated in, excludes all GM-only content, and limits private
+messages to their original recipient. This applies even when separate branches
+converge. The GM can see the combined history. Editing links is possible only
+before play, and never after a successor already depends on the scene. Foreign,
+open, self-referencing or cyclic predecessor selections are rejected.
+
+**Campaign archival, recovery and deletion:** The campaign list separates active
+campaigns, a read-only archive and a recycle bin. The owner can archive an
+idle campaign and later restore it without changing scenes, historical
+messages, player tokens, portraits, NPC plans or the story clock. Archived
+campaigns remain readable to the GM; all GM write endpoints and public player
+bearer links are disabled until restoration. Deleting a campaign normally means
+**moving it into the recycle bin**, not destroying data. Owners can recover
+these records: a previously archived campaign returns to the archive rather
+than resuming gameplay. These operations refuse to proceed while turns or
+LLM executions are pending, running or waiting for player/external input.
+Destructive actions require typing the exact campaign name and use POST/CSRF.
+
+Only a **superuser** can deliberately erase a campaign forever, and only after
+the campaign has first been moved to the recycle bin. This destroys related
+database objects and schedules cleanup of image files after successful commit,
+skipping files still referenced by other campaigns. Permanent erasure cannot
+be reversed; make a tested off-server backup first. There is no automatic
+recycle-bin expiry or timed purge. Archived and recycled campaigns can still
+occupy storage until explicitly erased.
+
+The **Campaign timeline** is a GM-only Outlook-style story calendar, available
+from the campaign workspace and the GM scene toolbar. It has month, week and
+day views. Its manually controlled **campaign date and time** are independent
+of the real-world server clock. Advancing the clock does not execute scheduled
+plans. Each private calendar entry can be an **NPC plan** or a **story marker**,
+with an in-world start date/time, optional end date/time, title, NPC/faction,
+context, and an expected outcome **if players do not interfere**. The GM can
+later record that it was changed, cancelled, or happened, preserving the
+original expected outcome and documenting actual consequences. These GM-only
+plans are not sent to player pages or LLM/player context; there is no automated
+event scheduler or world-simulation engine in this feature.
+
+Participant additions and removals are allowed **only before play has begun**
+(no turns, scene messages, or GM executions). Retained scene participation
+records are preserved intact so existing HUMAN bearer links, revocation settings,
+and selected appearances do not change. When the roster changes, the previously
+confirmed ROUND order is cleared and must be confirmed again in the live scene.
+Closed scenes cannot be edited through the campaign workbench. This release
+intentionally does not implement deletion, duplication, or moving characters
+between campaigns; those operations have separate data-integrity requirements.
+
 - Create accounts in Django Admin (or `createsuperuser` for the initial administrator).
-- Grant `is_staff` to a Game Master. A regular staff account can sign into the
-  workbench and edit **only campaigns that it owns**, including their scenes,
-  characters, lore, turns and messages through Django Admin.
+- Grant `is_staff` to a Game Master. Regular staff can sign into the workbench
+  and edit campaigns they **own or have been invited to co-master**, including
+  scenes, characters, lore, turns and messages through Django Admin.
 - Campaign owners are assigned in Django Admin by a superuser. Newly created
   campaigns automatically belong to the staff member who creates them.
 - Superusers have global access. Shared `ModelConfig` aliases are editable
   **only** by superusers, but masters can select existing aliases.
-- An existing campaign without an owner is visible only to superusers. Before
-  using the new multi-master workbench, assign owners in `/admin/rpg/campaign/`.
-  **No legacy campaigns are automatically assigned to an arbitrary staff user.**
+- An existing campaign without an owner is visible only to superusers unless
+  an administrator explicitly assigns a co-master. Prefer assigning an owner
+  via `/admin/rpg/campaign/` for proper lifecycle and membership management.
+  **No legacy campaign is automatically assigned to a staff account.**
 - The demonstration data may be assigned with
   `python manage.py seed_demo --owner USERNAME`.
 

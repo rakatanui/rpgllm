@@ -1,0 +1,104 @@
+{% extends "rpg/base.html" %}
+{% block title %}{{ campaign.name }} · MRAZ Master{% endblock %}
+{% block content %}
+<style>
+  .campaign-workbench { max-width:1280px; margin:0 auto; }
+  .campaign-workbench-head { display:flex; align-items:start; justify-content:space-between; flex-wrap:wrap; gap:14px; margin-bottom:22px; }
+  .campaign-workbench-head h2 { margin:8px 0; font-size:22px; overflow-wrap:anywhere; }
+  .campaign-workbench-head p { margin:0; color:var(--muted); white-space:pre-line; }
+  .campaign-workbench-action { display:flex; flex-wrap:wrap; gap:8px; }
+  .campaign-workbench-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr)); gap:16px; }
+  .campaign-workbench-section { padding:18px; min-width:0; }
+  .campaign-workbench-section > header { padding:0; margin-bottom:10px; border:0; background:transparent; justify-content:space-between; flex-wrap:wrap; }
+  .campaign-workbench-section h3 { margin:0; font-size:17px; text-transform:none; color:var(--text); }
+  .campaign-workbench-list { list-style:none; padding:0; margin:0; }
+  .campaign-workbench-list li { display:flex; align-items:start; justify-content:space-between; gap:14px; border-top:1px solid var(--border); padding:13px 0; }
+  .campaign-workbench-list strong { overflow-wrap:anywhere; }
+  .campaign-workbench-list .meta { display:block; margin-top:4px; }
+  .campaign-workbench-empty { color:var(--muted); line-height:1.5; }
+  .campaign-workbench-small { font-size:12px; color:var(--muted); }
+  .campaign-workbench-flash { padding:12px; margin-bottom:16px; border:1px solid var(--ok); border-radius:7px; }
+</style>
+<div class="campaign-workbench">
+  <div class="campaign-workbench-head">
+    <div>
+      <a href="{% url 'campaigns' %}">← All campaigns</a>
+      <h2>{{ campaign.name }}{% if campaign.archived_at %} <span class="meta">· ARCHIVED / READ ONLY</span>{% endif %}</h2>
+      {% if campaign.description %}<p>{{ campaign.description }}</p>{% endif %}
+    </div>
+    <div class="campaign-workbench-action">
+      {% if campaign.archived_at %}
+        {% if user.is_superuser or campaign.owner_id == user.pk %}<a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'unarchive' %}">Restore campaign</a>{% endif %}
+      {% else %}
+        <a class="btn" href="{% url 'campaign_edit' campaign.pk %}">Campaign settings</a>
+        <a class="btn btn-primary" href="{% url 'campaign_player_create' campaign.pk %}">+ Character</a>
+        <a class="btn btn-primary" href="{% url 'campaign_scene_create' campaign.pk %}">+ Scene</a>
+      {% endif %}
+      <a class="btn" href="{% url 'campaign_timeline' campaign.pk %}">Campaign timeline · GM only</a>
+      <a class="btn" href="{% url 'campaign_team' campaign.pk %}">Game Masters</a>
+    </div>
+  </div>
+  {% if campaign.world_date and campaign.world_time %}
+    <p class="campaign-workbench-small" style="margin:0 0 16px">Current story time: <strong>{{ campaign.world_date|date:"d M Y" }} {{ campaign.world_time|time:"H:i" }}</strong> · <a href="{% url 'campaign_timeline' campaign.pk %}">Open calendar</a></p>
+  {% endif %}
+  {% for message in messages %}
+    <div class="campaign-workbench-flash" role="status">{{ message }}</div>
+  {% endfor %}
+  <div class="campaign-workbench-grid">
+    <section class="panel campaign-workbench-section">
+      <header><h3>Characters</h3><span class="meta">{{ players|length }} total</span></header>
+      {% if players %}
+        <ul class="campaign-workbench-list">
+          {% for player in players %}
+            <li>
+              <div>
+                <strong>{{ player.display_name }}</strong>
+                <span class="meta">{{ player.get_transport_display }}{% if player.model_config %} · {{ player.model_config.name }}{% endif %}</span>
+              </div>
+              {% if not campaign.archived_at %}<a class="btn" href="{% url 'campaign_player_edit' campaign.pk player.pk %}">Edit</a>{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="campaign-workbench-empty">No characters yet. Add one before assigning players to a scene.</p>
+      {% endif %}
+    </section>
+    <section class="panel campaign-workbench-section">
+      <header><h3>Scenes</h3><span class="meta">{{ scenes|length }} total</span></header>
+      {% if scenes %}
+        <ul class="campaign-workbench-list">
+          {% for scene in scenes %}
+            <li>
+              <div>
+                <strong><a href="{% url 'scene' scene.pk %}">{{ scene.name }}</a></strong>
+                <span class="meta">{{ scene.get_mode_display }} · {% if scene.is_closed %}Closed{% else %}Open{% endif %}</span>
+                {% with predecessors=scene.previous_scenes.all %}
+                  {% if predecessors %}
+                    <span class="campaign-workbench-small">Inherits:
+                      {% for previous in predecessors %}{{ previous.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                    </span>
+                  {% endif %}
+                {% endwith %}
+                <span class="campaign-workbench-small">Participants:
+                  {% for participant in scene.scene_participants.all %}{{ participant.player.display_name }}{% if not forloop.last %}, {% endif %}{% empty %}none{% endfor %}
+                </span>
+              </div>
+              {% if not scene.is_closed and not campaign.archived_at %}
+                <a class="btn" href="{% url 'campaign_scene_edit' campaign.pk scene.pk %}">Edit</a>
+              {% else %}
+                <div style="display:grid;gap:7px">
+                  {% if not campaign.archived_at %}<a class="btn" href="{% url 'campaign_scene_create' campaign.pk %}?from_scene={{ scene.pk }}">Continue…</a>{% endif %}
+                  <span class="meta">Read-only</span>
+                </div>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="campaign-workbench-empty">No scenes yet. Create one and select its characters.</p>
+      {% endif %}
+    </section>
+  </div>
+  <p class="campaign-workbench-small" style="margin-top:16px">Character portraits and appearances are available in the player client or Django Admin. Scene participants are locked after play starts so completed story history and private access cannot be reassigned accidentally.</p>
+</div>
+{% endblock %}

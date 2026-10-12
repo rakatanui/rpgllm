@@ -1,24 +1,135 @@
 {% extends "rpg/base.html" %}
-{% block title %}Campaigns — MRAZ Master{% endblock %}
+{% block title %}Campaigns · MRAZ Master{% endblock %}
 {% block content %}
-<h2>Campaigns</h2>
+<style>
+  .campaigns-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:14px; margin-bottom:20px; }
+  .campaigns-heading h2 { margin:0 0 5px; font-size:22px; }
+  .campaigns-heading p { margin:0; color:var(--muted); line-height:1.5; }
+  .campaigns-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,370px),1fr)); align-items:start; gap:16px; }
+  .campaign-tile { padding:20px; min-width:0; }
+  .campaign-tile-header { display:flex; align-items:start; justify-content:space-between; gap:10px; }
+  .campaign-tile h3 { margin:0 0 5px; font-size:18px; color:var(--text); text-transform:none; line-height:1.35; overflow-wrap:anywhere; }
+  .campaign-tile .campaign-description { margin:12px 0; color:var(--muted); white-space:pre-line; line-height:1.5; overflow-wrap:anywhere; }
+  .campaign-tile .campaign-scenes { list-style:none; margin:12px 0 0; padding:0; }
+  .campaign-tile .campaign-scenes li { border-top:1px solid var(--border); padding:9px 0; }
+  .campaign-tile .campaign-scenes a { overflow-wrap:anywhere; }
+  .campaign-tile .campaign-scenes .meta { display:block; margin-top:3px; }
+  .campaign-actions { flex-shrink:0; }
+  .campaign-empty { padding:30px; text-align:center; max-width:620px; margin:40px auto; }
+  .campaign-empty h3 { color:var(--text); font-size:18px; text-transform:none; }
+  .campaign-empty p { color:var(--muted); }
+  .campaign-flash { border:1px solid var(--ok); background:var(--panel); border-radius:8px; padding:12px 16px; margin-bottom:18px; }
+  .campaign-lifecycle-buttons { display:flex; gap:7px; margin-top:13px; flex-wrap:wrap; }
+  .campaign-muted { opacity:.86; }
+  .campaign-section-title { margin:30px 0 12px; font-size:19px; }
+  .campaign-section-info { color:var(--muted); margin:5px 0 15px; }
+  .campaign-danger-action { border-color:var(--err); color:var(--err); }
+  .campaign-list-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; border-top:1px solid var(--border); padding:12px 0; }
+  .campaign-row-actions { display:flex; gap:7px; flex-wrap:wrap; }
+
+</style>
+<div class="campaigns-heading">
+  <div>
+    <h2>Campaigns</h2>
+    <p>Active worlds, read-only archives and recoverable deleted campaigns.</p>
+  </div>
+  <a class="btn btn-primary" href="{% url 'campaign_create' %}">+ New campaign</a>
+</div>
+{% for message in messages %}
+  <div class="campaign-flash" role="status">{{ message }}</div>
+{% endfor %}
 {% if campaigns %}
-  <ul>
-  {% for c in campaigns %}
-    <li>
-      <strong>{{ c.name }}</strong> — <a href="/admin/rpg/campaign/{{ c.pk }}/change/">edit</a>
-      <ul>
-      {% for s in c.scenes.all %}
-        <li><a href="{% url 'scene' s.pk %}">{{ s.name }}</a>
-          <span class="meta">({{ s.mode }}{% if s.is_closed %}, closed{% else %}, open{% endif %})</span></li>
-      {% endfor %}
-      </ul>
-    </li>
-  {% endfor %}
-  </ul>
+  <div class="campaigns-grid">
+    {% for campaign in campaigns %}
+      <article class="panel campaign-tile">
+        <div class="campaign-tile-header">
+          <div>
+            <h3>{{ campaign.name }}</h3>
+            {% if user.is_superuser or campaign.owner_id != user.pk %}
+              <div class="meta">Owner: {% if campaign.owner %}{{ campaign.owner.username }}{% else %}Unassigned{% endif %}{% if not user.is_superuser and campaign.owner_id != user.pk %} · Shared with you{% endif %}</div>
+            {% endif %}
+          </div>
+          <div class="campaign-workbench-action" style="display:flex;gap:7px;flex-wrap:wrap">
+            <a class="btn btn-primary" href="{% url 'campaign_detail' campaign.pk %}">Open</a>
+            <a class="btn campaign-actions" href="{% url 'campaign_edit' campaign.pk %}">Settings</a>
+            <a class="btn campaign-actions" href="{% url 'campaign_team' campaign.pk %}">Game Masters</a>
+          </div>
+        </div>
+        {% if campaign.description %}
+          <p class="campaign-description">{{ campaign.description|truncatechars:260 }}</p>
+        {% endif %}
+        {% if user.is_superuser or campaign.owner_id == user.pk %}
+          <div class="campaign-lifecycle-buttons">
+            <a class="btn" href="{% url 'campaign_lifecycle' campaign.pk 'archive' %}">Archive</a>
+            <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'delete' %}">Delete…</a>
+          </div>
+        {% endif %}
+        {% with scenes=campaign.scenes.all %}
+          <div class="meta">{{ scenes|length }} scene{{ scenes|length|pluralize }}</div>
+          {% if scenes %}
+            <ul class="campaign-scenes">
+              {% for scene in scenes %}
+                <li>
+                  <a href="{% url 'scene' scene.pk %}">{{ scene.name }}</a>
+                  <span class="meta">{{ scene.get_mode_display }} · {% if scene.is_closed %}Closed{% else %}Open{% endif %}</span>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="meta">No scenes yet. <a href="{% url 'campaign_scene_create' campaign.pk %}">Create a scene</a> to begin.</p>
+          {% endif %}
+        {% endwith %}
+      </article>
+    {% endfor %}
+  </div>
 {% else %}
-  <p>No campaigns yet.</p>
-  <p>Run: <code>docker compose exec web python manage.py seed_demo</code></p>
-  <p>Or create one in <a href="/admin/">Admin</a>.</p>
+  <section class="panel campaign-empty">
+    <h3>No active campaigns</h3>
+    <p>Create a campaign or restore one from the archive or recycle bin below.</p>
+    <a href="{% url 'campaign_create' %}" class="btn btn-primary">Create a campaign</a>
+  </section>
+{% endif %}
+
+{% if archived_campaigns %}
+  <h2 class="campaign-section-title">Archive</h2>
+  <p class="campaign-section-info">Archived campaigns keep their data but cannot be played or changed. You can read their history and restore them.</p>
+  <section class="panel campaign-tile campaign-muted">
+    {% for campaign in archived_campaigns %}
+      <div class="campaign-list-row">
+        <div>
+          <strong>{{ campaign.name }}</strong>
+          <span class="meta">Archived: {{ campaign.archived_at|date:"d M Y H:i" }}</span>
+        </div>
+        <div class="campaign-row-actions">
+          <a class="btn" href="{% url 'campaign_detail' campaign.pk %}">Read</a>
+          {% if user.is_superuser or campaign.owner_id == user.pk %}
+            <a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'unarchive' %}">Restore</a>
+            <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'delete' %}">Delete…</a>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </section>
+{% endif %}
+
+{% if deleted_campaigns %}
+  <h2 class="campaign-section-title">Recycle bin</h2>
+  <p class="campaign-section-info">Deleted campaigns are inaccessible to players but their data remains recoverable. Permanent erasure is superuser-only.</p>
+  <section class="panel campaign-tile campaign-muted">
+    {% for campaign in deleted_campaigns %}
+      <div class="campaign-list-row">
+        <div>
+          <strong>{{ campaign.name }}</strong>
+          <span class="meta">Removed: {{ campaign.deleted_at|date:"d M Y H:i" }}</span>
+        </div>
+        <div class="campaign-row-actions">
+          <a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'recover' %}">Recover</a>
+          {% if user.is_superuser %}
+            <a class="btn campaign-danger-action" href="{% url 'campaign_lifecycle' campaign.pk 'purge' %}">Erase forever…</a>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </section>
 {% endif %}
 {% endblock %}

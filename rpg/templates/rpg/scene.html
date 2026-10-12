@@ -41,7 +41,9 @@
       <a class="chip" href="{% url 'scene' previous.pk %}">{{ previous.name }}</a>
     {% endfor %}
   {% endif %}
-  <a class="btn" href="/">Home</a>
+  <a class="btn" href="{% url 'campaign_detail' campaign.pk %}">Campaign</a>
+  <a class="btn" href="{% url 'campaign_timeline' campaign.pk %}">Timeline (GM)</a>
+        <a class="btn" href="/">Home</a>
   <a class="btn" href="/admin/rpg/scene/{{ scene.pk }}/change/">Edit</a>
 
   {% if not scene.is_closed %}
@@ -212,6 +214,7 @@
 {% else %}
 <div class="gm-composer-sticky">
   <div class="round-warning">This scene is closed and read-only. Its history can be inherited by a new scene.</div>
+  <p class="meta">To select several predecessor scenes or customize inherited settings, <a href="{% url 'campaign_scene_create' campaign.pk %}?from_scene={{ scene.pk }}">use the scene editor</a>.</p>
   <form method="post" action="{% url 'create_followup_scene' scene.pk %}">
     {% csrf_token %}
     <div class="toolbar composer-toolbar">

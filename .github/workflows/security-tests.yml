@@ -2,7 +2,7 @@ name: Security and RPG regression tests
 
 on:
   push:
-    branches: ["security/**"]
+    branches: ["security/**", "campaign"]
   pull_request:
 
 permissions:
@@ -35,7 +35,7 @@ jobs:
       POSTGRES_USER: mraz
       POSTGRES_PASSWORD: ci_only_password
       SECRET_KEY: ci-only-test-secret-not-for-deployment-gm-auth-security-123
-      ALLOWED_HOSTS: testserver,mraz.local,127.0.0.100
+      ALLOWED_HOSTS: testserver,mraz.local,127.0.0.100,localhost,127.0.0.1
       CSRF_TRUSTED_ORIGINS: http://mraz.local
       LLM_BACKEND: mock
       DJANGO_HTTPS_ENABLED: "False"
@@ -50,9 +50,25 @@ jobs:
       - run: python -m pip install ".[dev]"
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run
+      - name: Install Chromium for browser E2E tests
+        run: python -m playwright install --with-deps chromium
+      - name: Campaign user journey browser E2E tests
+        run: python -m pytest -q -m browser rpg/tests/test_campaign_browser.py
       - name: Authentication and campaign isolation tests
         run: python -m pytest -q rpg/tests/test_gm_authentication.py rpg/tests/test_production_auth_security.py rpg/tests/test_public_player_host.py
       - name: Public player security tests
         run: python -m pytest -q rpg/tests/test_player_access_security.py
+      - name: Campaign management tests
+        run: python -m pytest -q rpg/tests/test_campaign_management.py
+      - name: Campaign character and scene tests
+        run: python -m pytest -q rpg/tests/test_campaign_workbench.py
+      - name: Scene inheritance and privacy tests
+        run: python -m pytest -q rpg/tests/test_campaign_inheritance.py rpg/tests/test_scene_sessions.py
+      - name: Private campaign timeline tests
+        run: python -m pytest -q rpg/tests/test_campaign_timeline.py
+      - name: Archive, recovery, and campaign deletion tests
+        run: python -m pytest -q rpg/tests/test_campaign_lifecycle.py
+      - name: Multi-Game Master collaboration and permission tests
+        run: python -m pytest -q rpg/tests/test_campaign_collaboration.py
       - name: Full regression suite
-        run: python -m pytest -q
+        run: python -m pytest -q -m "not browser"
