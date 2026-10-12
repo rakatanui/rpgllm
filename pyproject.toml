@@ -36,6 +36,9 @@ python_files = ["tests.py", "test_*.py"]
 testpaths = ["rpg/tests"]
 norecursedirs = ["scripts", ".venv", "staticfiles", "mraz", "mraz.egg-info"]
 addopts = "--ignore=scripts"
+markers = [
+    "browser: Chromium browser-based end-to-end tests (requires Playwright browser installation)",
+]
 
 [tool.ruff]
 line-length = 100
