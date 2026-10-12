@@ -42,6 +42,18 @@ class PlayerWorkbenchForm(forms.ModelForm):
             "memory_summary": forms.Textarea(attrs={"rows": 5}),
         }
 
+    def clean_display_name(self):
+        name = self.cleaned_data["display_name"].strip()
+        # The form excludes campaign, so validate uniqueness explicitly.
+        duplicates = Player.objects.filter(
+            campaign_id=self.instance.campaign_id, display_name=name
+        )
+        if self.instance.pk:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise forms.ValidationError("A character with this name already exists in this campaign.")
+        return name
+
     def save(self, commit=True):
         player = super().save(commit=False)
         if any(field in self.changed_data for field in (
