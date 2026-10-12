@@ -8,11 +8,14 @@ or real LLM service is required.
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from datetime import date, time
+
 from django.contrib.auth import get_user_model
 from django.urls import reverse
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
-from rpg.models import Campaign
+from rpg.models import Campaign, CampaignPlan
+from rpg.tests.factories import make_scene
 
 
 pytestmark = [pytest.mark.browser, pytest.mark.django_db(transaction=True)]
@@ -164,3 +167,42 @@ def test_browser_owner_adds_and_revokes_existing_co_gm(
     finally:
         owner_ctx.close()
         co_ctx.close()
+
+
+def test_browser_inline_campaign_clock_and_one_hour_reminder(browser, live_server, staff):
+    user = staff("browser-clock-gm")
+    campaign = db_call(Campaign.objects.create, name="Browser clock", owner=user)
+    scene = db_call(make_scene, campaign, "Clock scene")
+    event = db_call(
+        CampaignPlan.objects.create,
+        campaign=campaign, title="The midnight courier",
+        scheduled_date=date(2022, 10, 12), scheduled_time=time(22, 0),
+        npc_name="Courier",
+    )
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    try:
+        open_as(page, live_server, "browser-clock-gm")
+        page.goto(live_server.url + reverse("scene", args=[scene.pk]))
+        expect(page.locator("#gm-campaign-clock")).to_be_visible()
+        expect(page.locator("[data-campaign-now]")).to_contain_text("Не установлено")
+
+        page.locator("#quick_world_date").fill("2022-10-12")
+        page.locator("#quick_world_time").fill("21:10")
+        page.get_by_role("button", name="Установить").click()
+        expect(page.locator("[data-campaign-now]")).to_contain_text("21:10")
+        expect(page.get_by_role("link", name="The midnight courier")).to_be_visible()
+        expect(page.locator("#gm-campaign-alerts")).to_contain_text("Через 50 мин")
+
+        page.get_by_role("button", name="+15 м").click()
+        expect(page.locator("[data-campaign-now]")).to_contain_text("21:25")
+        expect(page.locator("#gm-campaign-alerts")).to_contain_text("Через 35 мин")
+
+        page.get_by_role("link", name="The midnight courier").click()
+        page.wait_for_url(live_server.url + reverse(
+            "campaign_plan_edit", args=[campaign.pk, event.pk]
+        ))
+        expect(page.locator("#id_title")).to_have_value("The midnight courier")
+        assert db_call(lambda: CampaignPlan.objects.get(pk=event.pk).status) == "PLANNED"
+    finally:
+        context.close()
