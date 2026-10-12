@@ -177,8 +177,23 @@ The workbench's **Campaigns** home page now provides **New campaign** and
 rules, and shared memory. New campaigns are always owned by the signed-in GM;
 the form never accepts a user-supplied owner. Regular GMs can edit only their
 own campaigns. Superusers can edit unassigned or other-owned campaigns without
-silently changing their ownership. Owner transfers and advanced character,
-scene, and lore editing remain in Django Admin.
+silently changing their ownership. Owner transfers and advanced lore editing remain in Django Admin.
+
+The **Campaigns → Open** workbench lets the owner (or a superuser) create
+and edit characters and scenes without leaving the application. Character
+settings include player type (human, API model, or external chat), model
+selection, character sheet, prompts, and private memory. Scene settings include
+its title, description, dialogue language, turn mode, memory, and participant
+roster. All selections are restricted to the current campaign.
+
+Participant additions and removals are allowed **only before play has begun**
+(no turns, scene messages, or GM executions). Retained scene participation
+records are preserved intact so existing HUMAN bearer links, revocation settings,
+and selected appearances do not change. When the roster changes, the previously
+confirmed ROUND order is cleared and must be confirmed again in the live scene.
+Closed scenes cannot be edited through the campaign workbench. This release
+intentionally does not implement deletion, duplication, or moving characters
+between campaigns; those operations have separate data-integrity requirements.
 
 - Create accounts in Django Admin (or `createsuperuser` for the initial administrator).
 - Grant `is_staff` to a Game Master. A regular staff account can sign into the
