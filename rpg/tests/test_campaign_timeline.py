@@ -16,6 +16,17 @@ from rpg.services.context_builder import build_player_context
 from rpg.tests.factories import make_campaign, make_player, make_scene
 
 
+@pytest.fixture(autouse=True)
+def admin_staticfiles_without_manifest(settings):
+    # CI does not run collectstatic before rendering Django Admin pages.
+    settings.STORAGES = {
+        **settings.STORAGES,
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+
+
 def gm(name):
     return get_user_model().objects.create_user(
         username=name, password="test-password-very-long", is_staff=True,
