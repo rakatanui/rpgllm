@@ -28,10 +28,14 @@
     </div>
     <div class="campaign-workbench-action">
       <a class="btn" href="{% url 'campaign_edit' campaign.pk %}">Campaign settings</a>
+      <a class="btn" href="{% url 'campaign_timeline' campaign.pk %}">Campaign timeline · GM only</a>
       <a class="btn btn-primary" href="{% url 'campaign_player_create' campaign.pk %}">+ Character</a>
       <a class="btn btn-primary" href="{% url 'campaign_scene_create' campaign.pk %}">+ Scene</a>
     </div>
   </div>
+  {% if campaign.world_date and campaign.world_time %}
+    <p class="campaign-workbench-small" style="margin:0 0 16px">Current story time: <strong>{{ campaign.world_date|date:"d M Y" }} {{ campaign.world_time|time:"H:i" }}</strong> · <a href="{% url 'campaign_timeline' campaign.pk %}">Open calendar</a></p>
+  {% endif %}
   {% for message in messages %}
     <div class="campaign-workbench-flash" role="status">{{ message }}</div>
   {% endfor %}
