@@ -198,6 +198,18 @@ converge. The GM can see the combined history. Editing links is possible only
 before play, and never after a successor already depends on the scene. Foreign,
 open, self-referencing or cyclic predecessor selections are rejected.
 
+The **Campaign timeline** is a GM-only Outlook-style story calendar, available
+from the campaign workspace and the GM scene toolbar. It has month, week and
+day views. Its manually controlled **campaign date and time** are independent
+of the real-world server clock. Advancing the clock does not execute scheduled
+plans. Each private calendar entry can be an **NPC plan** or a **story marker**,
+with an in-world start date/time, optional end date/time, title, NPC/faction,
+context, and an expected outcome **if players do not interfere**. The GM can
+later record that it was changed, cancelled, or happened, preserving the
+original expected outcome and documenting actual consequences. These GM-only
+plans are not sent to player pages or LLM/player context; there is no automated
+event scheduler or world-simulation engine in this feature.
+
 Participant additions and removals are allowed **only before play has begun**
 (no turns, scene messages, or GM executions). Retained scene participation
 records are preserved intact so existing HUMAN bearer links, revocation settings,
