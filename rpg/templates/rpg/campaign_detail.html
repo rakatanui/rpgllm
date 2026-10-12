@@ -28,13 +28,14 @@
     </div>
     <div class="campaign-workbench-action">
       {% if campaign.archived_at %}
-        <a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'unarchive' %}">Restore campaign</a>
+        {% if user.is_superuser or campaign.owner_id == user.pk %}<a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'unarchive' %}">Restore campaign</a>{% endif %}
       {% else %}
         <a class="btn" href="{% url 'campaign_edit' campaign.pk %}">Campaign settings</a>
         <a class="btn btn-primary" href="{% url 'campaign_player_create' campaign.pk %}">+ Character</a>
         <a class="btn btn-primary" href="{% url 'campaign_scene_create' campaign.pk %}">+ Scene</a>
       {% endif %}
       <a class="btn" href="{% url 'campaign_timeline' campaign.pk %}">Campaign timeline · GM only</a>
+      <a class="btn" href="{% url 'campaign_team' campaign.pk %}">Game Masters</a>
     </div>
   </div>
   {% if campaign.world_date and campaign.world_time %}
