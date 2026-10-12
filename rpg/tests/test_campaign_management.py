@@ -155,6 +155,11 @@ def test_invalid_campaign_forms_preserve_values_without_saving():
     client = authorized_client(alice)
     create = reverse("campaign_create")
 
+    empty = client.post(create, {})
+    assert empty.status_code == 200
+    assert "name" in empty.context["form"].errors
+    assert not Campaign.objects.filter(owner=alice).exists()
+
     invalid = client.post(create, campaign_data("    "))
     assert invalid.status_code == 200
     assert invalid.context["form"].errors
