@@ -5,6 +5,8 @@ interaction, not just Django's request test client. No external application
 or real LLM service is required.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -16,6 +18,11 @@ from rpg.models import Campaign
 pytestmark = [pytest.mark.browser, pytest.mark.django_db(transaction=True)]
 
 PASSWORD = "campaign-e2e-password-12345"
+
+
+def db_call(fn, *args, **kwargs):
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(fn, *args, **kwargs).result()
 
 
 @pytest.fixture
@@ -40,7 +47,7 @@ def open_as(page, live_server, username):
 @pytest.fixture
 def staff():
     def create(username):
-        return get_user_model().objects.create_user(
+        return db_call(get_user_model().objects.create_user,
             username=username, password=PASSWORD, is_staff=True, is_active=True
         )
     return create
@@ -115,7 +122,7 @@ def test_browser_create_character_scene_clock_archive_and_restore(
         page.get_by_role("button", name="Restore", exact=True).click()
         page.wait_for_url(live_server.url + reverse("campaigns"))
         assert page.get_by_text("Browser campaign").is_visible()
-        assert Campaign.objects.get(name="Browser campaign").archived_at is None
+        assert db_call(lambda: Campaign.objects.get(name="Browser campaign").archived_at) is None
     finally:
         context.close()
 
@@ -125,8 +132,8 @@ def test_browser_owner_adds_and_revokes_existing_co_gm(
 ):
     owner = staff("browser-team-owner")
     staff("browser-team-cogm")
-    campaign = Campaign.objects.create(
-        name="Shared browser world", owner=owner,
+    campaign = db_call(
+        Campaign.objects.create, name="Shared browser world", owner=owner,
     )
 
     owner_ctx = browser.new_context(viewport={"width": 1080, "height": 820})
