@@ -1,0 +1,70 @@
+{% extends "rpg/base.html" %}
+{% block title %}Game Masters · {{ campaign.name }} · MRAZ{% endblock %}
+{% block content %}
+<style>
+  .team-shell { max-width:970px; margin:auto; }
+  .team-shell h2 { margin:12px 0 6px; font-size:23px; }
+  .team-description { color:var(--muted); line-height:1.6; }
+  .team-card { padding:20px; margin:18px 0; }
+  .team-card h3 { margin:0 0 12px; color:var(--text); font-size:17px; text-transform:none; }
+  .team-user { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; padding:13px 0; border-top:1px solid var(--border); }
+  .team-user strong { display:block; overflow-wrap:anywhere; }
+  .team-user .meta { display:block; margin-top:4px; }
+  .team-add-form { display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
+  .team-field { display:grid; gap:6px; flex:1; min-width:min(100%,270px); }
+  .team-field input { background:var(--bg); border:1px solid var(--border); padding:10px; color:var(--text); border-radius:6px; width:100%; }
+  .team-error { color:var(--err); font-size:12px; }
+  .team-flash { border:1px solid var(--ok); border-radius:7px; padding:12px 14px; margin:14px 0; }
+  .team-rule { margin:15px 0 0; color:var(--muted); line-height:1.65; font-size:13px; }
+</style>
+<div class="team-shell">
+  <a href="{% url 'campaign_detail' campaign.pk %}">← {{ campaign.name }}</a>
+  <h2>Game Masters</h2>
+  <p class="team-description">Collaborators share the Game Master workspace: scenes, characters, private channels, lore, settings and campaign calendar. Only the campaign owner or an administrator can change the team, archive, delete or recover the campaign.</p>
+  {% if campaign.archived_at %}
+    <p class="team-rule">This campaign is archived. Its team is read-only until restored.</p>
+  {% endif %}
+  {% for message in messages %}<div class="team-flash" role="status">{{ message }}</div>{% endfor %}
+
+  <section class="panel team-card">
+    <h3>Campaign owner</h3>
+    <div class="team-user">
+      <div><strong>{% if campaign.owner %}{{ campaign.owner.username }}{% else %}Unassigned{% endif %}</strong><span class="meta">Owner · manages access and campaign lifecycle</span></div>
+    </div>
+    <h3 style="margin-top:20px">Co-Game Masters</h3>
+    {% for member in members %}
+      <div class="team-user">
+        <div>
+          <strong>{{ member.user.username }}</strong>
+          <span class="meta">Co-GM{% if not member.user.is_active or not member.user.is_staff %} · Access suspended (account inactive or no longer staff){% endif %} · Added {{ member.added_at|date:"d M Y" }}</span>
+        </div>
+        {% if can_manage and not campaign.archived_at %}
+          <form method="post" action="{% url 'campaign_team_remove' campaign.pk member.user_id %}">
+            {% csrf_token %}
+            <button class="btn" type="submit" aria-label="Remove {{ member.user.username }}">Remove access</button>
+          </form>
+        {% endif %}
+      </div>
+    {% empty %}
+      <p class="meta">No additional Game Masters yet.</p>
+    {% endfor %}
+  </section>
+
+  {% if can_manage and not campaign.archived_at %}
+    <section class="panel team-card">
+      <h3>Add an existing Game Master</h3>
+      <form method="post" action="{% url 'campaign_team_add' campaign.pk %}" class="team-add-form">
+        {% csrf_token %}
+        <div class="team-field">
+          <label for="{{ form.username.id_for_label }}">{{ form.username.label }}</label>
+          {{ form.username }}
+          {% for error in form.username.errors %}<span class="team-error" role="alert">{{ error }}</span>{% endfor %}
+          {% if form.username.help_text %}<span class="meta">{{ form.username.help_text }}</span>{% endif %}
+        </div>
+        <button class="btn btn-primary" type="submit">Add co-GM</button>
+      </form>
+      <p class="team-rule">Changes apply immediately. Revoking access blocks the other master's existing session from this campaign, but does not delete anything they contributed. Everyone uses their own account; no passwords or player links are shared.</p>
+    </section>
+  {% endif %}
+</div>
+{% endblock %}
