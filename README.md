@@ -175,16 +175,31 @@ MRAZ supports more than one Game Master with campaign-level ownership.
 The workbench's **Campaigns** home page now provides **New campaign** and
 **Settings** for basic campaign metadata: name, description, global system
 rules, and shared memory. New campaigns are always owned by the signed-in GM;
-the form never accepts a user-supplied owner. Regular GMs can edit only their
-own campaigns. Superusers can edit unassigned or other-owned campaigns without
-silently changing their ownership. Owner transfers and advanced lore editing remain in Django Admin.
+the form never accepts a user-supplied owner. Regular GMs can edit campaigns they own **or are explicitly invited to co-master**.
+Superusers can edit unassigned or other-owned campaigns. Owner transfers and
+advanced lore editing remain in Django Admin.
 
-The **Campaigns → Open** workbench lets the owner (or a superuser) create
-and edit characters and scenes without leaving the application. Character
+The **Campaigns → Open** workbench lets the owner, invited co-masters and
+superusers create and edit characters and scenes without leaving the application. Character
 settings include player type (human, API model, or external chat), model
 selection, character sheet, prompts, and private memory. Scene settings include
 its title, description, dialogue language, turn mode, memory, and participant
 roster. All selections are restricted to the current campaign.
+
+**Shared campaigns (co-Game Masters):** Each campaign has one responsible
+owner. The owner's **Game Masters** page lets them grant and revoke access to
+existing active staff accounts by username. Additional Game Masters have the
+same in-campaign workbench access as the owner: scene actions and private
+channels, campaign/player/scene editing, model GM, lore, and the private
+campaign timeline. Membership is campaign-specific and does not change
+ownership. Owners and superusers alone can manage membership or archive,
+restore, trash or purge a campaign; irreversible purging remains superuser-only.
+New account creation and invitations by email are not included.
+An existing authenticated session loses access immediately upon revocation,
+and disabled/nonstaff accounts cannot use an old membership. Archived teams
+are visible but read-only. The recycle bin is owner-only.
+Django Admin uses the same membership checks for read/write and related
+selectors; a co-master cannot transfer campaign ownership.
 
 Scenes can inherit **multiple closed predecessors** in the campaign editor. The
 **Continue…** action on a closed scene opens the scene-creation form with its
@@ -240,16 +255,17 @@ intentionally does not implement deletion, duplication, or moving characters
 between campaigns; those operations have separate data-integrity requirements.
 
 - Create accounts in Django Admin (or `createsuperuser` for the initial administrator).
-- Grant `is_staff` to a Game Master. A regular staff account can sign into the
-  workbench and edit **only campaigns that it owns**, including their scenes,
-  characters, lore, turns and messages through Django Admin.
+- Grant `is_staff` to a Game Master. Regular staff can sign into the workbench
+  and edit campaigns they **own or have been invited to co-master**, including
+  scenes, characters, lore, turns and messages through Django Admin.
 - Campaign owners are assigned in Django Admin by a superuser. Newly created
   campaigns automatically belong to the staff member who creates them.
 - Superusers have global access. Shared `ModelConfig` aliases are editable
   **only** by superusers, but masters can select existing aliases.
-- An existing campaign without an owner is visible only to superusers. Before
-  using the new multi-master workbench, assign owners in `/admin/rpg/campaign/`.
-  **No legacy campaigns are automatically assigned to an arbitrary staff user.**
+- An existing campaign without an owner is visible only to superusers unless
+  an administrator explicitly assigns a co-master. Prefer assigning an owner
+  via `/admin/rpg/campaign/` for proper lifecycle and membership management.
+  **No legacy campaign is automatically assigned to a staff account.**
 - The demonstration data may be assigned with
   `python manage.py seed_demo --owner USERNAME`.
 
