@@ -186,6 +186,18 @@ selection, character sheet, prompts, and private memory. Scene settings include
 its title, description, dialogue language, turn mode, memory, and participant
 roster. All selections are restricted to the current campaign.
 
+Scenes can inherit **multiple closed predecessors** in the campaign editor. The
+**Continue…** action on a closed scene opens the scene-creation form with its
+previous-scene link, cast, language, and turn mode preselected. You can add
+additional closed parallel branches. The previous messages and summaries are
+**referenced, not copied** into the new scene, and the new scene has independent
+access tokens and memory. Player context includes only predecessor scenes they
+actually participated in, excludes all GM-only content, and limits private
+messages to their original recipient. This applies even when separate branches
+converge. The GM can see the combined history. Editing links is possible only
+before play, and never after a successor already depends on the scene. Foreign,
+open, self-referencing or cyclic predecessor selections are rejected.
+
 Participant additions and removals are allowed **only before play has begun**
 (no turns, scene messages, or GM executions). Retained scene participation
 records are preserved intact so existing HUMAN bearer links, revocation settings,
