@@ -365,6 +365,8 @@ def maybe_start_auto_gm(*, scene: Scene) -> GameMasterExecution | None:
 
 def start_gm_execution(*, scene: Scene) -> GameMasterExecution:
     scene = Scene.objects.select_related("campaign").get(pk=scene.pk)
+    if scene.campaign.archived_at or scene.campaign.deleted_at:
+        raise ValidationError("The campaign is archived or in the recycle bin.")
     if scene.is_closed:
         raise ValidationError("Cannot run a model GM in a closed scene.")
 
