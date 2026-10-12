@@ -1,24 +1,74 @@
 {% extends "rpg/base.html" %}
-{% block title %}Campaigns — MRAZ Master{% endblock %}
+{% block title %}Campaigns · MRAZ Master{% endblock %}
 {% block content %}
-<h2>Campaigns</h2>
+<style>
+  .campaigns-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:14px; margin-bottom:20px; }
+  .campaigns-heading h2 { margin:0 0 5px; font-size:22px; }
+  .campaigns-heading p { margin:0; color:var(--muted); line-height:1.5; }
+  .campaigns-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,370px),1fr)); align-items:start; gap:16px; }
+  .campaign-tile { padding:20px; min-width:0; }
+  .campaign-tile-header { display:flex; align-items:start; justify-content:space-between; gap:10px; }
+  .campaign-tile h3 { margin:0 0 5px; font-size:18px; color:var(--text); text-transform:none; line-height:1.35; overflow-wrap:anywhere; }
+  .campaign-tile .campaign-description { margin:12px 0; color:var(--muted); white-space:pre-line; line-height:1.5; overflow-wrap:anywhere; }
+  .campaign-tile .campaign-scenes { list-style:none; margin:12px 0 0; padding:0; }
+  .campaign-tile .campaign-scenes li { border-top:1px solid var(--border); padding:9px 0; }
+  .campaign-tile .campaign-scenes a { overflow-wrap:anywhere; }
+  .campaign-tile .campaign-scenes .meta { display:block; margin-top:3px; }
+  .campaign-actions { flex-shrink:0; }
+  .campaign-empty { padding:30px; text-align:center; max-width:620px; margin:40px auto; }
+  .campaign-empty h3 { color:var(--text); font-size:18px; text-transform:none; }
+  .campaign-empty p { color:var(--muted); }
+  .campaign-flash { border:1px solid var(--ok); background:var(--panel); border-radius:8px; padding:12px 16px; margin-bottom:18px; }
+</style>
+<div class="campaigns-heading">
+  <div>
+    <h2>Campaigns</h2>
+    <p>Manage your worlds, campaign rules and shared memories.</p>
+  </div>
+  <a class="btn btn-primary" href="{% url 'campaign_create' %}">+ New campaign</a>
+</div>
+{% for message in messages %}
+  <div class="campaign-flash" role="status">{{ message }}</div>
+{% endfor %}
 {% if campaigns %}
-  <ul>
-  {% for c in campaigns %}
-    <li>
-      <strong>{{ c.name }}</strong> — <a href="/admin/rpg/campaign/{{ c.pk }}/change/">edit</a>
-      <ul>
-      {% for s in c.scenes.all %}
-        <li><a href="{% url 'scene' s.pk %}">{{ s.name }}</a>
-          <span class="meta">({{ s.mode }}{% if s.is_closed %}, closed{% else %}, open{% endif %})</span></li>
-      {% endfor %}
-      </ul>
-    </li>
-  {% endfor %}
-  </ul>
+  <div class="campaigns-grid">
+    {% for campaign in campaigns %}
+      <article class="panel campaign-tile">
+        <div class="campaign-tile-header">
+          <div>
+            <h3>{{ campaign.name }}</h3>
+            {% if user.is_superuser %}
+              <div class="meta">Owner: {% if campaign.owner %}{{ campaign.owner.username }}{% else %}Unassigned{% endif %}</div>
+            {% endif %}
+          </div>
+          <a class="btn campaign-actions" href="{% url 'campaign_edit' campaign.pk %}">Settings</a>
+        </div>
+        {% if campaign.description %}
+          <p class="campaign-description">{{ campaign.description|truncatechars:260 }}</p>
+        {% endif %}
+        {% with scenes=campaign.scenes.all %}
+          <div class="meta">{{ scenes|length }} scene{{ scenes|length|pluralize }}</div>
+          {% if scenes %}
+            <ul class="campaign-scenes">
+              {% for scene in scenes %}
+                <li>
+                  <a href="{% url 'scene' scene.pk %}">{{ scene.name }}</a>
+                  <span class="meta">{{ scene.get_mode_display }} · {% if scene.is_closed %}Closed{% else %}Open{% endif %}</span>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="meta">No scenes yet. Scenes and characters can be added in Django Admin.</p>
+          {% endif %}
+        {% endwith %}
+      </article>
+    {% endfor %}
+  </div>
 {% else %}
-  <p>No campaigns yet.</p>
-  <p>Run: <code>docker compose exec web python manage.py seed_demo</code></p>
-  <p>Or create one in <a href="/admin/">Admin</a>.</p>
+  <section class="panel campaign-empty">
+    <h3>No campaigns yet</h3>
+    <p>Create your first campaign here, then add characters and scenes in Django Admin.</p>
+    <a href="{% url 'campaign_create' %}" class="btn btn-primary">Create a campaign</a>
+  </section>
 {% endif %}
 {% endblock %}
