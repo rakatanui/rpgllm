@@ -313,7 +313,7 @@ def campaigns(request):
 
 @require_http_methods(["GET", "POST"])
 def create_campaign(request):
-    form = CampaignForm(request.POST or None)
+    form = CampaignForm(request.POST if request.method == "POST" else None)
     if request.method == "POST" and form.is_valid():
         campaign = form.save(commit=False)
         campaign.owner = request.user
@@ -328,7 +328,7 @@ def create_campaign(request):
 @require_http_methods(["GET", "POST"])
 def edit_campaign(request, campaign_id):
     campaign = get_object_or_404(_visible_campaigns(request.user), pk=campaign_id)
-    form = CampaignForm(request.POST or None, instance=campaign)
+    form = CampaignForm(request.POST if request.method == "POST" else None, instance=campaign)
     if request.method == "POST" and form.is_valid():
         form.save()
         messages.success(request, f"Campaign “{campaign.name}” updated.")
