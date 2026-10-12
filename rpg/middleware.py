@@ -68,14 +68,19 @@ class GameMasterAccessMiddleware:
         # All scene/player GM endpoints must be resolved through the owner of
         # the campaign; never trust numeric object IDs supplied in the URL.
         if not user.is_superuser:
-            from rpg.models import Player, Scene
+            from rpg.models import Campaign, Player, Scene
 
             try:
                 kwargs = resolve(path).kwargs
             except Resolver404:
                 kwargs = {}
+            campaign_id = kwargs.get("campaign_id")
             scene_id = kwargs.get("scene_id")
             player_id = kwargs.get("player_id")
+            if campaign_id is not None and not Campaign.objects.filter(
+                pk=campaign_id, owner_id=user.pk
+            ).exists():
+                return HttpResponseNotFound("Not found.")
             if scene_id is not None and not Scene.objects.filter(
                 pk=scene_id, campaign__owner_id=user.pk
             ).exists():
