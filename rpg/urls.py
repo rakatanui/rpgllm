@@ -5,6 +5,8 @@ from . import views
 
 urlpatterns = [
     path("", views.campaigns, name="campaigns"),
+    path("campaign/new/", views.create_campaign, name="campaign_create"),
+    path("campaign/<int:campaign_id>/edit/", views.edit_campaign, name="campaign_edit"),
     path("scene/<int:scene_id>/", views.scene_view, name="scene"),
     path(
         "play/<uuid:access_token>/",
