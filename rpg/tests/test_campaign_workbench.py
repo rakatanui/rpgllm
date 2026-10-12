@@ -337,7 +337,7 @@ def test_anonymous_nonstaff_csrf_and_http_method_protection():
     assert csrf.post(
         url, scene_data(), HTTP_X_CSRFTOKEN=token
     ).status_code == 302
-    assert csrf.put(url, scene_data()).status_code == 405
+    assert logged_in(user).put(url, scene_data()).status_code == 405
     assert camp.scenes.count() == 1
 
 
