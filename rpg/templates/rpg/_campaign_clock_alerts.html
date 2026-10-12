@@ -1,0 +1,23 @@
+{# Polled separately: never swaps a GM's partially edited clock fields. #}
+<div id="gm-campaign-alerts"
+     hx-get="{% url 'campaign_clock_alerts' campaign.pk %}"
+     hx-trigger="every 15s, campaignClockUpdated from:body"
+     hx-swap="outerHTML"
+     aria-live="polite" aria-atomic="true">
+  {% if clock_alerts %}
+    <div class="gm-clock-alert-list">
+      <strong>События в ближайший игровой час</strong>
+      {% for item in clock_alerts %}
+        <a class="gm-clock-alert" href="{% url 'campaign_plan_edit' campaign.pk item.plan.pk %}"
+           title="Открыть событие таймлайна">
+          <span class="gm-clock-alert-time">{% if item.minutes_remaining == 0 %}Сейчас{% else %}Через {{ item.minutes_remaining }} мин{% endif %}</span>
+          <span class="gm-clock-alert-title">{{ item.plan.title }}</span>
+          {% if item.plan.npc_name %}<span class="gm-clock-alert-npc">· {{ item.plan.npc_name }}</span>{% endif %}
+        </a>
+      {% endfor %}
+      {% if extra_alerts %}
+        <a href="{% url 'campaign_timeline' campaign.pk %}?view=day&amp;on={{ campaign.world_date|date:'Y-m-d' }}">Ещё событий: {{ extra_alerts }} · календарь</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
