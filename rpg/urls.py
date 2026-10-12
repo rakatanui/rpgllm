@@ -1,13 +1,14 @@
 """URLs for the rpg app."""
 from django.urls import path
 from django.contrib.admin.views.decorators import staff_member_required
-from . import views, campaign_workbench, campaign_timeline
+from . import views, campaign_workbench, campaign_timeline, campaign_lifecycle
 
 urlpatterns = [
     path("", views.campaigns, name="campaigns"),
     path("campaign/new/", views.create_campaign, name="campaign_create"),
     path("campaign/<int:campaign_id>/edit/", views.edit_campaign, name="campaign_edit"),
     path("campaign/<int:campaign_id>/", campaign_workbench.campaign_detail, name="campaign_detail"),
+    path("campaign/<int:campaign_id>/lifecycle/<str:action>/", campaign_lifecycle.campaign_lifecycle, name="campaign_lifecycle"),
     path("campaign/<int:campaign_id>/calendar/", campaign_timeline.campaign_timeline, name="campaign_timeline"),
     path("campaign/<int:campaign_id>/calendar/clock/", campaign_timeline.campaign_clock_update, name="campaign_clock_update"),
     path("campaign/<int:campaign_id>/calendar/new/", campaign_timeline.campaign_plan_create, name="campaign_plan_create"),
