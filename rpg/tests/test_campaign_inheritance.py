@@ -188,8 +188,9 @@ def test_create_without_previous_history_is_standalone():
     master = staff("inherit-standalone")
     campaign = make_campaign(owner=master)
     hero = make_player(campaign, "Hero")
-    existing = closed(make_scene(campaign, "Unrelated", participants=[hero]))
+    existing = make_scene(campaign, "Unrelated", participants=[hero])
     write(campaign, existing, "DO-NOT-INHERIT")
+    closed(existing)
     result = session(master).post(
         reverse("campaign_scene_create", args=[campaign.pk]),
         scene_data("Standalone", participants=[hero]),
