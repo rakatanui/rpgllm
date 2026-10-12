@@ -1,7 +1,7 @@
 """URLs for the rpg app."""
 from django.urls import path
 from django.contrib.admin.views.decorators import staff_member_required
-from . import views, campaign_workbench, campaign_timeline, campaign_lifecycle, campaign_team
+from . import views, campaign_workbench, campaign_timeline, campaign_lifecycle, campaign_team, campaign_clock
 
 urlpatterns = [
     path("", views.campaigns, name="campaigns"),
@@ -13,6 +13,8 @@ urlpatterns = [
     path("campaign/<int:campaign_id>/team/<int:user_id>/remove/", campaign_team.team_remove, name="campaign_team_remove"),
     path("campaign/<int:campaign_id>/lifecycle/<str:action>/", campaign_lifecycle.campaign_lifecycle, name="campaign_lifecycle"),
     path("campaign/<int:campaign_id>/calendar/", campaign_timeline.campaign_timeline, name="campaign_timeline"),
+    path("campaign/<int:campaign_id>/clock/quick/", campaign_clock.campaign_clock_quick, name="campaign_clock_quick"),
+    path("campaign/<int:campaign_id>/clock/alerts/", campaign_clock.campaign_clock_alerts, name="campaign_clock_alerts"),
     path("campaign/<int:campaign_id>/calendar/clock/", campaign_timeline.campaign_clock_update, name="campaign_clock_update"),
     path("campaign/<int:campaign_id>/calendar/new/", campaign_timeline.campaign_plan_create, name="campaign_plan_create"),
     path("campaign/<int:campaign_id>/calendar/<int:plan_id>/edit/", campaign_timeline.campaign_plan_edit, name="campaign_plan_edit"),
