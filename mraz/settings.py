@@ -62,6 +62,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "rpg.middleware.PublicPlayerHostMiddleware",
+    "rpg.middleware.PlayerTokenSafetyMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -198,15 +199,30 @@ DEFAULT_LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "60"))
 CONTEXT_HISTORY_MAX_CHARS = int(os.environ.get("CONTEXT_HISTORY_MAX_CHARS", "40000"))
 CONTEXT_LORE_MAX_CHARS = int(os.environ.get("CONTEXT_LORE_MAX_CHARS", "50000"))
 
+# Token-gated player endpoints: limits are per scene token, per endpoint class.
+# GET status/fragment polling is intentionally not throttled here.
+PLAYER_RATE_LIMITS = {
+    "turn": (int(os.environ.get("PLAYER_TURN_LIMIT", "12")), 60),
+    "ooc": (int(os.environ.get("PLAYER_OOC_LIMIT", "10")), 60),
+    "appearance": (int(os.environ.get("PLAYER_APPEARANCE_LIMIT", "20")), 60),
+    "upload": (int(os.environ.get("PLAYER_UPLOAD_LIMIT", "3")), 300),
+    "qr": (int(os.environ.get("PLAYER_QR_LIMIT", "30")), 60),
+}
+
 # Logging - never log API keys.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "filters": {
         "require_debug_false": {"()": "django.utils.log.RequireDebugFalse"},
+        "redact_player_tokens": {"()": "rpg.player_security.PlayerTokenRedactionFilter"},
     },
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "level": "INFO"},
+        "console": {
+            "class": "logging.StreamHandler",
+            "level": "INFO",
+            "filters": ["redact_player_tokens"],
+        },
     },
     "loggers": {
         "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
