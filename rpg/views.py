@@ -442,6 +442,7 @@ def scene_view(request, scene_id):
             }
             for message in private_messages
         ]
+    upcoming_story_plans = next_hour_plans(scene.campaign)
     return render(
         request,
         "rpg/scene.html",
@@ -449,8 +450,8 @@ def scene_view(request, scene_id):
             "scene": scene,
             "campaign": scene.campaign,
             **clock_widget_context(scene.campaign, scene=scene),
-            "clock_alerts": next_hour_plans(scene.campaign)[:6],
-            "extra_alerts": max(0, len(next_hour_plans(scene.campaign)) - 6),
+            "clock_alerts": upcoming_story_plans[:6],
+            "extra_alerts": max(0, len(upcoming_story_plans) - 6),
             "players": players,
             "public_messages": public_messages,
             "public_blocks": public_blocks,
