@@ -41,7 +41,10 @@
               <div class="meta">Owner: {% if campaign.owner %}{{ campaign.owner.username }}{% else %}Unassigned{% endif %}</div>
             {% endif %}
           </div>
-          <a class="btn campaign-actions" href="{% url 'campaign_edit' campaign.pk %}">Settings</a>
+          <div class="campaign-workbench-action" style="display:flex;gap:7px;flex-wrap:wrap">
+            <a class="btn btn-primary" href="{% url 'campaign_detail' campaign.pk %}">Open</a>
+            <a class="btn campaign-actions" href="{% url 'campaign_edit' campaign.pk %}">Settings</a>
+          </div>
         </div>
         {% if campaign.description %}
           <p class="campaign-description">{{ campaign.description|truncatechars:260 }}</p>
@@ -58,7 +61,7 @@
               {% endfor %}
             </ul>
           {% else %}
-            <p class="meta">No scenes yet. Scenes and characters can be added in Django Admin.</p>
+            <p class="meta">No scenes yet. <a href="{% url 'campaign_scene_create' campaign.pk %}">Create a scene</a> to begin.</p>
           {% endif %}
         {% endwith %}
       </article>
@@ -67,7 +70,7 @@
 {% else %}
   <section class="panel campaign-empty">
     <h3>No campaigns yet</h3>
-    <p>Create your first campaign here, then add characters and scenes in Django Admin.</p>
+    <p>Create your first campaign, then add characters and scenes from the campaign workspace.</p>
     <a href="{% url 'campaign_create' %}" class="btn btn-primary">Create a campaign</a>
   </section>
 {% endif %}
