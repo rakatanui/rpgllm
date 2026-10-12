@@ -2,7 +2,7 @@ name: Security and RPG regression tests
 
 on:
   push:
-    branches: ["security/**"]
+    branches: ["security/**", "campaign"]
   pull_request:
 
 permissions:
@@ -54,5 +54,7 @@ jobs:
         run: python -m pytest -q rpg/tests/test_gm_authentication.py rpg/tests/test_production_auth_security.py rpg/tests/test_public_player_host.py
       - name: Public player security tests
         run: python -m pytest -q rpg/tests/test_player_access_security.py
+      - name: Campaign management tests
+        run: python -m pytest -q rpg/tests/test_campaign_management.py
       - name: Full regression suite
         run: python -m pytest -q
