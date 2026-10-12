@@ -233,6 +233,17 @@ be reversed; make a tested off-server backup first. There is no automatic
 recycle-bin expiry or timed purge. Archived and recycled campaigns can still
 occupy storage until explicitly erased.
 
+During play, **the GM scene page and campaign dashboard display an inline
+campaign clock**. A master can set the exact fictional date and time, or move
+it by -15, +5, +15 or +60 minutes without visiting the calendar. Co-GMs
+share the same clock; increments are serialized in the database. An alert bar
+links to each **still-planned event starting within the next 60 fictional
+minutes** (including across midnight), with the remaining time shown.
+Cancelled, changed, completed and untimed events do not raise one-hour
+alerts. Alerts refresh independently every 15 seconds, so a co-GM's edit
+appears without interrupting partially filled clock inputs. The fictional
+clock never advances with real-world wall time and never executes NPC plans.
+
 The **Campaign timeline** is a GM-only Outlook-style story calendar, available
 from the campaign workspace and the GM scene toolbar. It has month, week and
 day views. Its manually controlled **campaign date and time** are independent
