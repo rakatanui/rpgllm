@@ -303,12 +303,15 @@ def _visible_campaigns(user):
 
 
 def campaigns(request):
-    campaigns = (
-        _visible_campaigns(request.user)
-        .select_related("owner")
-        .prefetch_related("scenes")
-    )
-    return render(request, "rpg/campaigns.html", {"campaigns": campaigns})
+    visible = _visible_campaigns(request.user).select_related("owner")
+    active = visible.filter(archived_at__isnull=True, deleted_at__isnull=True).prefetch_related("scenes")
+    archived = visible.filter(archived_at__isnull=False, deleted_at__isnull=True).prefetch_related("scenes")
+    deleted = visible.filter(deleted_at__isnull=False).order_by("-deleted_at")
+    return render(request, "rpg/campaigns.html", {
+        "campaigns": active,
+        "archived_campaigns": archived,
+        "deleted_campaigns": deleted,
+    })
 
 
 @require_http_methods(["GET", "POST"])
