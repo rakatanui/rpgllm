@@ -166,6 +166,38 @@ class Campaign(models.Model):
         return self.name
 
 
+class CampaignCollaborator(models.Model):
+    """Existing staff user granted full GM access without campaign ownership."""
+
+    campaign = models.ForeignKey(
+        Campaign, on_delete=models.CASCADE, related_name="collaborators",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name="rpg_collaborations",
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["added_at", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["campaign", "user"], name="uniq_campaign_collaborator",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.campaign_id and self.user_id:
+            if self.campaign.owner_id == self.user_id:
+                raise ValidationError("A campaign owner is not also a collaborator.")
+            if not self.user.is_active or not self.user.is_staff:
+                raise ValidationError("Only active staff Game Masters may collaborate.")
+
+    def __str__(self):
+        return f"{self.campaign} / {self.user}"
+
+
 class CampaignPlan(models.Model):
     """GM-only forecast. Nothing here is copied into player/LLM contexts."""
 
