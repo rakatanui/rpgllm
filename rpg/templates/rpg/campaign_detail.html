@@ -23,14 +23,18 @@
   <div class="campaign-workbench-head">
     <div>
       <a href="{% url 'campaigns' %}">← All campaigns</a>
-      <h2>{{ campaign.name }}</h2>
+      <h2>{{ campaign.name }}{% if campaign.archived_at %} <span class="meta">· ARCHIVED / READ ONLY</span>{% endif %}</h2>
       {% if campaign.description %}<p>{{ campaign.description }}</p>{% endif %}
     </div>
     <div class="campaign-workbench-action">
-      <a class="btn" href="{% url 'campaign_edit' campaign.pk %}">Campaign settings</a>
+      {% if campaign.archived_at %}
+        <a class="btn btn-primary" href="{% url 'campaign_lifecycle' campaign.pk 'unarchive' %}">Restore campaign</a>
+      {% else %}
+        <a class="btn" href="{% url 'campaign_edit' campaign.pk %}">Campaign settings</a>
+        <a class="btn btn-primary" href="{% url 'campaign_player_create' campaign.pk %}">+ Character</a>
+        <a class="btn btn-primary" href="{% url 'campaign_scene_create' campaign.pk %}">+ Scene</a>
+      {% endif %}
       <a class="btn" href="{% url 'campaign_timeline' campaign.pk %}">Campaign timeline · GM only</a>
-      <a class="btn btn-primary" href="{% url 'campaign_player_create' campaign.pk %}">+ Character</a>
-      <a class="btn btn-primary" href="{% url 'campaign_scene_create' campaign.pk %}">+ Scene</a>
     </div>
   </div>
   {% if campaign.world_date and campaign.world_time %}
@@ -50,7 +54,7 @@
                 <strong>{{ player.display_name }}</strong>
                 <span class="meta">{{ player.get_transport_display }}{% if player.model_config %} · {{ player.model_config.name }}{% endif %}</span>
               </div>
-              <a class="btn" href="{% url 'campaign_player_edit' campaign.pk player.pk %}">Edit</a>
+              {% if not campaign.archived_at %}<a class="btn" href="{% url 'campaign_player_edit' campaign.pk player.pk %}">Edit</a>{% endif %}
             </li>
           {% endfor %}
         </ul>
@@ -78,11 +82,11 @@
                   {% for participant in scene.scene_participants.all %}{{ participant.player.display_name }}{% if not forloop.last %}, {% endif %}{% empty %}none{% endfor %}
                 </span>
               </div>
-              {% if not scene.is_closed %}
+              {% if not scene.is_closed and not campaign.archived_at %}
                 <a class="btn" href="{% url 'campaign_scene_edit' campaign.pk scene.pk %}">Edit</a>
               {% else %}
                 <div style="display:grid;gap:7px">
-                  <a class="btn" href="{% url 'campaign_scene_create' campaign.pk %}?from_scene={{ scene.pk }}">Continue…</a>
+                  {% if not campaign.archived_at %}<a class="btn" href="{% url 'campaign_scene_create' campaign.pk %}?from_scene={{ scene.pk }}">Continue…</a>{% endif %}
                   <span class="meta">Read-only</span>
                 </div>
               {% endif %}
