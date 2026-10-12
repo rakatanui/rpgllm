@@ -60,7 +60,7 @@ def test_browser_create_character_scene_clock_archive_and_restore(
         page.locator("#id_description").fill("An interactive test world")
         page.get_by_role("button", name="Create campaign").click()
         page.wait_for_url(live_server.url + reverse("campaigns"))
-        assert page.get_by_text("Browser campaign").is_visible()
+        assert page.get_by_text("Browser campaign").first.is_visible()
 
         page.get_by_role("link", name="Open").click()
         assert page.get_by_role("heading", name="Browser campaign").is_visible()
@@ -69,14 +69,14 @@ def test_browser_create_character_scene_clock_archive_and_restore(
         page.locator("#id_display_name").fill("Browser Hero")
         page.locator("#id_transport").select_option("HUMAN")
         page.get_by_role("button", name="Create character").click()
-        assert page.get_by_text("Browser Hero").is_visible()
+        assert page.get_by_text("Browser Hero").first.is_visible()
 
         page.get_by_role("link", name="+ Scene").click()
         page.locator("#id_name").fill("First scene")
         page.locator("#id_mode").select_option("MANUAL")
         page.get_by_label("Browser Hero", exact=True).check()
         page.get_by_role("button", name="Create scene").click()
-        assert page.get_by_text("First scene").is_visible()
+        assert page.get_by_text("First scene").first.is_visible()
 
         page.get_by_role("link", name="Campaign timeline · GM only").click()
         assert page.get_by_role("heading", name="Campaign timeline").is_visible()
@@ -149,7 +149,7 @@ def test_browser_owner_adds_and_revokes_existing_co_gm(
         assert co_page.get_by_role("button", name="Add co-GM").count() == 0
         assert co_page.get_by_role("button", name="Remove access").count() == 0
 
-        owner_page.get_by_role("button", name="Remove access").click()
+        owner_page.get_by_role("button", name="Remove browser-team-cogm").click()
         assert owner_page.get_by_text("No additional Game Masters yet").is_visible()
         co_page.reload()
         assert co_page.get_by_text("Not found.", exact=True).is_visible()
