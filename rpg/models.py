@@ -92,6 +92,18 @@ class GameMasterAction(models.TextChoices):
     WAIT = "WAIT", "Do nothing"
 
 
+class CampaignPlanKind(models.TextChoices):
+    NPC = "NPC", "NPC plan"
+    MARKER = "MARKER", "Story marker"
+
+
+class CampaignPlanStatus(models.TextChoices):
+    PLANNED = "PLANNED", "Planned (if unopposed)"
+    CHANGED = "CHANGED", "Changed by player actions"
+    CANCELLED = "CANCELLED", "Cancelled"
+    COMPLETED = "COMPLETED", "Happened"
+
+
 class ModelConfig(models.Model):
     name = models.CharField(max_length=120, unique=True)
     gateway_model = models.CharField(
@@ -132,6 +144,10 @@ class Campaign(models.Model):
             "events that should survive history trimming."
         ),
     )
+    # Fictional campaign-local clock: deliberately independent of the server
+    # timezone and the real-world wall clock.
+    world_date = models.DateField(null=True, blank=True)
+    world_time = models.TimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -140,6 +156,69 @@ class Campaign(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class CampaignPlan(models.Model):
+    """GM-only forecast. Nothing here is copied into player/LLM contexts."""
+
+    campaign = models.ForeignKey(
+        Campaign, on_delete=models.CASCADE, related_name="timeline_plans",
+    )
+    kind = models.CharField(
+        max_length=12, choices=CampaignPlanKind.choices,
+        default=CampaignPlanKind.NPC,
+    )
+    title = models.CharField(max_length=200)
+    npc_name = models.CharField(max_length=160, blank=True)
+    description = models.TextField(blank=True)
+    planned_outcome = models.TextField(
+        blank=True, help_text="What would happen without player interference.",
+    )
+    actual_outcome = models.TextField(
+        blank=True, help_text="What changed or what actually happened.",
+    )
+    scheduled_date = models.DateField()
+    scheduled_time = models.TimeField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=12, choices=CampaignPlanStatus.choices,
+        default=CampaignPlanStatus.PLANNED,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["scheduled_date", "scheduled_time", "pk"]
+        indexes = [
+            models.Index(
+                fields=["campaign", "scheduled_date"],
+                name="rpg_campplan_date_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.end_time and not self.end_date:
+            raise ValidationError({
+                "end_time": "Select an end date when entering an end time.",
+            })
+        if self.end_date and self.scheduled_date:
+            if self.end_date < self.scheduled_date:
+                raise ValidationError({
+                    "end_date": "End date cannot precede the planned date.",
+                })
+            if (
+                self.end_date == self.scheduled_date
+                and self.end_time and self.scheduled_time
+                and self.end_time <= self.scheduled_time
+            ):
+                raise ValidationError({
+                    "end_time": "End time must be later than start time.",
+                })
+
+    def __str__(self):
+        return self.title
 
 
 class GameMasterConfig(models.Model):
