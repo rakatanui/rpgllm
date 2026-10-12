@@ -1080,7 +1080,7 @@ def test_silence_rejects_unsupported_mode(recording_client):
         participants=[lucien],
     )
 
-    with pytest.raises(ValidationError, match="ROUND or MANUAL"):
+    with pytest.raises(ValidationError, match="ROUND, SOFT_ROUND, or MANUAL"):
         turn_engine.start_silent_turn(
             scene=scene,
             selected_players=[lucien],

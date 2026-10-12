@@ -18,6 +18,7 @@ from django.views.decorators.http import require_http_methods
 import qrcode
 
 from rpg.forms import CharacterImageUploadForm
+from rpg.player_security import throttle_player_request
 from rpg.models import (
     AuthorType,
     Campaign,
@@ -297,6 +298,9 @@ def search_history(request, scene_id):
 def campaigns(request):
     campaigns = Campaign.objects.prefetch_related("scenes").all()
     scenes = Scene.objects.all()
+    if not request.user.is_superuser:
+        campaigns = campaigns.filter(owner=request.user)
+        scenes = scenes.filter(campaign__owner=request.user)
     return render(request, "rpg/campaigns.html", {"campaigns": campaigns, "scenes": scenes})
 
 
@@ -777,6 +781,9 @@ def _human_client_share_url(request, access_token) -> str:
 
 def human_player_qr(request, access_token):
     scene, player, _ = _human_access_for_token(access_token)
+    limited = throttle_player_request(access_token, "qr")
+    if limited is not None:
+        return limited
     target_url = _human_client_share_url(request, access_token)
 
     qr = qrcode.QRCode(
@@ -876,7 +883,7 @@ def human_feed_page(request, access_token, channel):
         return HttpResponseBadRequest("invalid human feed channel")
 
     raw_before = (request.GET.get("before") or "").strip()
-    if not raw_before.isdigit():
+    if not raw_before.isdigit() or len(raw_before) > 19:
         return HttpResponseBadRequest("missing or invalid history cursor")
 
     messages, has_older, next_before = _human_channel_page(
@@ -906,6 +913,13 @@ def human_feed_page(request, access_token, channel):
 @require_http_methods(["POST"])
 def submit_human_response(request, access_token, execution_id):
     scene, player, _ = _human_access_for_token(access_token)
+    limited = throttle_player_request(access_token, "turn")
+    if limited is not None:
+        return limited
+    public_text = request.POST.get("content") or ""
+    private_text = request.POST.get("private_to_gm") or ""
+    if len(public_text) + len(private_text) > 16_000:
+        return HttpResponseBadRequest("Player response exceeds 16000 characters")
     execution = get_object_or_404(
         TurnExecution.objects.select_related("turn__scene", "player"),
         pk=execution_id,
@@ -917,8 +931,8 @@ def submit_human_response(request, access_token, execution_id):
         result = turn_engine.submit_human_response(
             execution=execution,
             action_type=request.POST.get("action_type") or "",
-            public_text=request.POST.get("content") or "",
-            private_to_gm=request.POST.get("private_to_gm") or "",
+            public_text=public_text,
+            private_to_gm=private_text,
         )
         if (
             result.turn.state == TurnState.COMPLETED
@@ -947,11 +961,16 @@ def submit_human_response(request, access_token, execution_id):
 @require_http_methods(["POST"])
 def human_send_ooc(request, access_token):
     scene, player, _ = _human_access_for_token(access_token)
+    limited = throttle_player_request(access_token, "ooc")
+    if limited is not None:
+        return limited
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
     content = (request.POST.get("content") or "").strip()
     if not content:
         return HttpResponseBadRequest("empty OOC content")
+    if len(content) > 8000:
+        return HttpResponseBadRequest("OOC content exceeds 8000 characters")
 
     Message.objects.create(
         campaign=scene.campaign,
@@ -998,6 +1017,9 @@ def human_appearance_image(request, access_token, appearance_id, image_kind):
 @require_http_methods(["POST"])
 def set_human_current_appearance(request, access_token, appearance_id):
     scene, player, participation = _human_access_for_token(access_token)
+    limited = throttle_player_request(access_token, "appearance")
+    if limited is not None:
+        return limited
     if scene.is_closed:
         return HttpResponseBadRequest("scene is closed and read-only")
     appearance = get_object_or_404(CharacterAppearance, pk=appearance_id, player=player)
@@ -1028,7 +1050,12 @@ def human_character_image(request, access_token):
 @csrf_exempt
 @require_http_methods(["POST"])
 def upload_human_character_image(request, access_token):
-    _, player, _ = _human_access_for_token(access_token)
+    scene, player, _ = _human_access_for_token(access_token)
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
+    limited = throttle_player_request(access_token, "upload")
+    if limited is not None:
+        return limited
     form = CharacterImageUploadForm(request.POST, request.FILES)
     if not form.is_valid():
         return HttpResponseBadRequest(form.errors.as_text())
@@ -1050,7 +1077,12 @@ def upload_human_character_image(request, access_token):
 @csrf_exempt
 @require_http_methods(["POST"])
 def remove_human_character_image(request, access_token):
-    _, player, _ = _human_access_for_token(access_token)
+    scene, player, _ = _human_access_for_token(access_token)
+    if scene.is_closed:
+        return HttpResponseBadRequest("scene is closed and read-only")
+    limited = throttle_player_request(access_token, "upload")
+    if limited is not None:
+        return limited
     if player.character_image:
         storage = player.character_image.storage
         old_name = player.character_image.name
@@ -1069,6 +1101,8 @@ def remove_human_character_image(request, access_token):
 def human_episode_search(request, access_token):
     current_scene, player, _ = _human_access_for_token(access_token)
     q = (request.GET.get("q") or "").strip()
+    if len(q) > 200:
+        return HttpResponseBadRequest("History query is too long")
 
     episodes = (
         Scene.objects.filter(
