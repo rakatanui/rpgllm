@@ -173,8 +173,12 @@ def campaign_detail(request, campaign_id):
         .prefetch_related("scene_participants__player")
         .order_by("created_at", "pk")
     )
+    from rpg.campaign_clock import clock_widget_context, next_hour_plans
+    alerts = next_hour_plans(campaign)
     return render(request, "rpg/campaign_detail.html", {
         "campaign": campaign, "players": players, "scenes": scenes,
+        **clock_widget_context(campaign),
+        "clock_alerts": alerts[:6], "extra_alerts": max(0, len(alerts) - 6),
     })
 
 
