@@ -41,7 +41,7 @@ def open_as(page, live_server, username):
     page.locator("#id_password").fill(PASSWORD)
     page.get_by_role("button", name="Sign in").click()
     page.wait_for_url(live_server.url + reverse("campaigns"))
-    assert page.get_by_role("heading", name="Campaigns").is_visible()
+    assert page.get_by_role("heading", name="Campaigns", exact=True).is_visible()
 
 
 @pytest.fixture
