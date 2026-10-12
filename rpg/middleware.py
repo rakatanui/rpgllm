@@ -65,30 +65,41 @@ class GameMasterAccessMiddleware:
         if not user.is_active or not user.is_staff:
             return HttpResponseForbidden("Game Master access required.")
 
-        # All scene/player GM endpoints must be resolved through the owner of
-        # the campaign; never trust numeric object IDs supplied in the URL.
+        # Scope every GM route to owned or explicitly shared campaigns.
+        # Deleted campaigns are invisible except for the owner's lifecycle
+        # actions (recover / purge), which have their own permission check.
         if not user.is_superuser:
-            from rpg.models import Campaign, Player, Scene
+            from rpg.campaign_access import visible_campaigns
+            from rpg.models import Campaign
 
             try:
-                kwargs = resolve(path).kwargs
+                match = resolve(path)
+                kwargs = match.kwargs
             except Resolver404:
+                match = None
                 kwargs = {}
             campaign_id = kwargs.get("campaign_id")
             scene_id = kwargs.get("scene_id")
             player_id = kwargs.get("player_id")
-            if campaign_id is not None and not Campaign.objects.filter(
-                pk=campaign_id, owner_id=user.pk
-            ).exists():
-                return HttpResponseNotFound("Not found.")
-            if scene_id is not None and not Scene.objects.filter(
-                pk=scene_id, campaign__owner_id=user.pk
-            ).exists():
-                return HttpResponseNotFound("Not found.")
-            if player_id is not None and not Player.objects.filter(
-                pk=player_id, campaign__owner_id=user.pk
-            ).exists():
-                return HttpResponseNotFound("Not found.")
+            if match and match.url_name == "campaign_lifecycle":
+                if campaign_id is not None and not Campaign.objects.filter(
+                    pk=campaign_id, owner_id=user.pk
+                ).exists():
+                    return HttpResponseNotFound("Not found.")
+            else:
+                permitted = visible_campaigns(user)
+                if campaign_id is not None and not permitted.filter(
+                    pk=campaign_id
+                ).exists():
+                    return HttpResponseNotFound("Not found.")
+                if scene_id is not None and not permitted.filter(
+                    scenes__pk=scene_id
+                ).exists():
+                    return HttpResponseNotFound("Not found.")
+                if player_id is not None and not permitted.filter(
+                    players__pk=player_id
+                ).exists():
+                    return HttpResponseNotFound("Not found.")
 
         return self.get_response(request)
 
