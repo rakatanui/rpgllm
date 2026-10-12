@@ -67,4 +67,8 @@ jobs:
       - name: Multi-Game Master collaboration and permission tests
         run: python -m pytest -q rpg/tests/test_campaign_collaboration.py
       - name: Full regression suite
-        run: python -m pytest -q
+        run: python -m pytest -q -m "not browser"
+      - name: Install Chromium for browser E2E tests
+        run: python -m playwright install --with-deps chromium
+      - name: Campaign user journey browser E2E tests
+        run: python -m pytest -q -m browser rpg/tests/test_campaign_browser.py
