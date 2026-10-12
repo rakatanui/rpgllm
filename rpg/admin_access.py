@@ -84,9 +84,23 @@ class OwnedRelatedFieldsMixin:
     """Prevent forged POSTs from referencing another master's records."""
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        if db_field.remote_field.model in OWNERSHIP_PATHS and not request.user.is_superuser:
-            queryset = db_field.remote_field.model._default_manager.all()
-            kwargs["queryset"] = scoped_queryset(request.user, queryset)
+        model = db_field.remote_field.model
+        if model in OWNERSHIP_PATHS:
+            queryset = model._default_manager.all()
+            if not request.user.is_superuser:
+                queryset = scoped_queryset(request.user, queryset)
+            # No new objects can reference an archived/recycled parent through
+            # Django Admin, even for superusers or forged form submissions.
+            if model is Campaign:
+                queryset = queryset.filter(
+                    archived_at__isnull=True, deleted_at__isnull=True,
+                )
+            elif model is Scene or model is Player:
+                queryset = queryset.filter(
+                    campaign__archived_at__isnull=True,
+                    campaign__deleted_at__isnull=True,
+                )
+            kwargs["queryset"] = queryset
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def formfield_for_manytomany(self, db_field, request, **kwargs):
