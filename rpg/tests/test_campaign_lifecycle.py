@@ -99,8 +99,8 @@ def test_archive_freezes_writes_and_public_player_token_but_preserves_data():
         "name": "Forbidden follow-up",
     }).status_code == 409
     assert Client().get(reverse("human_player_client", args=[original_token])).status_code == 404
-    assert Client().post(reverse("submit_human_response", args=[original_token]), {
-        "content": "I act",
+    assert Client().post(reverse("human_send_ooc", args=[original_token]), {
+        "content": "I ask something",
     }).status_code == 404
 
     index = client.get(reverse("campaigns"))
